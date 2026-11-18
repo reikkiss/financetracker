@@ -347,7 +347,7 @@ Instructions:
             if (parsed) {
               alerts.push({
                 ...parsed,
-                emailId: String(msg.uid || msg.seq),
+                emailId: `icloud_${String(msg.uid || msg.seq)}`,
                 emailSubject: subject,
                 emailFrom: from,
                 emailDate: date
@@ -376,70 +376,119 @@ Instructions:
     }
   });
 
-  // Real Gmail API Bank Alert Sync
+  // Real Gmail API Bank Alert Sync (also supports Bearer auth header & parallel batching)
   app.post('/api/email/sync-gmail', async (req, res) => {
     try {
-      const { accessToken, maxResults = 30 } = req.body;
+      const authHeader = req.headers.authorization;
+      const bearerToken = authHeader?.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+      const accessToken = bearerToken || String(req.body?.accessToken || '').trim();
+      const maxResults = Math.min(Math.max(1, Number(req.body?.maxResults) || 25), 50);
+
       if (!accessToken) {
         return res.status(401).json({ error: 'Google OAuth access token is required.' });
       }
 
-      const query = encodeURIComponent(
-        'from:(banreservas.com OR bpd.com.do OR bhd.com.do OR qik.do OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR alerta OR "pago realizado" OR abono)'
+      const queryStr = encodeURIComponent(
+        'from:(banreservas.com OR bpd.com.do OR popularenlinea.com OR bhd.com.do OR qik.do OR qik.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono)'
       );
-      const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=${maxResults}`;
+      const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${queryStr}&maxResults=${maxResults}`;
       const listRes = await fetch(listUrl, {
         headers: { Authorization: `Bearer ${accessToken}` }
       });
 
+      const listRaw = await listRes.text();
       if (!listRes.ok) {
-        const errText = await listRes.text();
-        return res.status(listRes.status).json({ error: `Gmail API query error: ${errText}` });
+        return res.status(listRes.status).json({ error: `Gmail API query error (${listRes.status}): ${listRaw.slice(0, 300)}` });
       }
 
-      const listData = await listRes.json();
-      const messageRefs = listData.messages || [];
+      let listData: any = {};
+      try {
+        listData = listRaw ? JSON.parse(listRaw) : {};
+      } catch {
+        return res.status(502).json({ error: 'Unexpected non-JSON response from Gmail API list endpoint.' });
+      }
+
+      const messageRefs: Array<{ id: string }> = listData.messages || [];
       const alerts: any[] = [];
+      const chunkSize = 8;
 
-      for (const ref of messageRefs) {
-        const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=full`;
-        const msgRes = await fetch(msgUrl, {
-          headers: { Authorization: `Bearer ${accessToken}` }
-        });
-        if (!msgRes.ok) continue;
-
-        const msgData = await msgRes.json();
-        const headers = msgData.payload?.headers || [];
-        const subject = headers.find((h: any) => h.name?.toLowerCase() === 'subject')?.value || '';
-        const from = headers.find((h: any) => h.name?.toLowerCase() === 'from')?.value || '';
-        const dateHeader = headers.find((h: any) => h.name?.toLowerCase() === 'date')?.value || '';
-
-        // Extract body text recursively
-        let bodyText = msgData.snippet || '';
-        function extractParts(part: any) {
-          if (!part) return;
-          if (part.body?.data) {
+      for (let i = 0; i < messageRefs.length; i += chunkSize) {
+        const chunk = messageRefs.slice(i, i + chunkSize);
+        const batchResults = await Promise.all(
+          chunk.map(async ref => {
             try {
-              const decoded = Buffer.from(part.body.data, 'base64url').toString('utf8');
-              bodyText += '\n' + decoded;
-            } catch {}
-          }
-          if (part.parts && Array.isArray(part.parts)) {
-            part.parts.forEach(extractParts);
-          }
-        }
-        extractParts(msgData.payload);
+              const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${encodeURIComponent(ref.id)}?format=full`;
+              const msgRes = await fetch(msgUrl, {
+                headers: { Authorization: `Bearer ${accessToken}` }
+              });
+              if (!msgRes.ok) return null;
 
-        const parsed = parseBankEmailAlert(bodyText, subject, from, dateHeader);
-        if (parsed) {
-          alerts.push({
-            ...parsed,
-            emailId: ref.id,
-            emailSubject: subject,
-            emailFrom: from,
-            emailDate: dateHeader
-          });
-        }
+              const msgRaw = await msgRes.text();
+              let msgData: any = {};
+              try {
+                msgData = JSON.parse(msgRaw);
+              } catch {
+                return null;
+              }
+
+              const headers = msgData.payload?.headers || [];
+              const subject = headers.find((h: any) => h.name?.toLowerCase() === 'subject')?.value || '';
+              const from = headers.find((h: any) => h.name?.toLowerCase() === 'from')?.value || '';
+              const dateHeader = headers.find((h: any) => h.name?.toLowerCase() === 'date')?.value || '';
+
+              const htmlParts: string[] = [];
+              const plainParts: string[] = [];
+              function extractParts(part: any) {
+                if (!part || part.body?.attachmentId) return;
+                const mimeType = String(part.mimeType || '').toLowerCase();
+                if (part.body?.data && (!mimeType || mimeType.startsWith('text/plain') || mimeType.startsWith('text/html'))) {
+                  try {
+                    const buf = Buffer.from(part.body.data, 'base64url');
+                    const pHeaders: any[] = part.headers || [];
+                    const ct = pHeaders.find((h: any) => h.name?.toLowerCase() === 'content-type')?.value || '';
+                    const charsetMatch = ct.match(/charset=["']?([^"'\r\n;]+)["']?/i);
+                    const charset = charsetMatch ? charsetMatch[1].trim().toLowerCase() : 'utf-8';
+                    let decoded = '';
+                    if (charset.includes('iso-8859') || charset.includes('latin1') || charset.includes('1252')) {
+                      decoded = new TextDecoder('windows-1252').decode(buf);
+                    } else {
+                      try {
+                        decoded = new TextDecoder('utf-8', { fatal: true }).decode(buf);
+                      } catch {
+                        decoded = new TextDecoder('windows-1252').decode(buf);
+                      }
+                    }
+                    if (decoded.trim()) {
+                      if (mimeType.includes('text/html')) htmlParts.push(decoded);
+                      else plainParts.push(decoded);
+                    }
+                  } catch {}
+                }
+                if (Array.isArray(part.parts)) {
+                  part.parts.forEach(extractParts);
+                }
+              }
+              extractParts(msgData.payload);
+              const collected = [...htmlParts, ...plainParts].filter(Boolean);
+              const bodyText = collected.length > 0 ? collected.join('\n') : (msgData.snippet || '');
+
+              const parsed = parseBankEmailAlert(bodyText, subject, from, dateHeader);
+              if (!parsed) return null;
+              return {
+                ...parsed,
+                emailId: `gmail_${ref.id}`,
+                emailSubject: subject,
+                emailFrom: from,
+                emailDate: dateHeader
+              };
+            } catch {
+              return null;
+            }
+          })
+        );
+        batchResults.forEach(item => {
+          if (item) alerts.push(item);
+        });
       }
 
       res.json({

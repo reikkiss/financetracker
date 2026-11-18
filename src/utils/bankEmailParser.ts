@@ -1,3 +1,5 @@
+export type EmailTransactionOutcome = 'approved' | 'declined' | 'reversed';
+
 export interface ParsedEmailTransaction {
   title: string;
   amount: number;
@@ -9,77 +11,68 @@ export interface ParsedEmailTransaction {
   bankName: string;
   notes: string;
   status: 'pending';
+  emailOutcome: EmailTransactionOutcome;
+  outcomeLabel: 'Went Through' | 'Declined' | 'Reversed';
   rawSender?: string;
   rawSubject?: string;
   emailId?: string;
 }
 
-/**
- * Decodes quoted-printable MIME encoding (=3D, =\r\n, UTF-8 hex sequences) and strips HTML tags/styles
- * so real iCloud & Gmail raw emails parse cleanly without picking up CSS font-sizes or color hex numbers.
- */
-export function cleanEmailContent(raw: string): string {
-  if (!raw) return '';
-
-  let text = raw;
-
-  // If raw MIME source contains Content-Transfer-Encoding: base64 blocks, decode UTF-8 text blocks when safe
-  const base64BlockRegex =
-    /Content-Type:\s*text\/(?:plain|html)[^\r\n]*[\r\n]+(?:[^\r\n]+[\r\n]+)*?Content-Transfer-Encoding:\s*base64[\r\n]{2,4}([A-Za-z0-9+/=\r\n]+)/gi;
-  const decodedBlocks: string[] = [];
-  let b64Match: RegExpExecArray | null;
-  while ((b64Match = base64BlockRegex.exec(raw)) !== null) {
+function decodeQuotedPrintable(input: string): string {
+  // Join soft line breaks first
+  const joined = input.replace(/=\r?\n/g, '');
+  // Decode byte runs (=XX or =C3=B3), trying strict UTF-8 first and falling back to Windows-1252 / Latin-1
+  return joined.replace(/(?:=[0-9A-F]{2})+/gi, match => {
     try {
-      const cleanedB64 = b64Match[1].replace(/\s+/g, '');
-      const decoded =
-        typeof Buffer !== 'undefined'
-          ? Buffer.from(cleanedB64, 'base64').toString('utf8')
-          : atob(cleanedB64);
-      if (decoded && decoded.trim()) {
-        decodedBlocks.push(decoded);
+      const bytes = new Uint8Array(
+        match
+          .slice(1)
+          .split('=')
+          .map(hex => parseInt(hex, 16))
+      );
+      try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      } catch {
+        return new TextDecoder('windows-1252').decode(bytes);
       }
-    } catch {
-      // Ignore malformed base64 segments
-    }
-  }
-  if (decodedBlocks.length > 0) {
-    text = decodedBlocks.join('\n');
-  }
-
-  // Strip raw MIME header lines at top if full .eml source was passed
-  const headerBodySplit = text.indexOf('\r\n\r\n');
-  if (headerBodySplit > 0 && /^(?:Return-Path|Delivered-To|Received|DKIM-Signature|MIME-Version):/im.test(text.slice(0, headerBodySplit))) {
-    text = text.slice(headerBodySplit + 4);
-  }
-
-  // Decode quoted-printable soft line breaks
-  text = text.replace(/=\r?\n/g, '');
-
-  // Decode quoted-printable UTF-8 byte sequences (e.g. =C3=B3 -> ó, =3D -> =)
-  text = text.replace(/(?:=[0-9A-F]{2})+/gi, match => {
-    try {
-      const bytes = match
-        .slice(1)
-        .split('=')
-        .map(hex => parseInt(hex, 16));
-      return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
     } catch {
       return match;
     }
   });
+}
 
-  // Remove <style>, <script>, and <head> blocks completely
-  text = text
-    .replace(/<head[\s\S]*?<\/head>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ');
+function decodeBase64Text(b64: string, charset: string = 'utf-8'): string {
+  const cleanedB64 = b64.replace(/\s+/g, '');
+  if (!cleanedB64) return '';
+  try {
+    if (typeof Buffer !== 'undefined') {
+      const buf = Buffer.from(cleanedB64, 'base64');
+      const lowerCharset = charset.toLowerCase();
+      if (lowerCharset.includes('iso-8859') || lowerCharset.includes('latin1') || lowerCharset.includes('1252')) {
+        return new TextDecoder('windows-1252').decode(buf);
+      }
+      try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+      } catch {
+        return new TextDecoder('windows-1252').decode(buf);
+      }
+    }
+    const binary = atob(cleanedB64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+      return new TextDecoder('windows-1252').decode(bytes);
+    }
+  } catch {
+    return '';
+  }
+}
 
-  // Replace block-level HTML tags with newlines to preserve structure (Merchant / Monto / Fecha lines)
-  text = text.replace(/<\/?(?:br|p|div|tr|td|th|li|h[1-6]|table)[^>]*>/gi, '\n');
-  // Strip remaining HTML tags
-  text = text.replace(/<[^>]+>/g, ' ');
-
-  // Decode common HTML entities
+function decodeHtmlEntities(input: string): string {
   const entityMap: Record<string, string> = {
     '&nbsp;': ' ',
     '&amp;': '&',
@@ -87,27 +80,151 @@ export function cleanEmailContent(raw: string): string {
     '&gt;': '>',
     '&quot;': '"',
     '&#39;': "'",
+    '&apos;': "'",
     '&aacute;': 'á',
     '&eacute;': 'é',
     '&iacute;': 'í',
     '&oacute;': 'ó',
     '&uacute;': 'ú',
     '&ntilde;': 'ñ',
+    '&uuml;': 'ü',
     '&Aacute;': 'Á',
     '&Eacute;': 'É',
     '&Iacute;': 'Í',
     '&Oacute;': 'Ó',
     '&Uacute;': 'Ú',
-    '&Ntilde;': 'Ñ'
+    '&Ntilde;': 'Ñ',
+    '&Uuml;': 'Ü'
   };
-  text = text.replace(/&[a-zA-Z0-9#]+;/g, entity => entityMap[entity] || ' ');
 
-  // Normalize horizontal whitespace while keeping newlines
+  return input.replace(/&(?:#x([0-9a-f]+)|#([0-9]+)|([a-z0-9]+));/gi, (full, hex, dec, named) => {
+    if (hex) {
+      const code = parseInt(hex, 16);
+      return !isNaN(code) ? String.fromCodePoint(code) : ' ';
+    }
+    if (dec) {
+      const code = parseInt(dec, 10);
+      return !isNaN(code) ? String.fromCodePoint(code) : ' ';
+    }
+    if (named) {
+      return entityMap[full] || entityMap[full.toLowerCase()] || ' ';
+    }
+    return ' ';
+  });
+}
+
+function cleanHtmlToStructuredText(htmlOrPlain: string): string {
+  let text = htmlOrPlain;
+
+  // Remove HTML comments, head, style, script blocks completely
+  text = text
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<head[\s\S]*?<\/head>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ');
+
+  // Keep table cells (<td>, <th>) on the SAME line separated by a tab marker so "Comercio | SUPERMERCADO" stays paired
+  // even after collapsing spaces! Row/block boundaries preserve line breaks.
+  text = text
+    .replace(/<\/?(?:td|th)[^>]*>/gi, '\t')
+    .replace(/<\/?(?:br|p|div|tr|li|h[1-6]|table|section|article|header|footer|hr)[^>]*>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+
+  text = decodeHtmlEntities(text);
+
+  // Strip invisible zero-width & non-breaking whitespace chars
+  text = text.replace(/[\u00A0\u200B-\u200D\uFEFF]/g, ' ');
+
+  // Collapse runs of regular spaces/form-feeds first, then convert tab cell separators into double spaces
   return text
-    .replace(/[ \t\f\v]+/g, ' ')
     .replace(/\r/g, '')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/[ \t]*\t+[ \t]*/g, '  ')
+    .replace(/ *\n */g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+/**
+ * Extracts and decodes MIME text/plain & text/html parts (handling base64 & quoted-printable regardless
+ * of header order) and converts HTML tables/tags into clean structured lines.
+ */
+export function cleanEmailContent(raw: string): string {
+  if (!raw) return '';
+
+  // Check if raw input is a MIME email or raw .eml source
+  const hasMimeHeaders =
+    /^(?:Return-Path|Delivered-To|Received|MIME-Version|Content-Type|Content-Transfer-Encoding):/im.test(
+      raw.slice(0, 4000)
+    );
+
+  const decodedTextSegments: string[] = [];
+
+  if (hasMimeHeaders) {
+    // Split on any MIME boundary line (starts with "--")
+    const boundaryChunks = raw.split(/\r?\n--[^\r\n]+(?:--)?\r?\n/);
+
+    for (const chunk of boundaryChunks) {
+      const sepMatch = chunk.match(/\r?\n\r?\n/);
+      if (!sepMatch || sepMatch.index === undefined) continue;
+
+      const headers = chunk.slice(0, sepMatch.index);
+      const body = chunk.slice(sepMatch.index + sepMatch[0].length);
+      if (!body.trim()) continue;
+
+      const contentTypeMatch = headers.match(/Content-Type:\s*([^\r\n;]+)/i);
+      const contentType = contentTypeMatch ? contentTypeMatch[1].trim().toLowerCase() : '';
+
+      // Skip multipart container preambles and non-text attachments (images/PDFs)
+      if (contentType && !contentType.startsWith('text/plain') && !contentType.startsWith('text/html')) {
+        continue;
+      }
+      // If top-level single-part email had no text/* content-type and looks like multipart preamble
+      if (!contentType && /^This is a multi-part message in MIME format/i.test(body.trim())) {
+        continue;
+      }
+
+      const encodingMatch = headers.match(/Content-Transfer-Encoding:\s*([^\r\n;]+)/i);
+      const encoding = encodingMatch ? encodingMatch[1].trim().toLowerCase() : '';
+
+      const charsetMatch = headers.match(/charset=["']?([^"'\r\n;]+)["']?/i);
+      const charset = charsetMatch ? charsetMatch[1].trim() : 'utf-8';
+
+      let decoded = body;
+      if (encoding === 'base64') {
+        decoded = decodeBase64Text(body, charset);
+      } else if (encoding === 'quoted-printable') {
+        decoded = decodeQuotedPrintable(body);
+      }
+
+      if (decoded && decoded.trim()) {
+        decodedTextSegments.push(cleanHtmlToStructuredText(decoded));
+      }
+    }
+  }
+
+  if (decodedTextSegments.length > 0) {
+    return decodedTextSegments
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  // Fallback for non-MIME input, Gmail decoded bodies, or direct pasted text
+  let text = raw;
+  const headerBodySplit = text.indexOf('\r\n\r\n');
+  if (
+    headerBodySplit > 0 &&
+    /^(?:Return-Path|Delivered-To|Received|DKIM-Signature|MIME-Version):/im.test(text.slice(0, headerBodySplit))
+  ) {
+    text = text.slice(headerBodySplit + 4);
+  }
+
+  if (/=[0-9A-F]{2}/i.test(text) || /=\r?\n/.test(text)) {
+    text = decodeQuotedPrintable(text);
+  }
+
+  return cleanHtmlToStructuredText(text);
 }
 
 const KNOWN_BANKS = [
@@ -130,6 +247,7 @@ const TRANSACTION_ALERT_KEYWORDS = [
   'transaccion',
   'compra aprobada',
   'compra realizada',
+  'compraste',
   'alerta de',
   'notificación',
   'notificacion',
@@ -149,9 +267,259 @@ const TRANSACTION_ALERT_KEYWORDS = [
   'authorization',
   'purchase alert',
   'transaction alert',
+  'declinada',
+  'declinado',
+  'declined',
+  'rechazada',
+  'rechazado',
+  'denegada',
+  'denegado',
+  'reversada',
+  'reversado',
+  'reverso',
+  'reversed',
+  'reembolso',
+  'refund',
+  'anulada',
+  'anulado',
   'monto:',
-  'importe:'
+  'importe:',
+  'comercio:',
+  'establecimiento:'
 ];
+
+const NEXT_FIELD_LABEL_STOP =
+  /^(?:monto|importe|valor|total|fecha|hora|tarjeta|cuenta|moneda|referencia|autorizaci[oó]n|no\.?\s*autorizaci[oó]n|c[oó]digo|estado|estatus|saldo|balance|disponible|banco|estimad[oa]|hola|saludos|atentamente|si\s+no\s+reconoce|para\s+m[aá]s\s+informaci[oó]n|http|www\.)\b/i;
+
+function isNoiseMerchant(rawCandidate: string, rawSubject: string): boolean {
+  const c = rawCandidate.trim();
+  if (c.length < 2 || c.length > 65) return true;
+
+  const lowerC = c.toLowerCase();
+
+  // Reject pure numbers, card numbers, dates, or currency amounts
+  if (/^(?:rd\$|us\$|dop|usd|\$|no\.?|num\.?)?\s*[\d,.\-\/\*#:x\s]+$/i.test(c)) return true;
+
+  // Reject next-field headers accidentally captured across table cells
+  if (NEXT_FIELD_LABEL_STOP.test(lowerC)) return true;
+
+  // Reject URLs and email addresses
+  if (/https?:\/\/|www\.|@/i.test(c)) return true;
+
+  // Reject standalone Spanish/English pronouns, prepositions, articles & generic nouns
+  const stopWords = new Set([
+    'su', 'tu', 'mi', 'la', 'el', 'lo', 'los', 'las', 'un', 'una', 'unos', 'unas',
+    'este', 'esta', 'ese', 'esa', 'de', 'del', 'en', 'por', 'con', 'para', 'al', 'a',
+    'y', 'o', 'your', 'the', 'this', 'that', 'with', 'from', 'for', 'card', 'account',
+    'tarjeta', 'cuenta', 'consumo', 'compra', 'pago', 'transaccion', 'transacción', 'autorizacion', 'autorización'
+  ]);
+  if (stopWords.has(lowerC)) return true;
+
+  // Reject generic card/account/phrase words
+  const noisePhrases = [
+    'su tarjeta',
+    'tu tarjeta',
+    'la tarjeta',
+    'esta tarjeta',
+    'tarjeta de crédito',
+    'tarjeta de credito',
+    'tarjeta de débito',
+    'tarjeta de debito',
+    'terminada en',
+    'finaliza en',
+    'su cuenta',
+    'tu cuenta',
+    'esta cuenta',
+    'cuenta de ahorros',
+    'cuenta corriente',
+    'su préstamo',
+    'su prestamo',
+    'en línea',
+    'en linea',
+    'línea',
+    'linea',
+    'sucursal',
+    'banca móvil',
+    'banca movil',
+    'internet banking',
+    'app banreservas',
+    'app popular',
+    'app bhd',
+    'app qik',
+    'pesos dominicanos',
+    'dólares estadounidenses',
+    'dolares estadounidenses',
+    'el día',
+    'el dia',
+    'la fecha',
+    'república dominicana',
+    'republica dominicana'
+  ];
+  if (noisePhrases.some(np => lowerC === np || lowerC.startsWith(`${np} `) || lowerC.includes('su tarjeta') || lowerC.includes('tu tarjeta'))) {
+    return true;
+  }
+
+  // Reject if candidate simply repeats the email notification subject (e.g. "Notificación de Consumo")
+  const normSubj = rawSubject.trim().toLowerCase();
+  if (normSubj && (lowerC === normSubj || (lowerC.length > 12 && normSubj.startsWith(lowerC)))) {
+    if (/(?:notificaci[oó]n|alerta|aviso|comprobante|informaci[oó]n)/i.test(lowerC)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function cleanMerchantCandidate(raw: string): string {
+  let s = raw
+    // Trim trailing clause connectors
+    .split(/\s+(?:por(?:\s+(?:un|el)\s+monto|\s+valor|\s+rd\$|\s+us\$|\s+\$|\s+dop|\s+usd)?|el\s+d[ií]a|en\s+fecha|fecha\b|hora\b|monto\b|importe\b|valor\b|con\s+(?:su|tu|la)\s+tarjeta|con\s+tarjeta|tarjeta\b|terminad[ao]\b|rd\$|us\$|dop\b|usd\b|\$[0-9])/i)[0]
+    .trim();
+
+  // Strip leading article/noun wrappers like "el establecimiento " or "el comercio "
+  s = s.replace(/^(?:el\s+establecimiento|el\s+comercio|la\s+tienda|el\s+negocio|el\s+local)\s+/i, '').trim();
+
+  // Strip leading/trailing punctuation junk
+  s = s.replace(/^[:\-\|•\s]+|[:\-\|•,;\.\s]+$/g, '').trim();
+
+  // Truncate if two table columns got joined by 2+ spaces with a trailing label word
+  s = s.replace(/\s{2,}(?:monto|fecha|hora|tarjeta|cuenta|moneda|estado|autorizaci[oó]n).*$/i, '').trim();
+
+  return s;
+}
+
+function extractMerchantFromText(text: string, rawSubject: string): string {
+  if (!text) return '';
+
+  // Priority 1: Explicit Field / Table Labels (same line, ": ", "  ", OR next line)
+  const labelNames =
+    '(?:nombre\\s+del\\s+comercio|localidad\\s*\\/\\s*comercio|comercio\\s*\\/\\s*descripci[oó]n|lugar\\s+de\\s+consumo|comercio|establecimiento|localidad|negocio|afiliado|merchant|store|tienda|beneficiario|descripci[oó]n|descripcion|concepto)';
+
+  const sameLineLabelRegex = new RegExp(
+    `(?:^|\\n)\\s*${labelNames}(?:\\s*:\\s*|\\s{2,})([^\\n\\r]{2,65})`,
+    'gi'
+  );
+  for (const m of text.matchAll(sameLineLabelRegex)) {
+    if (m[1]) {
+      const cleaned = cleanMerchantCandidate(m[1]);
+      if (!isNoiseMerchant(cleaned, rawSubject)) {
+        return cleaned;
+      }
+    }
+  }
+
+  const nextLineLabelRegex = new RegExp(
+    `(?:^|\\n)\\s*${labelNames}\\s*:?\\s*\\n\\s*([^\\n\\r]{2,65})`,
+    'gi'
+  );
+  for (const m of text.matchAll(nextLineLabelRegex)) {
+    if (m[1]) {
+      const cleaned = cleanMerchantCandidate(m[1]);
+      if (!isNoiseMerchant(cleaned, rawSubject)) {
+        return cleaned;
+      }
+    }
+  }
+
+  // Priority 2: Sentence Patterns (supports "...consumo en su tarjeta *1234 en MERCHANT por RD$...")
+  const sentencePatterns = [
+    /(?:compraste|gastaste|pagaste|consumiste|consumo|compra|transacci[oó]n|transaccion|pago|cargo|autorizaci[oó]n|autorizacion)[^\n\r]{0,140}?\ben\s+(?:el\s+(?:comercio|establecimiento)\s+)?(?!su\s+tarjeta|tu\s+tarjeta|la\s+tarjeta|su\s+cuenta|tu\s+cuenta|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
+    /(?:consumo\s+en|compra\s+en|pago\s+en|pago\s+a|realizado\s+en|realizada\s+en|aprobado\s+en|aprobada\s+en|efectuado\s+en|efectuada\s+en|transacci[oó]n\s+en|transaccion\s+en)\s+(?!su\s+tarjeta|tu\s+tarjeta|la\s+tarjeta|su\s+cuenta|tu\s+cuenta|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
+    /(?<!terminad[ao]\s)(?<!finaliza\s)\ben\s+([A-Z0-9][A-Z0-9\*\.\-\&\'\/\s]{2,45})(?=\s+(?:por|el\s+d[ií]a|el\s+\d|con\s+(?:su|tu)|rd\$|us\$|dop|usd|\$)|[,\r\n])/g
+  ];
+
+  for (const pattern of sentencePatterns) {
+    for (const m of text.matchAll(pattern)) {
+      if (m[1]) {
+        const cleaned = cleanMerchantCandidate(m[1]);
+        if (!isNoiseMerchant(cleaned, rawSubject)) {
+          return cleaned;
+        }
+      }
+    }
+  }
+
+  return '';
+}
+
+function classifyMerchantCategory(merchantName: string): string {
+  const lowerM = merchantName.toLowerCase();
+  if (
+    lowerM.includes('supermercado') ||
+    lowerM.includes('sirena') ||
+    lowerM.includes('bravo') ||
+    lowerM.includes('nacional') ||
+    lowerM.includes('jumbo') ||
+    lowerM.includes('ole') ||
+    lowerM.includes('pricesmart') ||
+    lowerM.includes('carrefour') ||
+    lowerM.includes('cadena')
+  ) {
+    return 'Groceries';
+  }
+  if (
+    lowerM.includes('uber') ||
+    lowerM.includes('didi') ||
+    lowerM.includes('indriver') ||
+    lowerM.includes('gasolina') ||
+    lowerM.includes('combustible') ||
+    lowerM.includes('total') ||
+    lowerM.includes('texaco') ||
+    lowerM.includes('shell') ||
+    lowerM.includes('sigma') ||
+    lowerM.includes('sunix') ||
+    lowerM.includes('peaje') ||
+    lowerM.includes('paso rapido')
+  ) {
+    return 'Transport';
+  }
+  if (
+    lowerM.includes('restaurante') ||
+    lowerM.includes('pedidosya') ||
+    lowerM.includes('ubereats') ||
+    lowerM.includes('cafe') ||
+    lowerM.includes('mcdonald') ||
+    lowerM.includes('pizza') ||
+    lowerM.includes('burger') ||
+    lowerM.includes('starbucks') ||
+    lowerM.includes('kfc') ||
+    lowerM.includes('wendy') ||
+    lowerM.includes('domino') ||
+    lowerM.includes('sushi') ||
+    lowerM.includes('grill')
+  ) {
+    return 'Dining';
+  }
+  if (
+    lowerM.includes('netflix') ||
+    lowerM.includes('spotify') ||
+    lowerM.includes('apple') ||
+    lowerM.includes('google') ||
+    lowerM.includes('prime') ||
+    lowerM.includes('icloud') ||
+    lowerM.includes('disney') ||
+    lowerM.includes('openai') ||
+    lowerM.includes('chatgpt') ||
+    lowerM.includes('adobe')
+  ) {
+    return 'Subscriptions';
+  }
+  if (
+    lowerM.includes('farmacia') ||
+    lowerM.includes('carol') ||
+    lowerM.includes('clinica') ||
+    lowerM.includes('claro') ||
+    lowerM.includes('altice') ||
+    lowerM.includes('viva') ||
+    lowerM.includes('edesur') ||
+    lowerM.includes('edenorte') ||
+    lowerM.includes('edeeste') ||
+    lowerM.includes('caasd')
+  ) {
+    return 'Utilities';
+  }
+  return 'Shopping';
+}
 
 /**
  * Robust parser for Dominican bank alert emails (Banco Popular, Banreservas, BHD, Qik, Santa Cruz, etc.)
@@ -214,7 +582,7 @@ export function parseBankEmailAlert(
   // 3. Extract Amount (prioritize explicitly currency-tagged or keyword-tagged amounts)
   const currencyRegex = /(?:rd\$|us\$|\$|dop|usd)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2})?)/gi;
   const labelRegex =
-    /(?:monto|valor|importe|consumo\s+por|compra\s+por|pago\s+por|total|cantidad)(?:\s*(?:de|por|:|\s))\s*(?:rd\$|us\$|\$|dop|usd)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2})?)/gi;
+    /(?:monto|valor|importe|consumo\s+por|compra\s+por|compraste|pago\s+por|total|cantidad)(?:\s*(?:de|por|:|\s))\s*(?:rd\$|us\$|\$|dop|usd)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2})?)/gi;
 
   let amount = 0;
   for (const pattern of [currencyRegex, labelRegex]) {
@@ -246,8 +614,8 @@ export function parseBankEmailAlert(
 
   // 4. Detect Card / Account Last 4 Digits
   const cardPatterns = [
-    /(?:tarjeta|cuenta|tc|td|terminad[ao] en|finaliza en|ending in|\*{2,4}|#)\s*(?:no\.?|num\.?|número)?\s*([0-9]{4})\b/i,
-    /\*{2,4}\s*([0-9]{4})\b/,
+    /(?:tarjeta|cuenta|tc|td|terminad[ao]\s+en|finaliza\s+en|ending\s+in|#)\s*(?:no\.?|num\.?|número|:|\s)*[\*xX]*\s*([0-9]{4})\b/i,
+    /\*{1,4}\s*([0-9]{4})\b/,
     /\b([0-9]{4})\s*(?:ha realizado|se realizo|se realizó|aprobada)/i
   ];
   let cardNumber: string | undefined;
@@ -301,12 +669,44 @@ export function parseBankEmailAlert(
     dateStr = new Date().toISOString().split('T')[0];
   }
 
-  // 6. Detect Type & Merchant / Title
+  // 6. Detect Email Transaction Outcome (Declined / Reversed / Went Through)
+  function detectOutcome(textToCheck: string): {
+    emailOutcome: EmailTransactionOutcome;
+    outcomeLabel: 'Went Through' | 'Declined' | 'Reversed';
+  } {
+    // Check negated approvals & explicit decline terms FIRST so "no fue aprobada" doesn't match "aprobada"
+    const declinedPattern =
+      /(?:\bno\s+(?:fue\s+|ha\s+sido\s+|pudo\s+ser\s+)?(?:aprobada|aprobado|procesada|procesado|completada|completado|autorizada|autorizado)|declinad[ao]|rechazad[ao]|denegad[ao]|fallid[ao]|fondos\s+insuficientes|saldo\s+insuficiente|l[ií]mite\s+excedido|tarjeta\s+bloqueada|pin\s+incorrecto|\bdeclined\b|\brejected\b|\bdenied\b|\bunsuccessful\b|\bfailed\s+(?:transaction|payment|charge)|insufficient\s+funds)/i;
+    if (declinedPattern.test(textToCheck)) {
+      return { emailOutcome: 'declined', outcomeLabel: 'Declined' };
+    }
+
+    // Check reversal / refund / void terms
+    const reversedPattern =
+      /(?:reversad[ao]|\breverso\b|reembols[ao]|reembolsad[ao]|devoluci[oó]n|anulad[ao]|anulaci[oó]n|\bextorno\b|(?:transacci[oó]n|compra|consumo|cargo|pago)\s+cancelad[ao]|\breversed\b|\breversal\b|\brefunded\b|\brefund\b|\bvoided\b|\bchargeback\b)/i;
+    if (reversedPattern.test(textToCheck)) {
+      return { emailOutcome: 'reversed', outcomeLabel: 'Reversed' };
+    }
+
+    return { emailOutcome: 'approved', outcomeLabel: 'Went Through' };
+  }
+
+  const { emailOutcome, outcomeLabel } = detectOutcome(`${rawSubject}\n${cleanedBody}`);
+
+  // 7. Detect Type & Merchant / Title
   let title = `${bankName} Alert`;
   let category = 'Shopping';
   let type: 'expense' | 'income' | 'transfer' = 'expense';
 
-  if (
+  const detectedMerchant =
+    extractMerchantFromText(cleanedBody, rawSubject) ||
+    extractMerchantFromText(rawSubject, rawSubject);
+
+  if (emailOutcome === 'reversed') {
+    type = 'income';
+    category = 'Refund / Reversal';
+    title = detectedMerchant ? `Reversal - ${detectedMerchant}` : `Reversal (${bankName})`;
+  } else if (
     lower.includes('transferencia enviada') ||
     lower.includes('transferencia saliente') ||
     lower.includes('pago al instante') ||
@@ -315,7 +715,7 @@ export function parseBankEmailAlert(
   ) {
     type = 'transfer';
     category = 'Transfer';
-    title = `Transfer (${bankName})`;
+    title = detectedMerchant ? `Transfer - ${detectedMerchant}` : `Transfer (${bankName})`;
   } else if (
     lower.includes('deposito') ||
     lower.includes('depósito') ||
@@ -328,89 +728,20 @@ export function parseBankEmailAlert(
   ) {
     type = 'income';
     category = 'Income';
-    title = `Deposit (${bankName})`;
+    title = detectedMerchant ? `Deposit - ${detectedMerchant}` : `Deposit (${bankName})`;
+  } else if (detectedMerchant) {
+    title = detectedMerchant;
+    category = classifyMerchantCategory(detectedMerchant);
   } else {
-    const merchantPatterns = [
-      /(?:comercio|establecimiento|lugar|merchant)\s*:\s*([^\n\r]{3,45})/i,
-      /(?:consumo en|compra en|pago en|realizado en|transacción en|transaccion en)\s+([A-Z0-9\*\.\-\&\'\s]{3,42})/i
-    ];
-    let detectedMerchant = '';
-    for (const mp of merchantPatterns) {
-      const match = combined.match(mp);
-      if (match && match[1]) {
-        detectedMerchant = match[1]
-          .split(/\s+(?:por|el|fecha|monto|rd\$|us\$|con|tarjeta)/i)[0]
-          .trim();
-        if (detectedMerchant.length >= 3) break;
-      }
-    }
-
-    if (
-      detectedMerchant &&
-      detectedMerchant.length >= 3 &&
-      !detectedMerchant.toLowerCase().includes('su tarjeta') &&
-      !detectedMerchant.toLowerCase().includes('su cuenta')
-    ) {
-      title = detectedMerchant;
-      const lowerM = detectedMerchant.toLowerCase();
-      if (
-        lowerM.includes('supermercado') ||
-        lowerM.includes('sirena') ||
-        lowerM.includes('bravo') ||
-        lowerM.includes('nacional') ||
-        lowerM.includes('jumbo') ||
-        lowerM.includes('ole') ||
-        lowerM.includes('pricesmart')
-      ) {
-        category = 'Groceries';
-      } else if (
-        lowerM.includes('uber') ||
-        lowerM.includes('didi') ||
-        lowerM.includes('gasolina') ||
-        lowerM.includes('combustible') ||
-        lowerM.includes('total') ||
-        lowerM.includes('texaco') ||
-        lowerM.includes('shell') ||
-        lowerM.includes('sigma') ||
-        lowerM.includes('sunix')
-      ) {
-        category = 'Transport';
-      } else if (
-        lowerM.includes('restaurante') ||
-        lowerM.includes('pedidosya') ||
-        lowerM.includes('ubereats') ||
-        lowerM.includes('cafe') ||
-        lowerM.includes('mcdonald') ||
-        lowerM.includes('pizza') ||
-        lowerM.includes('burger') ||
-        lowerM.includes('starbucks')
-      ) {
-        category = 'Dining';
-      } else if (
-        lowerM.includes('netflix') ||
-        lowerM.includes('spotify') ||
-        lowerM.includes('apple') ||
-        lowerM.includes('google') ||
-        lowerM.includes('prime') ||
-        lowerM.includes('icloud')
-      ) {
-        category = 'Subscriptions';
-      } else if (
-        lowerM.includes('farmacia') ||
-        lowerM.includes('carol') ||
-        lowerM.includes('clinica') ||
-        lowerM.includes('claro') ||
-        lowerM.includes('altice') ||
-        lowerM.includes('edesur') ||
-        lowerM.includes('edenorte') ||
-        lowerM.includes('edeeste')
-      ) {
-        category = 'Utilities';
-      }
-    } else {
-      title = rawSubject ? rawSubject.slice(0, 80) : `${bankName} Consumption`;
-    }
+    title = rawSubject ? rawSubject.slice(0, 80) : `${bankName} Consumption`;
   }
+
+  const statusNote =
+    emailOutcome === 'declined'
+      ? ' • Declined (did not go through)'
+      : emailOutcome === 'reversed'
+      ? ' • Reversed / Refunded'
+      : '';
 
   return {
     title: title.slice(0, 180),
@@ -421,8 +752,10 @@ export function parseBankEmailAlert(
     date: dateStr,
     cardNumber,
     bankName,
-    notes: `Email alert from ${bankName}${cardNumber ? ` (Card *${cardNumber})` : ''}`,
+    notes: `Email alert from ${bankName}${cardNumber ? ` (Card *${cardNumber})` : ''}${statusNote}`,
     status: 'pending',
+    emailOutcome,
+    outcomeLabel,
     rawSender,
     rawSubject
   };
@@ -455,4 +788,151 @@ export function findFuzzyPendingMatch(
 
     return true;
   });
+}
+
+const GENERIC_MERCHANT_TOKENS = new Set([
+  'pago', 'compra', 'consumo', 'transferencia', 'transfer', 'deposit', 'deposito',
+  'retiro', 'abono', 'cargo', 'bank', 'banco', 'card', 'tarjeta', 'cuenta',
+  'alert', 'alerta', 'com', 'net', 'org', 'inc', 'llc', 'srl', 'sa', 'rd', 'do',
+  'dop', 'usd', 'santo', 'domingo', 'store', 'tienda', 'sucursal', 'linea', 'online'
+]);
+
+function normalizeMerchantTokens(raw: string): string[] {
+  if (!raw) return [];
+  const norm = raw
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+  if (!norm) return [];
+  return norm
+    .split(/\s+/)
+    .filter(tok => tok.length >= 3 && !GENERIC_MERCHANT_TOKENS.has(tok) && !/^\d+$/.test(tok));
+}
+
+function merchantsLookSimilar(titleA: string, titleB: string): boolean {
+  const normA = (titleA || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  const normB = (titleB || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+  if (normA.length >= 4 && normB.length >= 4 && (normA.includes(normB) || normB.includes(normA))) {
+    return true;
+  }
+
+  const tokensA = normalizeMerchantTokens(titleA);
+  const tokensB = normalizeMerchantTokens(titleB);
+  if (tokensA.length === 0 || tokensB.length === 0) return false;
+
+  for (const a of tokensA) {
+    for (const b of tokensB) {
+      if (a === b) return true;
+      if (a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a))) return true;
+    }
+  }
+  return false;
+}
+
+function getDayDifference(dateA?: string, dateB?: string): number {
+  const parseYmd = (d?: string): number => {
+    if (!d) return NaN;
+    const clean = d.slice(0, 10);
+    const m = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) {
+      return Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    }
+    const ts = new Date(d).getTime();
+    return isNaN(ts) ? NaN : ts;
+  };
+  const tsA = parseYmd(dateA);
+  const tsB = parseYmd(dateB);
+  if (isNaN(tsA) || isNaN(tsB)) return 999;
+  return Math.abs(tsA - tsB) / (1000 * 60 * 60 * 24);
+}
+
+/**
+ * Matches an incoming bank email alert against already-registered transactions in the user's ledger
+ * (whether manually entered, imported from a bank statement, or previously synced via email).
+ * Supports date posting drift (±4 days), normalized merchant token overlap, tip/hold tolerances, and USD→DOP dual-currency ratios.
+ */
+export function findExistingTransactionForEmailAlert(
+  existingTxs: any[],
+  alert: ParsedEmailTransaction & { budgetId?: string },
+  claimedTxIds?: Set<string>
+): any | undefined {
+  const alertAmt = Math.abs(Number(alert.amount) || 0);
+  if (alertAmt <= 0) return undefined;
+
+  const expectedTxType = alert.type === 'income' ? 'income' : 'expense';
+  let bestMatch: { tx: any; score: number } | null = null;
+
+  for (const tx of existingTxs) {
+    if (!tx || (claimedTxIds && tx.id && claimedTxIds.has(tx.id))) continue;
+
+    // 1. Exact emailId link
+    if (alert.emailId && tx.emailId && tx.emailId === alert.emailId) {
+      return tx;
+    }
+
+    // Compatible transaction direction (transfer alerts are stored as expense with isTransfer)
+    if (tx.type && tx.type !== expectedTxType) continue;
+
+    const txAmt = Math.abs(Number(tx.amount) || 0);
+    if (txAmt <= 0) continue;
+
+    const dayDiff = getDayDifference(tx.date, alert.date);
+    if (dayDiff > 4) continue;
+
+    const sameBudget = Boolean(alert.budgetId && tx.budgetId && alert.budgetId === tx.budgetId);
+    const conflictingBudget = Boolean(alert.budgetId && tx.budgetId && alert.budgetId !== tx.budgetId);
+    if (conflictingBudget) continue;
+
+    const similarMerchant = merchantsLookSimilar(tx.title || '', alert.title || '');
+    const notesMentionMatch = Boolean(
+      (alert.cardNumber && (tx.notes || '').includes(alert.cardNumber)) ||
+      (tx.notes && merchantsLookSimilar(tx.notes, alert.title || ''))
+    );
+
+    const amountDiff = Math.abs(txAmt - alertAmt);
+    const exactOrCloseAmount = amountDiff <= Math.max(0.05, alertAmt * 0.01);
+    const tipOrHoldAmount = amountDiff <= Math.max(1.0, alertAmt * 0.15);
+
+    // USD email vs DOP (RD$) registered transaction check (50x..68x FX range)
+    const fxRatio = txAmt > alertAmt ? txAmt / alertAmt : alertAmt / txAmt;
+    const isUsdToDopMatch =
+      (alert.currency === 'USD' || alert.currency === '$') &&
+      fxRatio >= 50 &&
+      fxRatio <= 68 &&
+      similarMerchant;
+
+    let score = 0;
+    if (exactOrCloseAmount) {
+      if (similarMerchant || notesMentionMatch) {
+        score = 100 - dayDiff * 5 + (sameBudget ? 10 : 0);
+      } else if (dayDiff === 0) {
+        // Same calendar day + exact amount even if user wrote a custom description
+        score = 80 + (sameBudget ? 10 : 0);
+      } else if (sameBudget && dayDiff <= 2) {
+        // Same account/card + exact amount within 2-day posting window
+        score = 70 - dayDiff * 5;
+      }
+    } else if (tipOrHoldAmount && similarMerchant && (dayDiff <= 2 || sameBudget)) {
+      score = 65 - dayDiff * 5;
+    } else if (isUsdToDopMatch) {
+      score = 60 - dayDiff * 5 + (sameBudget ? 10 : 0);
+    }
+
+    if (score > 0 && (!bestMatch || score > bestMatch.score)) {
+      bestMatch = { tx, score };
+    }
+  }
+
+  return bestMatch?.tx;
 }

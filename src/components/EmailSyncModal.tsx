@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Mail,
@@ -7,19 +7,63 @@ import {
   AlertCircle,
   ExternalLink,
   ShieldCheck,
-  KeyRound
+  KeyRound,
+  Radio,
+  Power
 } from 'lucide-react';
-import { getAuth, GoogleAuthProvider, signInWithPopup } from 'firebase/auth';
 import { Budget } from './BudgetsPage';
 import { Transaction } from '../App';
-import { parseBankEmailAlert, ParsedEmailTransaction } from '../utils/bankEmailParser';
+import {
+  parseBankEmailAlert,
+  ParsedEmailTransaction,
+  findExistingTransactionForEmailAlert
+} from '../utils/bankEmailParser';
+import { GmailAuthError, scanGmailBankAlerts } from '../services/gmailSyncService';
+
+export interface PersistentGmailState {
+  enabled: boolean;
+  email: string;
+  autoScan: boolean;
+  tokenActive: boolean;
+  tokenExpired: boolean;
+  historyId?: string;
+  lastSyncedAt?: string;
+}
+
+export interface SessionICloudState {
+  connected: boolean;
+  email: string;
+  password: string;
+  limit: number;
+  autoScan: boolean;
+  lastSyncedAt?: string;
+}
 
 interface EmailSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
   budgets: Budget[];
   existingTransactions: Transaction[];
+  processedEmailIds: string[];
   currencySymbol: string;
+  gmailState: PersistentGmailState;
+  gmailToken: string | null;
+  onAuthorizeGmail: () => Promise<{
+    accessToken: string;
+    emailAddress: string;
+    historyId: string;
+  }>;
+  onDisconnectGmail: () => Promise<void>;
+  onToggleGmailAutoScan: (enabled: boolean) => Promise<void>;
+  onGmailScanComplete: (meta: {
+    historyId?: string;
+    emailAddress?: string;
+    lastSyncedAt: string;
+    newProcessedIds?: string[];
+  }) => Promise<void>;
+  onMarkGmailTokenExpired: () => void;
+  iCloudSession: SessionICloudState | null;
+  onSetICloudSession: (session: SessionICloudState | null) => void;
   onIngestParsedTx: (parsed: ParsedEmailTransaction & { budgetId?: string }) => Promise<void>;
   onBatchIngestTxs?: (txs: Array<ParsedEmailTransaction & { budgetId?: string }>) => Promise<number>;
 }
@@ -29,26 +73,37 @@ export default function EmailSyncModal({
   onClose,
   budgets,
   existingTransactions,
+  processedEmailIds,
+  gmailState,
+  gmailToken,
+  onAuthorizeGmail,
+  onDisconnectGmail,
+  onToggleGmailAutoScan,
+  onGmailScanComplete,
+  onMarkGmailTokenExpired,
+  iCloudSession,
+  onSetICloudSession,
   onIngestParsedTx,
   onBatchIngestTxs
 }: EmailSyncModalProps) {
-  const [activeTab, setActiveTab] = useState<'icloud' | 'gmail' | 'paste'>('icloud');
+  const [activeTab, setActiveTab] = useState<'gmail' | 'icloud' | 'paste'>(() =>
+    gmailState.enabled ? 'gmail' : iCloudSession?.connected ? 'icloud' : 'gmail'
+  );
 
-  // iCloud state
-  const [iCloudEmail, setICloudEmail] = useState(() => localStorage.getItem('icloud_saved_email') || '');
-  const [iCloudPassword, setICloudPassword] = useState('');
-  const [iCloudLimit, setICloudLimit] = useState('40');
+  // iCloud form state (backed by App session memory so closing modal never disconnects)
+  const [iCloudEmail, setICloudEmail] = useState(() => iCloudSession?.email || '');
+  const [iCloudPassword, setICloudPassword] = useState(() => iCloudSession?.password || '');
+  const [iCloudLimit, setICloudLimit] = useState(() => String(iCloudSession?.limit || 40));
   const [isTestingICloud, setIsTestingICloud] = useState(false);
   const [isSyncingICloud, setIsSyncingICloud] = useState(false);
   const [iCloudStatus, setICloudStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  // Gmail state
-  const [gmailAccessToken, setGmailAccessToken] = useState(() => sessionStorage.getItem('gmail_oauth_token') || '');
+  // Gmail UI state
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
   const [isSyncingGmail, setIsSyncingGmail] = useState(false);
   const [gmailStatus, setGmailStatus] = useState<{ ok: boolean; msg: string } | null>(null);
 
-  // Paste / Forwarding state
+  // Paste state
   const [pasteSubject, setPasteSubject] = useState('');
   const [pasteSender, setPasteSender] = useState('');
   const [pasteBody, setPasteBody] = useState('');
@@ -56,9 +111,21 @@ export default function EmailSyncModal({
   const [parsedPreview, setParsedPreview] = useState<ParsedEmailTransaction | null>(null);
 
   // Detected alerts list
-  const [detectedAlerts, setDetectedAlerts] = useState<Array<ParsedEmailTransaction & { selectedBudgetId?: string; imported?: boolean }>>([]);
+  const [detectedAlerts, setDetectedAlerts] = useState<
+    Array<ParsedEmailTransaction & { selectedBudgetId?: string; imported?: boolean }>
+  >([]);
   const [importingIndex, setImportingIndex] = useState<number | null>(null);
   const [isBatchImporting, setIsBatchImporting] = useState(false);
+
+  useEffect(() => {
+    if (iCloudSession?.connected) {
+      setICloudEmail(iCloudSession.email);
+      setICloudPassword(iCloudSession.password);
+      setICloudLimit(String(iCloudSession.limit));
+    }
+  }, [iCloudSession]);
+
+  const processedEmailIdSet = useMemo(() => new Set(processedEmailIds), [processedEmailIds]);
 
   const existingSignatureSet = useMemo(() => {
     const set = new Set<string>();
@@ -74,6 +141,7 @@ export default function EmailSyncModal({
   if (!isOpen) return null;
 
   const mapAlertsWithAccountMatch = (rawAlerts: ParsedEmailTransaction[]) => {
+    const claimedTxIds = new Set<string>();
     return rawAlerts.map(alert => {
       let matchedBudget = budgets.find(b => {
         if (!alert.cardNumber) return false;
@@ -88,8 +156,18 @@ export default function EmailSyncModal({
         });
       }
 
-      const sig = `${(alert.date || '').slice(0, 10)}|${Math.abs(alert.amount).toFixed(2)}|${alert.title.trim().toLowerCase().slice(0, 24)}`;
-      const alreadyImported = existingSignatureSet.has(sig);
+      const matchedExisting = findExistingTransactionForEmailAlert(
+        existingTransactions,
+        { ...alert, budgetId: matchedBudget?.id || undefined },
+        claimedTxIds
+      );
+      if (matchedExisting?.id) {
+        claimedTxIds.add(matchedExisting.id);
+      }
+
+      const alreadyImported =
+        Boolean(alert.emailId && processedEmailIdSet.has(alert.emailId)) ||
+        Boolean(matchedExisting);
 
       return {
         ...alert,
@@ -97,6 +175,27 @@ export default function EmailSyncModal({
         imported: alreadyImported
       };
     });
+  };
+
+  // Safe fetch JSON helper for /api/email/* endpoints
+  const parseApiJsonSafe = async (res: Response) => {
+    const raw = await res.text();
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      if (!res.ok) throw new Error(`Server returned HTTP ${res.status}.`);
+      return {};
+    }
+    if (trimmed.startsWith('<')) {
+      throw new Error(`Unexpected HTML response (HTTP ${res.status}). Please retry in a moment.`);
+    }
+    try {
+      const json = JSON.parse(trimmed);
+      if (!res.ok) throw new Error(json.error || `Request failed (HTTP ${res.status}).`);
+      return json;
+    } catch (err: any) {
+      if (!res.ok) throw new Error(err.message || `Request failed (HTTP ${res.status}).`);
+      throw new Error('Server returned invalid JSON.');
+    }
   };
 
   // 1. iCloud Sync Handlers
@@ -113,14 +212,18 @@ export default function EmailSyncModal({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: iCloudEmail.trim(), password: iCloudPassword.trim() })
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Connection failed.');
-      }
-      localStorage.setItem('icloud_saved_email', iCloudEmail.trim());
+      const data = await parseApiJsonSafe(res);
+      onSetICloudSession({
+        connected: true,
+        email: iCloudEmail.trim(),
+        password: iCloudPassword.trim(),
+        limit: parseInt(iCloudLimit, 10) || 40,
+        autoScan: iCloudSession?.autoScan ?? true,
+        lastSyncedAt: new Date().toISOString()
+      });
       setICloudStatus({
         ok: true,
-        msg: `Connected to iCloud Mail (${data.totalInboxMessages} messages in INBOX).`
+        msg: `Connected to iCloud Mail (${data.totalInboxMessages} messages in INBOX). Session stays active.`
       });
     } catch (err: any) {
       setICloudStatus({ ok: false, msg: err.message });
@@ -137,25 +240,30 @@ export default function EmailSyncModal({
     setIsSyncingICloud(true);
     setICloudStatus(null);
     try {
+      const limitVal = parseInt(iCloudLimit, 10) || 40;
       const res = await fetch('/api/email/sync-icloud', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           email: iCloudEmail.trim(),
           password: iCloudPassword.trim(),
-          limit: parseInt(iCloudLimit, 10) || 40
+          limit: limitVal
         })
       });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to scan iCloud messages.');
-      }
-      localStorage.setItem('icloud_saved_email', iCloudEmail.trim());
+      const data = await parseApiJsonSafe(res);
+      onSetICloudSession({
+        connected: true,
+        email: iCloudEmail.trim(),
+        password: iCloudPassword.trim(),
+        limit: limitVal,
+        autoScan: iCloudSession?.autoScan ?? true,
+        lastSyncedAt: new Date().toISOString()
+      });
       const mapped = mapAlertsWithAccountMatch(data.alerts || []);
       setDetectedAlerts(mapped);
       setICloudStatus({
         ok: true,
-        msg: `Scanned ${data.totalScanned} emails. Detected ${mapped.length} bank transaction alert(s).`
+        msg: `Scanned ${data.totalScanned} emails. Detected ${mapped.length} bank alert(s). Auto-scan stays connected.`
       });
     } catch (err: any) {
       setICloudStatus({ ok: false, msg: err.message });
@@ -164,65 +272,65 @@ export default function EmailSyncModal({
     }
   };
 
-  // 2. Gmail Connect & Sync Handlers
-  const handleAuthorizeGmail = async () => {
+  // 2. Gmail Connect & Direct Sync Handlers
+  const runGmailScanWithToken = async (token: string) => {
+    setIsSyncingGmail(true);
+    setGmailStatus(null);
+    try {
+      const scanRes = await scanGmailBankAlerts(token, 25);
+      const mapped = mapAlertsWithAccountMatch(scanRes.alerts);
+      setDetectedAlerts(mapped);
+
+      await onGmailScanComplete({
+        historyId: scanRes.historyId,
+        emailAddress: scanRes.emailAddress,
+        lastSyncedAt: new Date().toISOString()
+      });
+
+      const pendingNewCount = mapped.filter(m => !m.imported).length;
+      setGmailStatus({
+        ok: true,
+        msg: `Scanned ${scanRes.totalScanned} Gmail messages (${scanRes.alerts.length} bank alert(s), ${pendingNewCount} new). Gmail stays connected & auto-scanning.`
+      });
+    } catch (err: any) {
+      if (err instanceof GmailAuthError && err.code === 'GMAIL_TOKEN_EXPIRED') {
+        onMarkGmailTokenExpired();
+      }
+      setGmailStatus({
+        ok: false,
+        msg: err?.message || 'Failed to sync Gmail bank alerts.'
+      });
+    } finally {
+      setIsSyncingGmail(false);
+    }
+  };
+
+  const handleAuthorizeAndScanGmail = async () => {
     setIsConnectingGmail(true);
     setGmailStatus(null);
     try {
-      const auth = getAuth();
-      const provider = new GoogleAuthProvider();
-      provider.addScope('https://www.googleapis.com/auth/gmail.readonly');
-      provider.setCustomParameters({ prompt: 'consent' });
-      const result = await signInWithPopup(auth, provider);
-      const credential = GoogleAuthProvider.credentialFromResult(result);
-      const token = credential?.accessToken;
-      if (!token) {
-        throw new Error('Google did not return an OAuth access token. Ensure Gmail API OAuth is enabled for this app.');
-      }
-      sessionStorage.setItem('gmail_oauth_token', token);
-      setGmailAccessToken(token);
-      setGmailStatus({ ok: true, msg: 'Google Gmail account authorized! Click "Scan Bank Alerts in Gmail" to sync.' });
+      const authResult = await onAuthorizeGmail();
+      setGmailStatus({
+        ok: true,
+        msg: `Connected ${authResult.emailAddress || 'Gmail'}! Scanning bank alerts now...`
+      });
+      setIsConnectingGmail(false);
+      await runGmailScanWithToken(authResult.accessToken);
     } catch (err: any) {
       setGmailStatus({
         ok: false,
-        msg: err.message || 'Could not authorize Gmail read-only access.'
+        msg: err?.message || 'Could not authorize Gmail read-only access.'
       });
-    } finally {
       setIsConnectingGmail(false);
     }
   };
 
   const handleSyncGmail = async () => {
-    if (!gmailAccessToken.trim()) {
-      setGmailStatus({
-        ok: false,
-        msg: 'Click "Connect Google Gmail" or provide an OAuth access token with gmail.readonly.'
-      });
+    if (!gmailToken) {
+      await handleAuthorizeAndScanGmail();
       return;
     }
-    setIsSyncingGmail(true);
-    setGmailStatus(null);
-    try {
-      const res = await fetch('/api/email/sync-gmail', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accessToken: gmailAccessToken.trim(), maxResults: 30 })
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Failed to sync Gmail alerts.');
-      }
-      const mapped = mapAlertsWithAccountMatch(data.alerts || []);
-      setDetectedAlerts(mapped);
-      setGmailStatus({
-        ok: true,
-        msg: `Scanned ${data.totalScanned} Gmail messages. Detected ${mapped.length} bank transaction(s).`
-      });
-    } catch (err: any) {
-      setGmailStatus({ ok: false, msg: err.message });
-    } finally {
-      setIsSyncingGmail(false);
-    }
+    await runGmailScanWithToken(gmailToken);
   };
 
   // 3. Paste parse handler
@@ -246,9 +354,13 @@ export default function EmailSyncModal({
         ...item,
         budgetId: item.selectedBudgetId || undefined
       });
-      setDetectedAlerts(prev =>
-        prev.map((it, idx) => (idx === index ? { ...it, imported: true } : it))
-      );
+      if (item.emailId) {
+        await onGmailScanComplete({
+          lastSyncedAt: new Date().toISOString(),
+          newProcessedIds: [item.emailId]
+        });
+      }
+      setDetectedAlerts(prev => prev.map((it, idx) => (idx === index ? { ...it, imported: true } : it)));
     } catch (err) {
       console.error('Import error:', err);
     } finally {
@@ -256,22 +368,30 @@ export default function EmailSyncModal({
     }
   };
 
-  // 5. Batch Import all
+  // 5. Batch Import all unimported non-declined alerts
   const handleBatchImportAll = async () => {
-    const unimported = detectedAlerts.filter(a => !a.imported);
+    const unimported = detectedAlerts.filter(a => !a.imported && a.emailOutcome !== 'declined');
     if (unimported.length === 0) return;
     setIsBatchImporting(true);
     try {
+      const payload = unimported.map(u => ({ ...u, budgetId: u.selectedBudgetId || undefined }));
       if (onBatchIngestTxs) {
-        await onBatchIngestTxs(
-          unimported.map(u => ({ ...u, budgetId: u.selectedBudgetId || undefined }))
-        );
+        await onBatchIngestTxs(payload);
       } else {
-        for (const item of unimported) {
-          await onIngestParsedTx({ ...item, budgetId: item.selectedBudgetId || undefined });
+        for (const item of payload) {
+          await onIngestParsedTx(item);
         }
       }
-      setDetectedAlerts(prev => prev.map(it => ({ ...it, imported: true })));
+      const importedIds = unimported.map(u => u.emailId).filter((id): id is string => Boolean(id));
+      if (importedIds.length > 0) {
+        await onGmailScanComplete({
+          lastSyncedAt: new Date().toISOString(),
+          newProcessedIds: importedIds
+        });
+      }
+      setDetectedAlerts(prev =>
+        prev.map(it => (it.emailOutcome !== 'declined' ? { ...it, imported: true } : it))
+      );
     } catch (err) {
       console.error('Batch import error:', err);
     } finally {
@@ -292,7 +412,7 @@ export default function EmailSyncModal({
               <div>
                 <h3 className="text-xl font-bold tracking-tight text-white">Connect Email Accounts</h3>
                 <p className="text-xs text-[#86868B] mt-0.5">
-                  Sync bank alerts from iCloud Mail or Gmail into pending flotante transactions.
+                  Persistent bank alert sync with automatic live detection of newly received emails.
                 </p>
               </div>
             </div>
@@ -309,59 +429,198 @@ export default function EmailSyncModal({
         <div className="flex p-1 bg-[#2C2C2E] rounded-full border border-white/5">
           <button
             type="button"
-            onClick={() => setActiveTab('icloud')}
-            className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition ${
-              activeTab === 'icloud'
-                ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#86868B] hover:text-white'
+            onClick={() => setActiveTab('gmail')}
+            className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+              activeTab === 'gmail' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
-            iCloud Mail (IMAP)
+            <span>Gmail Auto-Sync</span>
+            {gmailState.enabled && gmailState.tokenActive && (
+              <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />
+            )}
           </button>
           <button
             type="button"
-            onClick={() => setActiveTab('gmail')}
-            className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition ${
-              activeTab === 'gmail'
-                ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#86868B] hover:text-white'
+            onClick={() => setActiveTab('icloud')}
+            className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+              activeTab === 'icloud' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
-            Gmail API
+            <span>iCloud Mail (IMAP)</span>
+            {iCloudSession?.connected && <span className="w-1.5 h-1.5 rounded-full bg-[#34C759]" />}
           </button>
           <button
             type="button"
             onClick={() => setActiveTab('paste')}
             className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition ${
-              activeTab === 'paste'
-                ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#86868B] hover:text-white'
+              activeTab === 'paste' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
             Paste Email
           </button>
         </div>
 
-        {/* TAB 1: iCloud IMAP */}
+        {/* TAB 1: Gmail Auto-Sync */}
+        {activeTab === 'gmail' && (
+          <div className="space-y-4 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-white">Gmail Live Read-Only Sync</h4>
+                  {gmailState.enabled && gmailState.tokenActive ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/30">
+                      <Radio className="w-2.5 h-2.5 animate-pulse" /> Connected
+                    </span>
+                  ) : gmailState.enabled ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30">
+                      Refresh Needed
+                    </span>
+                  ) : null}
+                </div>
+                <p className="text-[11px] text-[#86868B] mt-0.5">
+                  {gmailState.email
+                    ? `Linked to ${gmailState.email} — scans new bank alerts automatically as they arrive.`
+                    : 'Connect once to stay synced and automatically detect new Banreservas, Popular, BHD & Qik alerts.'}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={handleAuthorizeAndScanGmail}
+                  disabled={isConnectingGmail || isSyncingGmail}
+                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white text-black hover:bg-zinc-200 transition disabled:opacity-50"
+                >
+                  {isConnectingGmail
+                    ? 'Connecting...'
+                    : gmailState.enabled && !gmailState.tokenActive
+                    ? 'Reconnect Gmail'
+                    : gmailState.enabled
+                    ? 'Refresh Auth'
+                    : 'Connect Google Gmail'}
+                </button>
+                {gmailState.enabled && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await onDisconnectGmail();
+                      setGmailStatus({ ok: true, msg: 'Gmail auto-sync disconnected.' });
+                    }}
+                    title="Disconnect Gmail"
+                    className="p-1.5 rounded-full bg-white/10 hover:bg-[#FF3B30]/20 text-[#86868B] hover:text-[#FF3B30] transition"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Persistent Connection & Auto-Scan Controls */}
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="space-y-0.5">
+                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#34C759]" />
+                  Automatic Incoming Email Scanner
+                </div>
+                <p className="text-[11px] text-[#86868B]">
+                  Watches your inbox continuously and auto-imports newly received alerts as Pending Flotante.
+                  {gmailState.lastSyncedAt && (
+                    <span className="block text-[10px] text-zinc-400 mt-0.5 tabular-nums">
+                      Last checked: {new Date(gmailState.lastSyncedAt).toLocaleTimeString()}
+                    </span>
+                  )}
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                <input
+                  type="checkbox"
+                  checked={gmailState.autoScan}
+                  onChange={e => onToggleGmailAutoScan(e.target.checked)}
+                  className="sr-only peer"
+                />
+                <div className="w-10 h-6 bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-4" />
+              </label>
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <span className="text-[11px] text-[#86868B]">
+                {gmailState.tokenActive
+                  ? 'OAuth session active in memory — safe to close modal.'
+                  : gmailState.enabled
+                  ? 'Click "Reconnect Gmail" or "Scan Now" to renew your 1-hour session token.'
+                  : 'Read-only access (gmail.readonly).'}
+              </span>
+
+              <button
+                type="button"
+                onClick={handleSyncGmail}
+                disabled={isSyncingGmail || isConnectingGmail}
+                className="px-4 py-1.5 rounded-full text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white transition flex items-center gap-1.5 disabled:opacity-50 shrink-0"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingGmail ? 'animate-spin' : ''}`} />
+                {isSyncingGmail ? 'Scanning Gmail...' : 'Scan Bank Alerts Now'}
+              </button>
+            </div>
+
+            {gmailStatus && (
+              <div
+                className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  gmailStatus.ok
+                    ? 'bg-[#34C759]/10 text-emerald-300 border border-[#34C759]/25'
+                    : 'bg-[#FF3B30]/10 text-rose-300 border border-[#FF3B30]/25'
+                }`}
+              >
+                {gmailStatus.ok ? (
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#34C759]" />
+                ) : (
+                  <AlertCircle className="w-4 h-4 shrink-0 text-[#FF3B30]" />
+                )}
+                <span>{gmailStatus.msg}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 2: iCloud IMAP */}
         {activeTab === 'icloud' && (
           <div className="space-y-4 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
-            <div className="flex items-start justify-between">
+            <div className="flex items-start justify-between gap-2">
               <div>
-                <h4 className="text-sm font-semibold text-white">
-                  Apple iCloud Mail (IMAP SSL 993)
-                </h4>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-white">Apple iCloud Mail (IMAP SSL 993)</h4>
+                  {iCloudSession?.connected && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/30">
+                      <Radio className="w-2.5 h-2.5 animate-pulse" /> Connected
+                    </span>
+                  )}
+                </div>
                 <p className="text-[11px] text-[#86868B] mt-0.5">
                   Direct encrypted connection to <code className="text-blue-400">imap.mail.me.com</code>.
                 </p>
               </div>
-              <a
-                href="https://account.apple.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[11px] text-[#0071E3] hover:underline flex items-center gap-1 shrink-0"
-              >
-                Apple Account <ExternalLink className="w-3 h-3" />
-              </a>
+              <div className="flex items-center gap-2 shrink-0">
+                <a
+                  href="https://account.apple.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[11px] text-[#0071E3] hover:underline flex items-center gap-1"
+                >
+                  Apple Account <ExternalLink className="w-3 h-3" />
+                </a>
+                {iCloudSession?.connected && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onSetICloudSession(null);
+                      setICloudStatus({ ok: true, msg: 'iCloud session disconnected.' });
+                    }}
+                    title="Disconnect iCloud"
+                    className="p-1.5 rounded-full bg-white/10 hover:bg-[#FF3B30]/20 text-[#86868B] hover:text-[#FF3B30] transition"
+                  >
+                    <Power className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -396,10 +655,36 @@ export default function EmailSyncModal({
               <div>
                 <strong className="text-zinc-200">How to get an App-Specific Password:</strong>
                 <p className="mt-0.5">
-                  Sign in at <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">account.apple.com</a> → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
+                  Sign in at{' '}
+                  <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">
+                    account.apple.com
+                  </a>{' '}
+                  → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
                 </p>
               </div>
             </div>
+
+            {iCloudSession?.connected && (
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3 flex items-center justify-between gap-3">
+                <span className="text-xs text-zinc-200 font-medium">
+                  Auto-scan new iCloud emails during session
+                </span>
+                <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={iCloudSession.autoScan}
+                    onChange={e =>
+                      onSetICloudSession({
+                        ...iCloudSession,
+                        autoScan: e.target.checked
+                      })
+                    }
+                    className="sr-only peer"
+                  />
+                  <div className="w-10 h-6 bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-4" />
+                </label>
+              </div>
+            )}
 
             <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
               <div className="flex items-center gap-2">
@@ -450,70 +735,6 @@ export default function EmailSyncModal({
                   <AlertCircle className="w-4 h-4 shrink-0 text-[#FF3B30]" />
                 )}
                 <span>{iCloudStatus.msg}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 2: Gmail API */}
-        {activeTab === 'gmail' && (
-          <div className="space-y-4 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h4 className="text-sm font-semibold text-white">Gmail Read-Only Sync</h4>
-                <p className="text-[11px] text-[#86868B] mt-0.5">
-                  Queries bank alerts from Banreservas, Banco Popular, BHD, and Qik via Google OAuth.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={handleAuthorizeGmail}
-                disabled={isConnectingGmail}
-                className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white text-black hover:bg-zinc-200 transition disabled:opacity-50 shrink-0"
-              >
-                {isConnectingGmail ? 'Authorizing...' : gmailAccessToken ? 'Re-authorize Gmail' : 'Connect Google Gmail'}
-              </button>
-            </div>
-
-            <div>
-              <label className="text-[11px] text-[#86868B] block mb-1">
-                Google OAuth Access Token (<code className="text-blue-400">gmail.readonly</code>)
-              </label>
-              <input
-                type="password"
-                placeholder="Authorized automatically via Connect Google Gmail or paste token"
-                value={gmailAccessToken}
-                onChange={e => setGmailAccessToken(e.target.value)}
-                className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3] font-mono"
-              />
-            </div>
-
-            <div className="flex justify-end">
-              <button
-                type="button"
-                onClick={handleSyncGmail}
-                disabled={isSyncingGmail}
-                className="px-4 py-1.5 rounded-full text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white transition flex items-center gap-1.5 disabled:opacity-50"
-              >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingGmail ? 'animate-spin' : ''}`} />
-                {isSyncingGmail ? 'Scanning Gmail...' : 'Scan Bank Alerts in Gmail'}
-              </button>
-            </div>
-
-            {gmailStatus && (
-              <div
-                className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
-                  gmailStatus.ok
-                    ? 'bg-[#34C759]/10 text-emerald-300 border border-[#34C759]/25'
-                    : 'bg-[#FF3B30]/10 text-rose-300 border border-[#FF3B30]/25'
-                }`}
-              >
-                {gmailStatus.ok ? (
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#34C759]" />
-                ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0 text-[#FF3B30]" />
-                )}
-                <span>{gmailStatus.msg}</span>
               </div>
             )}
           </div>
@@ -576,17 +797,38 @@ export default function EmailSyncModal({
             {parsedPreview && (
               <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 space-y-2.5 mt-2">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-[#34C759]" />
-                    {parsedPreview.bankName}
-                  </span>
-                  <span className="text-[#34C759] font-bold text-sm tabular-nums">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-[#34C759]" />
+                      {parsedPreview.bankName}
+                    </span>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
+                        parsedPreview.emailOutcome === 'declined'
+                          ? 'bg-[#FF3B30]/15 text-[#FF3B30] border-[#FF3B30]/30'
+                          : parsedPreview.emailOutcome === 'reversed'
+                          ? 'bg-[#AF52DE]/15 text-purple-300 border-[#AF52DE]/30'
+                          : 'bg-[#34C759]/15 text-[#34C759] border-[#34C759]/30'
+                      }`}
+                    >
+                      {parsedPreview.outcomeLabel}
+                    </span>
+                  </div>
+                  <span
+                    className={`font-bold text-sm tabular-nums ${
+                      parsedPreview.emailOutcome === 'declined'
+                        ? 'text-[#FF3B30] line-through'
+                        : parsedPreview.emailOutcome === 'reversed'
+                        ? 'text-purple-300'
+                        : 'text-[#34C759]'
+                    }`}
+                  >
                     {parsedPreview.currency} {parsedPreview.amount.toFixed(2)}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-[#86868B]">
                   <div>Merchant: <span className="text-zinc-200">{parsedPreview.title}</span></div>
-                  <div>Category: <span className="text-zinc-200">{parsedPreview.category}</span></div>
+                  <div>Status: <span className="text-zinc-200">{parsedPreview.outcomeLabel}</span></div>
                   <div>Date: <span className="text-zinc-200 tabular-nums">{parsedPreview.date}</span></div>
                   <div>Card: <span className="text-zinc-200">{parsedPreview.cardNumber ? `*${parsedPreview.cardNumber}` : 'N/A'}</span></div>
                 </div>
@@ -635,7 +877,7 @@ export default function EmailSyncModal({
               <button
                 type="button"
                 onClick={handleBatchImportAll}
-                disabled={isBatchImporting || detectedAlerts.every(a => a.imported)}
+                disabled={isBatchImporting || detectedAlerts.every(a => a.imported || a.emailOutcome === 'declined')}
                 className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#34C759] hover:bg-emerald-500 text-black transition disabled:opacity-40 shrink-0"
               >
                 {isBatchImporting ? 'Importing...' : 'Import All Pending'}
@@ -645,21 +887,38 @@ export default function EmailSyncModal({
             <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
               {detectedAlerts.map((alert, idx) => {
                 const isImported = Boolean(alert.imported);
+                const isDeclined = alert.emailOutcome === 'declined';
+                const isReversed = alert.emailOutcome === 'reversed';
                 return (
                   <div
-                    key={idx}
+                    key={alert.emailId || idx}
                     className={`p-3 rounded-2xl border transition flex items-center justify-between gap-3 ${
-                      isImported
+                      isDeclined
+                        ? 'bg-[#FF3B30]/5 border-[#FF3B30]/20 opacity-85'
+                        : isImported
                         ? 'bg-[#34C759]/5 border-[#34C759]/20 opacity-75'
                         : 'bg-[#2C2C2E] border-white/5 hover:border-white/15'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-white truncate">{alert.title}</span>
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30 shrink-0">
-                          Flotante
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold text-white truncate max-w-[180px]">{alert.title}</span>
+                        <span
+                          className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 ${
+                            isDeclined
+                              ? 'bg-[#FF3B30]/15 text-[#FF3B30] border-[#FF3B30]/30'
+                              : isReversed
+                              ? 'bg-[#AF52DE]/15 text-purple-300 border-[#AF52DE]/30'
+                              : 'bg-[#34C759]/15 text-[#34C759] border-[#34C759]/30'
+                          }`}
+                        >
+                          {alert.outcomeLabel || (isDeclined ? 'Declined' : isReversed ? 'Reversed' : 'Went Through')}
                         </span>
+                        {!isDeclined && (
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30 shrink-0">
+                            Flotante
+                          </span>
+                        )}
                         {alert.cardNumber && (
                           <span className="text-[10px] text-[#86868B] tabular-nums shrink-0">*{alert.cardNumber}</span>
                         )}
@@ -675,12 +934,12 @@ export default function EmailSyncModal({
 
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right">
-                        <div className="text-sm font-bold text-white tabular-nums">
+                        <div className={`text-sm font-bold tabular-nums ${isDeclined ? 'text-[#FF3B30] line-through' : isReversed ? 'text-purple-300' : 'text-white'}`}>
                           {alert.currency} {alert.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </div>
                         {budgets.length > 0 && (
                           <select
-                            disabled={isImported}
+                            disabled={isImported || isDeclined}
                             value={alert.selectedBudgetId || ''}
                             onChange={e => {
                               const val = e.target.value;
@@ -703,14 +962,16 @@ export default function EmailSyncModal({
                       <button
                         type="button"
                         onClick={() => handleImportSingle(idx)}
-                        disabled={isImported || importingIndex === idx}
+                        disabled={isImported || isDeclined || importingIndex === idx}
                         className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
-                          isImported
+                          isDeclined
+                            ? 'bg-[#FF3B30]/15 text-[#FF3B30] cursor-default'
+                            : isImported
                             ? 'bg-[#34C759]/20 text-[#34C759] cursor-default'
                             : 'bg-[#0071E3] hover:bg-[#0077ED] text-white'
                         }`}
                       >
-                        {isImported ? 'In Ledger' : importingIndex === idx ? 'Saving...' : 'Import'}
+                        {isDeclined ? 'Declined' : isImported ? 'In Ledger' : importingIndex === idx ? 'Saving...' : 'Import'}
                       </button>
                     </div>
                   </div>

@@ -8,7 +8,13 @@
         "avatar": { "type": "string", "maxLength": 10 },
         "currency": { "type": "string", "maxLength": 5 },
         "monthlyBudget": { "type": "number" },
-        "pin": { "type": "string", "maxLength": 10 }
+        "pin": { "type": "string", "maxLength": 10 },
+        "gmailSyncEnabled": { "type": "boolean" },
+        "gmailConnectedEmail": { "type": "string", "maxLength": 120 },
+        "gmailAutoScan": { "type": "boolean" },
+        "gmailLastHistoryId": { "type": "string", "maxLength": 40 },
+        "gmailLastSyncedAt": { "type": "string", "maxLength": 40 },
+        "processedEmailIds": { "type": "array" }
       }
     },
     "Transaction": {
@@ -28,7 +34,9 @@
         "paidQuotaIds": { "type": "array" },
         "isTransfer": { "type": "boolean" },
         "transferToBudgetId": { "type": "string", "maxLength": 50 },
-        "status": { "type": "string", "maxLength": 20 }
+        "status": { "type": "string", "maxLength": 20 },
+        "emailId": { "type": "string", "maxLength": 100 },
+        "emailOutcome": { "type": "string", "maxLength": 20 }
       }
     },
     "Budget": {

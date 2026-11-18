@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Plus,
   Sparkles,
@@ -43,14 +43,26 @@ import {
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
 import StatementUploadModal, { ImportedTransactionDraft } from './components/StatementUploadModal';
-import { ParsedEmailTransaction, findFuzzyPendingMatch } from './utils/bankEmailParser';
+import {
+  ParsedEmailTransaction,
+  findFuzzyPendingMatch,
+  findExistingTransactionForEmailAlert
+} from './utils/bankEmailParser';
 import AddTransactionModal from './components/AddTransactionModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import AddBudgetModal from './components/AddBudgetModal';
 import EditBudgetModal from './components/EditBudgetModal';
 import TransferModal from './components/TransferModal';
 import AiAdvisorModal from './components/AiAdvisorModal';
-import EmailSyncModal from './components/EmailSyncModal';
+import EmailSyncModal, { PersistentGmailState, SessionICloudState } from './components/EmailSyncModal';
+import {
+  authorizeGmailAccess,
+  checkNewGmailAlertsSinceHistory,
+  clearMemoryGmailSession,
+  getMemoryGmailToken,
+  trySilentRefreshGmailToken,
+  GmailAuthError
+} from './services/gmailSyncService';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -132,6 +144,12 @@ interface UserProfile {
   avatar: string;
   currency: string;
   monthlyBudget: number;
+  gmailSyncEnabled?: boolean;
+  gmailConnectedEmail?: string;
+  gmailAutoScan?: boolean;
+  gmailLastHistoryId?: string;
+  gmailLastSyncedAt?: string;
+  processedEmailIds?: string[];
 }
 
 export interface Transaction {
@@ -151,6 +169,8 @@ export interface Transaction {
   isTransfer?: boolean;
   transferToBudgetId?: string;
   status?: 'pending' | 'cleared';
+  emailId?: string;
+  emailOutcome?: 'approved' | 'declined' | 'reversed';
 }
 
 const CATEGORIES = [
@@ -207,6 +227,12 @@ export default function App() {
   const [isUploadStatementOpen, setIsUploadStatementOpen] = useState(false);
   const [isEmailParserOpen, setIsEmailParserOpen] = useState(false);
 
+  // Persistent Email Sync & Auto-Scan state (tokens kept strictly in memory, connection metadata in Firestore)
+  const [gmailToken, setGmailToken] = useState<string | null>(() => getMemoryGmailToken());
+  const [gmailTokenExpired, setGmailTokenExpired] = useState(false);
+  const [iCloudSession, setICloudSession] = useState<SessionICloudState | null>(null);
+  const [emailSyncToast, setEmailSyncToast] = useState<{ title: string; subtitle: string } | null>(null);
+
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResult, setAiResult] = useState('');
@@ -231,6 +257,10 @@ export default function App() {
       if (user) {
         await loadOrCreateUserProfile(user);
       } else {
+        clearMemoryGmailSession();
+        setGmailToken(null);
+        setGmailTokenExpired(false);
+        setICloudSession(null);
         setCurrentUserProfile(null);
         setTransactions([]);
         setBudgets([]);
@@ -302,6 +332,10 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
+      clearMemoryGmailSession();
+      setGmailToken(null);
+      setGmailTokenExpired(false);
+      setICloudSession(null);
       await signOut(auth);
     } catch (err) {
       console.error('Sign out error:', err);
@@ -703,7 +737,9 @@ export default function App() {
       category: (isTrans ? 'Transfer' : parsed.category || 'Other').slice(0, 50),
       date: (parsed.date || new Date().toISOString().split('T')[0]).slice(0, 20),
       notes: (parsed.notes || '').slice(0, 500),
-      ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
+      ...(parsed.budgetId?.trim() ? { budgetId: parsed.budgetId.trim().slice(0, 50) } : {}),
+      ...(parsed.emailId ? { emailId: parsed.emailId.slice(0, 100) } : {}),
+      ...(parsed.emailOutcome ? { emailOutcome: parsed.emailOutcome } : {}),
       status: 'pending' as const,
       ...(isTrans ? { isTransfer: true } : {})
     });
@@ -764,6 +800,8 @@ export default function App() {
         date: (item.date || new Date().toISOString().split('T')[0]).slice(0, 20),
         notes: (item.notes || '').slice(0, 500),
         ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
+        ...(item.emailId ? { emailId: item.emailId.slice(0, 100) } : {}),
+        ...(item.emailOutcome ? { emailOutcome: item.emailOutcome } : {}),
         status: 'pending' as const,
         ...(isTrans ? { isTransfer: true } : {})
       });
@@ -792,6 +830,342 @@ export default function App() {
 
     return createdTxs.length;
   };
+
+  // Persistent Gmail connection metadata & automatic real-time incoming email watcher
+  const updateProfileEmailMeta = useCallback(
+    async (patch: Partial<UserProfile>, appendProcessedIds?: string[]) => {
+      if (!firebaseUser) return;
+      setCurrentUserProfile(prev => {
+        if (!prev) return prev;
+        const mergedProcessed = appendProcessedIds?.length
+          ? Array.from(new Set([...(prev.processedEmailIds || []), ...appendProcessedIds])).slice(-250)
+          : prev.processedEmailIds;
+        const nextProfile = stripUndefined({
+          ...prev,
+          ...patch,
+          ...(mergedProcessed ? { processedEmailIds: mergedProcessed } : {})
+        });
+        setDoc(doc(db, 'users', firebaseUser.uid), nextProfile).catch(err =>
+          console.error('Failed to persist email sync metadata:', err)
+        );
+        return nextProfile;
+      });
+    },
+    [firebaseUser]
+  );
+
+  const handleAuthorizeGmail = useCallback(async () => {
+    const res = await authorizeGmailAccess(currentUserProfile?.gmailConnectedEmail);
+    setGmailToken(res.accessToken);
+    setGmailTokenExpired(false);
+    await updateProfileEmailMeta({
+      gmailSyncEnabled: true,
+      gmailConnectedEmail: res.emailAddress,
+      gmailAutoScan: currentUserProfile?.gmailAutoScan ?? true,
+      gmailLastHistoryId: res.historyId || currentUserProfile?.gmailLastHistoryId,
+      gmailLastSyncedAt: new Date().toISOString()
+    });
+    return res;
+  }, [
+    currentUserProfile?.gmailAutoScan,
+    currentUserProfile?.gmailConnectedEmail,
+    currentUserProfile?.gmailLastHistoryId,
+    updateProfileEmailMeta
+  ]);
+
+  const handleDisconnectGmail = useCallback(async () => {
+    clearMemoryGmailSession();
+    setGmailToken(null);
+    setGmailTokenExpired(false);
+    await updateProfileEmailMeta({
+      gmailSyncEnabled: false,
+      gmailAutoScan: false,
+      gmailLastHistoryId: ''
+    });
+  }, [updateProfileEmailMeta]);
+
+  const handleToggleGmailAutoScan = useCallback(
+    async (enabled: boolean) => {
+      await updateProfileEmailMeta({ gmailAutoScan: enabled });
+    },
+    [updateProfileEmailMeta]
+  );
+
+  const handleGmailScanComplete = useCallback(
+    async (meta: {
+      historyId?: string;
+      emailAddress?: string;
+      lastSyncedAt: string;
+      newProcessedIds?: string[];
+    }) => {
+      await updateProfileEmailMeta(
+        {
+          gmailSyncEnabled: true,
+          ...(meta.emailAddress ? { gmailConnectedEmail: meta.emailAddress } : {}),
+          ...(meta.historyId ? { gmailLastHistoryId: meta.historyId } : {}),
+          gmailLastSyncedAt: meta.lastSyncedAt
+        },
+        meta.newProcessedIds
+      );
+    },
+    [updateProfileEmailMeta]
+  );
+
+  const gmailState: PersistentGmailState = useMemo(
+    () => ({
+      enabled: Boolean(currentUserProfile?.gmailSyncEnabled),
+      email: currentUserProfile?.gmailConnectedEmail || '',
+      autoScan: currentUserProfile?.gmailAutoScan ?? true,
+      tokenActive: Boolean(gmailToken) && !gmailTokenExpired,
+      tokenExpired: gmailTokenExpired,
+      historyId: currentUserProfile?.gmailLastHistoryId,
+      lastSyncedAt: currentUserProfile?.gmailLastSyncedAt
+    }),
+    [currentUserProfile, gmailToken, gmailTokenExpired]
+  );
+
+  const budgetsRef = useRef(budgets);
+  budgetsRef.current = budgets;
+  const transactionsRef = useRef(transactions);
+  transactionsRef.current = transactions;
+  const profileRef = useRef(currentUserProfile);
+  profileRef.current = currentUserProfile;
+  const gmailAutoLockRef = useRef(false);
+  const icloudAutoLockRef = useRef(false);
+  const silentRefreshAttemptedRef = useRef(false);
+
+  // Attempt silent Gmail token renewal once on app reload if user previously enabled Gmail Auto-Sync
+  useEffect(() => {
+    if (!firebaseUser || !currentUserProfile?.gmailSyncEnabled || gmailToken || silentRefreshAttemptedRef.current) {
+      return;
+    }
+    silentRefreshAttemptedRef.current = true;
+    trySilentRefreshGmailToken(currentUserProfile.gmailConnectedEmail).then(refreshed => {
+      if (refreshed) {
+        setGmailToken(refreshed);
+        setGmailTokenExpired(false);
+      }
+    });
+  }, [firebaseUser, currentUserProfile?.gmailSyncEnabled, currentUserProfile?.gmailConnectedEmail, gmailToken]);
+
+  const filterUnprocessedAlerts = useCallback((alerts: ParsedEmailTransaction[]) => {
+    const processedSet = new Set(profileRef.current?.processedEmailIds || []);
+    transactionsRef.current.forEach(t => {
+      if (t.emailId) processedSet.add(t.emailId);
+    });
+
+    const latestBudgets = budgetsRef.current;
+    const claimedTxIds = new Set<string>();
+    const freshAlerts: Array<ParsedEmailTransaction & { budgetId?: string }> = [];
+    const declinedAlerts: ParsedEmailTransaction[] = [];
+    const seenEmailIds: string[] = [];
+
+    for (const alert of alerts) {
+      if (alert.emailId && processedSet.has(alert.emailId)) {
+        continue;
+      }
+
+      if (alert.emailId) {
+        seenEmailIds.push(alert.emailId);
+      }
+
+      let matched = latestBudgets.find(b => {
+        if (!alert.cardNumber) return false;
+        const haystack = `${b.name || ''} ${b.category || ''} ${b.description || ''}`;
+        return haystack.includes(alert.cardNumber);
+      });
+      if (!matched && alert.bankName) {
+        const cleanBank = alert.bankName.toLowerCase().replace('banco ', '').trim();
+        matched = latestBudgets.find(b =>
+          `${b.name || ''} ${b.category || ''}`.toLowerCase().includes(cleanBank)
+        );
+      }
+
+      const alertWithBudget = { ...alert, budgetId: matched?.id || undefined };
+
+      // Do NOT auto-add declined transactions to spending ledger
+      if (alert.emailOutcome === 'declined') {
+        declinedAlerts.push(alert);
+        continue;
+      }
+
+      // Fuzzy + multi-signal match against already-registered ledger transactions
+      const existingMatch = findExistingTransactionForEmailAlert(
+        transactionsRef.current,
+        alertWithBudget,
+        claimedTxIds
+      );
+      if (existingMatch) {
+        if (existingMatch.id) claimedTxIds.add(existingMatch.id);
+        continue;
+      }
+
+      freshAlerts.push(alertWithBudget);
+    }
+
+    return { freshAlerts, declinedAlerts, seenEmailIds };
+  }, []);
+
+  const showNewAlertToast = useCallback(
+    (items: ParsedEmailTransaction[], declined: ParsedEmailTransaction[] = []) => {
+      if (items.length === 1) {
+        const a = items[0];
+        const tag = a.emailOutcome === 'reversed' ? 'Reversed / Refund' : 'Flotante';
+        setEmailSyncToast({
+          title: `New bank alert synced: ${a.title}`,
+          subtitle: `${a.currency} ${a.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • ${a.bankName} (${tag})`
+        });
+      } else if (items.length > 1) {
+        setEmailSyncToast({
+          title: `Synced ${items.length} new bank alerts`,
+          subtitle: 'Added automatically to Pending Flotante ledger'
+        });
+      } else if (declined.length > 0) {
+        const d = declined[0];
+        setEmailSyncToast({
+          title: `Declined charge ignored: ${d.title}`,
+          subtitle: `${d.currency} ${d.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Did not go through`
+        });
+      }
+    },
+    []
+  );
+
+  useEffect(() => {
+    if (!emailSyncToast) return;
+    const timer = window.setTimeout(() => setEmailSyncToast(null), 5500);
+    return () => window.clearTimeout(timer);
+  }, [emailSyncToast]);
+
+  // Automatic real-time Gmail watcher (15s incremental history.list poll + immediate on tab focus)
+  useEffect(() => {
+    if (!firebaseUser || !gmailToken || gmailTokenExpired || !gmailState.autoScan) return;
+
+    const runIncrementalGmailCheck = async () => {
+      if (gmailAutoLockRef.current) return;
+      let liveToken = getMemoryGmailToken() || gmailToken;
+      if (!liveToken) {
+        const refreshed = await trySilentRefreshGmailToken(profileRef.current?.gmailConnectedEmail);
+        if (refreshed) {
+          liveToken = refreshed;
+          setGmailToken(refreshed);
+          setGmailTokenExpired(false);
+        } else {
+          setGmailTokenExpired(true);
+          return;
+        }
+      }
+      gmailAutoLockRef.current = true;
+      try {
+        const currentHistoryId = profileRef.current?.gmailLastHistoryId;
+        const result = await checkNewGmailAlertsSinceHistory(liveToken, currentHistoryId);
+        const { freshAlerts, declinedAlerts, seenEmailIds } = filterUnprocessedAlerts(result.alerts);
+
+        if (freshAlerts.length > 0) {
+          await handleBatchIngestEmailTxs(freshAlerts);
+        }
+        if (freshAlerts.length > 0 || declinedAlerts.length > 0) {
+          showNewAlertToast(freshAlerts, declinedAlerts);
+        }
+
+        await updateProfileEmailMeta(
+          {
+            gmailSyncEnabled: true,
+            ...(result.emailAddress ? { gmailConnectedEmail: result.emailAddress } : {}),
+            ...(result.historyId ? { gmailLastHistoryId: result.historyId } : {}),
+            gmailLastSyncedAt: new Date().toISOString()
+          },
+          seenEmailIds
+        );
+      } catch (err: any) {
+        if (err instanceof GmailAuthError && err.code === 'GMAIL_TOKEN_EXPIRED') {
+          const refreshed = await trySilentRefreshGmailToken(profileRef.current?.gmailConnectedEmail);
+          if (refreshed) {
+            setGmailToken(refreshed);
+            setGmailTokenExpired(false);
+          } else {
+            setGmailToken(null);
+            setGmailTokenExpired(true);
+          }
+        }
+      } finally {
+        gmailAutoLockRef.current = false;
+      }
+    };
+
+    runIncrementalGmailCheck();
+    const intervalId = window.setInterval(runIncrementalGmailCheck, 15000);
+    const handleVisibilityOrFocus = () => {
+      if (document.visibilityState === 'visible') {
+        runIncrementalGmailCheck();
+      }
+    };
+    window.addEventListener('focus', handleVisibilityOrFocus);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+    };
+  }, [
+    firebaseUser,
+    gmailToken,
+    gmailTokenExpired,
+    gmailState.autoScan,
+    filterUnprocessedAlerts,
+    handleBatchIngestEmailTxs,
+    showNewAlertToast,
+    updateProfileEmailMeta
+  ]);
+
+  // Automatic session iCloud watcher (45s poll when user connected iCloud & left Auto-Scan on)
+  useEffect(() => {
+    if (!firebaseUser || !iCloudSession?.connected || !iCloudSession.autoScan) return;
+
+    const runICloudCheck = async () => {
+      if (icloudAutoLockRef.current) return;
+      icloudAutoLockRef.current = true;
+      try {
+        const res = await fetch('/api/email/sync-icloud', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: iCloudSession.email,
+            password: iCloudSession.password,
+            limit: iCloudSession.limit || 25
+          })
+        });
+        const text = await res.text();
+        if (!res.ok || text.trim().startsWith('<')) return;
+        const data = JSON.parse(text);
+        const { freshAlerts, declinedAlerts, seenEmailIds } = filterUnprocessedAlerts(data.alerts || []);
+        if (freshAlerts.length > 0) {
+          await handleBatchIngestEmailTxs(freshAlerts);
+        }
+        if (freshAlerts.length > 0 || declinedAlerts.length > 0) {
+          showNewAlertToast(freshAlerts, declinedAlerts);
+        }
+        if (seenEmailIds.length > 0) {
+          await updateProfileEmailMeta({ gmailLastSyncedAt: new Date().toISOString() }, seenEmailIds);
+        }
+      } catch {
+        // Silent background retry next cycle
+      } finally {
+        icloudAutoLockRef.current = false;
+      }
+    };
+
+    const intervalId = window.setInterval(runICloudCheck, 45000);
+    return () => window.clearInterval(intervalId);
+  }, [
+    firebaseUser,
+    iCloudSession,
+    filterUnprocessedAlerts,
+    handleBatchIngestEmailTxs,
+    showNewAlertToast,
+    updateProfileEmailMeta
+  ]);
 
   const handleImportStatementTransactions = async (rows: ImportedTransactionDraft[]) => {
     if (!firebaseUser || rows.length === 0) return;
@@ -1619,7 +1993,19 @@ export default function App() {
                 className="flex items-center gap-1.5 bg-[#2C2C2E] hover:bg-white/15 text-white border border-white/10 px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98]"
               >
                 <Mail className="w-3.5 h-3.5 text-[#FF9F0A]" />
-                <span className="hidden sm:inline">Sync Email</span>
+                <span className="hidden sm:inline">
+                  {(gmailState.enabled && gmailState.tokenActive) || iCloudSession?.connected
+                    ? 'Email Auto-Sync'
+                    : gmailState.enabled
+                    ? 'Reconnect Gmail'
+                    : 'Sync Email'}
+                </span>
+                {((gmailState.enabled && gmailState.tokenActive) || iCloudSession?.connected) && (
+                  <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
+                )}
+                {gmailState.enabled && !gmailState.tokenActive && !iCloudSession?.connected && (
+                  <span className="w-2 h-2 rounded-full bg-[#FF9F0A]" />
+                )}
               </button>
 
               <button
@@ -2034,7 +2420,20 @@ export default function App() {
         onClose={() => setIsEmailParserOpen(false)}
         budgets={budgets}
         existingTransactions={transactions}
+        processedEmailIds={currentUserProfile?.processedEmailIds || []}
         currencySymbol={currencySymbol}
+        gmailState={gmailState}
+        gmailToken={gmailToken}
+        onAuthorizeGmail={handleAuthorizeGmail}
+        onDisconnectGmail={handleDisconnectGmail}
+        onToggleGmailAutoScan={handleToggleGmailAutoScan}
+        onGmailScanComplete={handleGmailScanComplete}
+        onMarkGmailTokenExpired={() => {
+          setGmailToken(null);
+          setGmailTokenExpired(true);
+        }}
+        iCloudSession={iCloudSession}
+        onSetICloudSession={setICloudSession}
         onIngestParsedTx={handleIngestParsedEmailTx}
         onBatchIngestTxs={handleBatchIngestEmailTxs}
       />
@@ -2048,6 +2447,16 @@ export default function App() {
         aiLoading={aiLoading}
         onAskAi={handleAskAi}
       />
+
+      {emailSyncToast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[#34C759]/35 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3 max-w-sm">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#34C759] shrink-0 animate-pulse" />
+          <div className="min-w-0">
+            <div className="text-xs font-semibold text-white truncate">{emailSyncToast.title}</div>
+            <div className="text-[11px] text-[#86868B] truncate">{emailSyncToast.subtitle}</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -306,6 +306,16 @@ export default function TransactionsPage({
                             Cleared
                           </span>
                         )}
+                        {t.emailOutcome === 'reversed' && (
+                          <span className="inline-flex items-center gap-1 bg-[#AF52DE]/15 text-purple-300 border border-[#AF52DE]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                            Reversed
+                          </span>
+                        )}
+                        {t.emailOutcome === 'declined' && (
+                          <span className="inline-flex items-center gap-1 bg-[#FF3B30]/15 text-[#FF3B30] border border-[#FF3B30]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                            Declined
+                          </span>
+                        )}
                       </div>
                       {t.notes && <span className="text-[10px] text-[#86868B] block mt-0.5 truncate max-w-xs">{t.notes}</span>}
                       {(typeof t.loanPrincipalPaid === 'number' || typeof t.loanInterestPaid === 'number') && (
