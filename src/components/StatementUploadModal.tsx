@@ -12,6 +12,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
+import { getApiUrl } from '../utils/api';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -38,6 +39,128 @@ function makeTxDedupKey(title: string, amount: number, date: string): string {
   const normAmount = Math.abs(Number(amount) || 0).toFixed(2);
   const normDate = (date || '').trim().slice(0, 10);
   return `${normTitle}|${normAmount}|${normDate}`;
+}
+
+function parseCsvLine(line: string, delimiter: string): string[] {
+  const cells: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === delimiter && !inQuotes) {
+      cells.push(cur.trim());
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  cells.push(cur.trim());
+  return cells;
+}
+
+function normalizeDateToIso(raw: string): string {
+  const s = (raw || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const slashMatch = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (slashMatch) {
+    const p1 = Number(slashMatch[1]);
+    const p2 = Number(slashMatch[2]);
+    let yr = Number(slashMatch[3]);
+    if (yr < 100) yr += 2000;
+    const isDayFirst = p1 > 12;
+    const month = isDayFirst ? p2 : p1;
+    const day = isDayFirst ? p1 : p2;
+    return `${yr}-${String(Math.min(12, Math.max(1, month))).padStart(2, '0')}-${String(Math.min(31, Math.max(1, day))).padStart(2, '0')}`;
+  }
+  const parsed = new Date(s);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().split('T')[0];
+  }
+  return new Date().toISOString().split('T')[0];
+}
+
+function parseCsvTransactionsLocally(text: string, fallbackCategories: string[]): any[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map(l => l.trim())
+    .filter(Boolean);
+  if (lines.length < 2) return [];
+
+  const delimiter = lines[0].includes('\t') ? '\t' : lines[0].includes(';') && !lines[0].includes(',') ? ';' : ',';
+  const headers = parseCsvLine(lines[0], delimiter).map(h => h.toLowerCase());
+
+  const findCol = (patterns: string[]) => headers.findIndex(h => patterns.some(p => h.includes(p)));
+  const dateIdx = findCol(['date', 'fecha', 'posted']);
+  const titleIdx = findCol(['desc', 'merchant', 'title', 'name', 'memo', 'concept', 'detail', 'narration']);
+  const amountIdx = findCol(['amount', 'monto', 'value', 'total', 'importe']);
+  const debitIdx = findCol(['debit', 'cargo', 'withdrawal', 'outflow']);
+  const creditIdx = findCol(['credit', 'abono', 'deposit', 'inflow']);
+  const catIdx = findCol(['cat']);
+  const typeIdx = findCol(['type', 'tipo']);
+
+  const results: any[] = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCsvLine(lines[i], delimiter);
+    if (cols.length < 2) continue;
+
+    const cleanNum = (val: string) => {
+      const n = parseFloat((val || '').replace(/[^0-9.-]/g, ''));
+      return isNaN(n) ? 0 : n;
+    };
+
+    let amount = 0;
+    let type: 'income' | 'expense' = 'expense';
+
+    if (debitIdx >= 0 || creditIdx >= 0) {
+      const deb = debitIdx >= 0 ? Math.abs(cleanNum(cols[debitIdx])) : 0;
+      const cred = creditIdx >= 0 ? Math.abs(cleanNum(cols[creditIdx])) : 0;
+      if (cred > 0 && deb === 0) {
+        amount = cred;
+        type = 'income';
+      } else {
+        amount = deb || cred;
+        type = 'expense';
+      }
+    } else if (amountIdx >= 0) {
+      const rawAmt = cleanNum(cols[amountIdx]);
+      amount = Math.abs(rawAmt);
+      if (typeIdx >= 0) {
+        const tStr = (cols[typeIdx] || '').toLowerCase();
+        type = tStr.includes('inc') || tStr.includes('cred') || tStr.includes('dep') || tStr.includes('ingr') ? 'income' : 'expense';
+      } else if (rawAmt > 0 && (cols[amountIdx] || '').includes('+')) {
+        type = 'income';
+      }
+    }
+
+    if (amount <= 0) continue;
+
+    const title = ((titleIdx >= 0 ? cols[titleIdx] : cols[1]) || 'Transaction').slice(0, 180);
+    const date = normalizeDateToIso(dateIdx >= 0 ? cols[dateIdx] : cols[0]);
+    const rawCat = catIdx >= 0 ? cols[catIdx] : '';
+    const matchedCat =
+      fallbackCategories.find(c => c.toLowerCase() === rawCat.trim().toLowerCase()) ||
+      rawCat.trim() ||
+      'Other';
+    const isPayment = /payment|pago|abono/i.test(title);
+
+    results.push({
+      title,
+      amount,
+      type,
+      category: matchedCat.slice(0, 45),
+      date,
+      notes: '',
+      isLoanPayment: isPayment
+    });
+  }
+  return results;
 }
 
 interface StatementUploadModalProps {
@@ -153,15 +276,46 @@ export default function StatementUploadModal({
         payload.mimeType = mime === 'image/jpg' ? 'image/jpeg' : mime;
       }
 
-      const response = await fetch('/api/ai/parse-statement', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Failed to parse statement.');
+      let data: any = null;
+      try {
+        const response = await fetch(getApiUrl('/api/ai/parse-statement'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const contentType = response.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.error || 'Failed to parse statement.');
+          }
+        } else if (isTextBased && payload.textContent) {
+          const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
+          data = {
+            detectedAccountName: file.name.replace(/\.[^/.]+$/, ''),
+            statementPeriod: '',
+            transactions: localRows
+          };
+        } else {
+          throw new Error(
+            'PDF/Image AI parsing requires a backend API server (VITE_API_BASE_URL). On GitHub Pages without a backend URL, please upload a CSV statement.'
+          );
+        }
+      } catch (networkErr: any) {
+        if (isTextBased && payload.textContent && !data) {
+          const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
+          if (localRows.length > 0) {
+            data = {
+              detectedAccountName: file.name.replace(/\.[^/.]+$/, ''),
+              statementPeriod: '',
+              transactions: localRows
+            };
+          } else {
+            throw networkErr;
+          }
+        } else {
+          throw networkErr;
+        }
       }
 
       const activeBudgetId = latestBudgetIdRef.current;

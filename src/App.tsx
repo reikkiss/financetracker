@@ -49,6 +49,7 @@ import {
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
 import StatementUploadModal, { ImportedTransactionDraft } from './components/StatementUploadModal';
+import { getApiUrl } from './utils/api';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -157,6 +158,7 @@ export default function App() {
   const [currentUserProfile, setCurrentUserProfile] = useState<UserProfile | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isLoggingIn, setIsLoggingIn] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stats' | 'budgets' | 'transactions' | 'settings'>('dashboard');
 
   // Data states (strictly from database)
@@ -294,11 +296,18 @@ export default function App() {
   const handleGoogleSignIn = async () => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
+    setAuthError(null);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
-      if (err.code !== 'auth/cancelled-popup-request' && err.code !== 'auth/popup-closed-by-user') {
+      if (err.code === 'auth/unauthorized-domain') {
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'your-github-pages-domain';
+        setAuthError(
+          `Domain "${host}" is not authorized in Firebase Auth yet. Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains.`
+        );
+      } else if (err.code !== 'auth/cancelled-popup-request' && err.code !== 'auth/popup-closed-by-user') {
         console.error('Sign-in error:', err);
+        setAuthError(err.message || 'Failed to sign in with Google.');
       }
     } finally {
       setIsLoggingIn(false);
@@ -1174,15 +1183,20 @@ export default function App() {
     if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
     setAiLoading(true);
     try {
-      const res = await fetch('/api/ai/advice', {
+      const res = await fetch(getApiUrl('/api/ai/advice'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: firebaseUser.uid, prompt: aiPrompt })
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        setAiResult('AI Financial Advisor requires a running backend server (configure VITE_API_BASE_URL when hosting statically on GitHub Pages).');
+        return;
+      }
       const data = await res.json();
-      setAiResult(data.advice || 'No response generated.');
+      setAiResult(data.advice || data.error || 'No response generated.');
     } catch (err) {
-      setAiResult('Error generating AI insights.');
+      setAiResult('Unable to reach the AI Advisor backend.');
     } finally {
       setAiLoading(false);
     }
@@ -1211,6 +1225,12 @@ export default function App() {
             <h1 className="text-2xl font-bold tracking-tight">Finance Tracker</h1>
             <p className="text-xs text-[#9b9b9b] mt-1">Private Notion-style financial workspace connected to Firebase DB <span className="text-emerald-400 font-mono">seashore</span></p>
           </div>
+
+          {authError && (
+            <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl p-3 text-[11px] text-left leading-relaxed">
+              {authError}
+            </div>
+          )}
 
           <button
             onClick={handleGoogleSignIn}

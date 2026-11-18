@@ -34,6 +34,15 @@ function getAiClient() {
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '25mb' }));
+  app.use('/api', (req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   // API Endpoints backed by Firebase Firestore (seashore)
   app.get('/api/users', async (req, res) => {
