@@ -44,9 +44,13 @@ import MonthlyStatsPage from './components/MonthlyStatsPage';
 import BudgetsPage, { Budget, BudgetItem } from './components/BudgetsPage';
 import {
   LoanQuota,
+  LoanCalcMethod,
+  LoanRatePeriod,
+  allocateLoanPayment,
   calculateCreditCardMonthlyLimit,
   calculateLoanMonthlyQuota,
-  generateLoanQuotasSchedule
+  generateLoanQuotasSchedule,
+  reverseLoanPaymentOnQuotas
 } from './utils/financeMath';
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
@@ -135,6 +139,9 @@ export interface Transaction {
   notes?: string;
   budgetId?: string;
   isLoanPayment?: boolean;
+  loanPrincipalPaid?: number;
+  loanInterestPaid?: number;
+  paidQuotaIds?: string[];
   isTransfer?: boolean;
   transferToBudgetId?: string;
 }
@@ -226,6 +233,8 @@ export default function App() {
   const [newBudgetOverdraftPercentage, setNewBudgetOverdraftPercentage] = useState('');
   const [newBudgetLoanTermMonths, setNewBudgetLoanTermMonths] = useState('12');
   const [newBudgetLoanStartDate, setNewBudgetLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newBudgetLoanCalcMethod, setNewBudgetLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
+  const [newBudgetLoanRatePeriod, setNewBudgetLoanRatePeriod] = useState<LoanRatePeriod>('annual');
   const [newBudgetCustomMonthlyQuota, setNewBudgetCustomMonthlyQuota] = useState('');
   const [newBudgetLoanQuotas, setNewBudgetLoanQuotas] = useState<LoanQuota[]>([]);
   const [newBudgetExtraExpenses, setNewBudgetExtraExpenses] = useState('');
@@ -246,6 +255,8 @@ export default function App() {
   const [editBudgetOverdraftPercentage, setEditBudgetOverdraftPercentage] = useState('');
   const [editBudgetLoanTermMonths, setEditBudgetLoanTermMonths] = useState('12');
   const [editBudgetLoanStartDate, setEditBudgetLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [editBudgetLoanCalcMethod, setEditBudgetLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
+  const [editBudgetLoanRatePeriod, setEditBudgetLoanRatePeriod] = useState<LoanRatePeriod>('annual');
   const [editBudgetCustomMonthlyQuota, setEditBudgetCustomMonthlyQuota] = useState('');
   const [editBudgetLoanQuotas, setEditBudgetLoanQuotas] = useState<LoanQuota[]>([]);
   const [editBudgetExtraExpenses, setEditBudgetExtraExpenses] = useState('');
@@ -458,85 +469,189 @@ export default function App() {
     return listWithStats.filter(m => m.q === statsQuarterFilter);
   }, [transactions, allMonthsList, statsQuarterFilter]);
 
-  const getTxAccountImpacts = (
-    tx: {
-      amount: number;
-      type: 'income' | 'expense';
-      budgetId?: string;
-      isLoanPayment?: boolean;
-      isTransfer?: boolean;
-      transferToBudgetId?: string;
-    },
+  const applySingleTxInMemory = (
+    tx: Transaction,
     budgetList: Budget[]
-  ): Record<string, number> => {
-    const impacts: Record<string, number> = {};
+  ): { enrichedTx: Transaction; nextBudgets: Budget[]; touchedIds: string[] } => {
     const amt = Math.abs(Number(tx.amount) || 0);
-    if (amt <= 0) return impacts;
+    if (amt <= 0) return { enrichedTx: tx, nextBudgets: budgetList, touchedIds: [] };
 
-    const isDebt = (b?: Budget) => b?.accountType === 'credit_card' || b?.accountType === 'loan';
+    const working = budgetList.map(b => ({ ...b }));
+    const touchedIds = new Set<string>();
+    let enrichedTx: Transaction = { ...tx };
+
     const isLiquid = (b?: Budget) => b?.accountType === 'bank_account' || b?.accountType === 'debit_account';
+    const isCreditCard = (b?: Budget) => b?.accountType === 'credit_card';
+    const isLoan = (b?: Budget) => b?.accountType === 'loan';
+
+    const applyLoanPaymentToTarget = (loanBudget: Budget) => {
+      const remPrin = Number(loanBudget.actualUsedAmount ?? loanBudget.creditLimit ?? 0);
+      const loanPrincipal = Number(loanBudget.creditLimit || loanBudget.limit || remPrin);
+      const split = allocateLoanPayment({
+        amount: amt,
+        principal: loanPrincipal,
+        remainingPrincipal: remPrin,
+        apr: Number(loanBudget.apr || 0),
+        ratePeriod: loanBudget.loanRatePeriod || 'annual',
+        calcMethod: loanBudget.loanCalcMethod || 'amortized',
+        quotas: loanBudget.loanQuotas,
+        paymentDate: tx.date,
+        paymentTxId: tx.id
+      });
+      loanBudget.actualUsedAmount = Math.max(0, Number((remPrin - split.principalPaid).toFixed(2)));
+      if (split.updatedQuotas) {
+        loanBudget.loanQuotas = split.updatedQuotas;
+      }
+      touchedIds.add(loanBudget.id);
+      enrichedTx = {
+        ...enrichedTx,
+        loanPrincipalPaid: split.principalPaid,
+        loanInterestPaid: split.interestPaid,
+        ...(split.paidQuotaIds.length > 0 ? { paidQuotaIds: split.paidQuotaIds } : {})
+      };
+    };
 
     if (tx.isTransfer && tx.budgetId && tx.transferToBudgetId && tx.budgetId !== tx.transferToBudgetId) {
-      const src = budgetList.find(b => b.id === tx.budgetId);
-      const dst = budgetList.find(b => b.id === tx.transferToBudgetId);
+      const src = working.find(b => b.id === tx.budgetId);
+      const dst = working.find(b => b.id === tx.transferToBudgetId);
       if (src) {
         if (isLiquid(src)) {
-          impacts[src.id] = (impacts[src.id] || 0) - amt;
-        } else if (isDebt(src)) {
-          impacts[src.id] = (impacts[src.id] || 0) + amt;
+          src.accountBalance = Number(((src.accountBalance || 0) - amt).toFixed(2));
+          touchedIds.add(src.id);
+        } else if (isCreditCard(src) || isLoan(src)) {
+          src.actualUsedAmount = Math.max(0, Number(((src.actualUsedAmount || 0) + amt).toFixed(2)));
+          touchedIds.add(src.id);
         }
       }
       if (dst) {
         if (isLiquid(dst)) {
-          impacts[dst.id] = (impacts[dst.id] || 0) + amt;
-        } else if (isDebt(dst)) {
-          impacts[dst.id] = (impacts[dst.id] || 0) - amt;
+          dst.accountBalance = Number(((dst.accountBalance || 0) + amt).toFixed(2));
+          touchedIds.add(dst.id);
+        } else if (isCreditCard(dst)) {
+          dst.actualUsedAmount = Math.max(0, Number(((dst.actualUsedAmount || 0) - amt).toFixed(2)));
+          touchedIds.add(dst.id);
+        } else if (isLoan(dst)) {
+          applyLoanPaymentToTarget(dst);
         }
       }
-      return impacts;
+      return { enrichedTx, nextBudgets: working, touchedIds: Array.from(touchedIds) };
     }
 
-    if (!tx.budgetId) return impacts;
-    const b = budgetList.find(item => item.id === tx.budgetId);
-    if (!b) return impacts;
+    if (!tx.budgetId) return { enrichedTx, nextBudgets: budgetList, touchedIds: [] };
+    const b = working.find(item => item.id === tx.budgetId);
+    if (!b) return { enrichedTx, nextBudgets: budgetList, touchedIds: [] };
 
     if (isLiquid(b)) {
-      impacts[b.id] = tx.type === 'income' ? amt : -amt;
-    } else if (isDebt(b)) {
-      impacts[b.id] = tx.isLoanPayment || tx.type === 'income' ? -amt : amt;
+      const delta = tx.type === 'income' ? amt : -amt;
+      b.accountBalance = Number(((b.accountBalance || 0) + delta).toFixed(2));
+      touchedIds.add(b.id);
+    } else if (isCreditCard(b)) {
+      const delta = tx.isLoanPayment || tx.type === 'income' ? -amt : amt;
+      b.actualUsedAmount = Math.max(0, Number(((b.actualUsedAmount || 0) + delta).toFixed(2)));
+      touchedIds.add(b.id);
+    } else if (isLoan(b)) {
+      if (tx.isLoanPayment || tx.type === 'income') {
+        applyLoanPaymentToTarget(b);
+      } else {
+        b.actualUsedAmount = Math.max(0, Number(((b.actualUsedAmount || 0) + amt).toFixed(2)));
+        touchedIds.add(b.id);
+      }
     }
-    return impacts;
+
+    return { enrichedTx, nextBudgets: working, touchedIds: Array.from(touchedIds) };
   };
 
-  const applyBudgetDeltas = async (deltas: Record<string, number>, currentBudgets: Budget[]) => {
-    const entries = Object.entries(deltas).filter(([, delta]) => Math.abs(delta) > 0.0001);
-    if (entries.length === 0) return currentBudgets;
+  const revertSingleTxInMemory = (
+    tx: Transaction,
+    budgetList: Budget[]
+  ): { nextBudgets: Budget[]; touchedIds: string[] } => {
+    const amt = Math.abs(Number(tx.amount) || 0);
+    if (amt <= 0) return { nextBudgets: budgetList, touchedIds: [] };
 
-    const updatedMap: Record<string, Budget> = {};
-    for (const [budgetId, delta] of entries) {
-      const target = currentBudgets.find(b => b.id === budgetId);
-      if (!target) continue;
+    const working = budgetList.map(b => ({ ...b }));
+    const touchedIds = new Set<string>();
 
-      let updatedBudget: Budget | null = null;
-      if (target.accountType === 'bank_account' || target.accountType === 'debit_account') {
-        const nextBalance = Number(((target.accountBalance || 0) + delta).toFixed(2));
-        updatedBudget = { ...target, accountBalance: nextBalance };
-      } else if (target.accountType === 'credit_card' || target.accountType === 'loan') {
-        const nextUsed = Math.max(0, Number(((target.actualUsedAmount || 0) + delta).toFixed(2)));
-        updatedBudget = { ...target, actualUsedAmount: nextUsed };
+    const isLiquid = (b?: Budget) => b?.accountType === 'bank_account' || b?.accountType === 'debit_account';
+    const isCreditCard = (b?: Budget) => b?.accountType === 'credit_card';
+    const isLoan = (b?: Budget) => b?.accountType === 'loan';
+
+    const revertLoanPaymentOnTarget = (loanBudget: Budget) => {
+      const principalToRestore =
+        tx.loanPrincipalPaid !== undefined ? Number(tx.loanPrincipalPaid) || 0 : amt;
+      const maxPrin = Number(loanBudget.creditLimit || loanBudget.limit || 0);
+      const currentUsed = Number(loanBudget.actualUsedAmount || 0);
+      const restored = Number((currentUsed + principalToRestore).toFixed(2));
+      loanBudget.actualUsedAmount = maxPrin > 0 ? Math.min(maxPrin, restored) : restored;
+      if (loanBudget.loanQuotas && loanBudget.loanQuotas.length > 0) {
+        loanBudget.loanQuotas = reverseLoanPaymentOnQuotas(loanBudget.loanQuotas, tx.paidQuotaIds, tx.id);
       }
+      touchedIds.add(loanBudget.id);
+    };
 
-      if (!updatedBudget) continue;
+    if (tx.isTransfer && tx.budgetId && tx.transferToBudgetId && tx.budgetId !== tx.transferToBudgetId) {
+      const src = working.find(b => b.id === tx.budgetId);
+      const dst = working.find(b => b.id === tx.transferToBudgetId);
+      if (src) {
+        if (isLiquid(src)) {
+          src.accountBalance = Number(((src.accountBalance || 0) + amt).toFixed(2));
+          touchedIds.add(src.id);
+        } else if (isCreditCard(src) || isLoan(src)) {
+          src.actualUsedAmount = Math.max(0, Number(((src.actualUsedAmount || 0) - amt).toFixed(2)));
+          touchedIds.add(src.id);
+        }
+      }
+      if (dst) {
+        if (isLiquid(dst)) {
+          dst.accountBalance = Number(((dst.accountBalance || 0) - amt).toFixed(2));
+          touchedIds.add(dst.id);
+        } else if (isCreditCard(dst)) {
+          dst.actualUsedAmount = Math.max(0, Number(((dst.actualUsedAmount || 0) + amt).toFixed(2)));
+          touchedIds.add(dst.id);
+        } else if (isLoan(dst)) {
+          revertLoanPaymentOnTarget(dst);
+        }
+      }
+      return { nextBudgets: working, touchedIds: Array.from(touchedIds) };
+    }
+
+    if (!tx.budgetId) return { nextBudgets: budgetList, touchedIds: [] };
+    const b = working.find(item => item.id === tx.budgetId);
+    if (!b) return { nextBudgets: budgetList, touchedIds: [] };
+
+    if (isLiquid(b)) {
+      const delta = tx.type === 'income' ? -amt : amt;
+      b.accountBalance = Number(((b.accountBalance || 0) + delta).toFixed(2));
+      touchedIds.add(b.id);
+    } else if (isCreditCard(b)) {
+      const delta = tx.isLoanPayment || tx.type === 'income' ? amt : -amt;
+      b.actualUsedAmount = Math.max(0, Number(((b.actualUsedAmount || 0) + delta).toFixed(2)));
+      touchedIds.add(b.id);
+    } else if (isLoan(b)) {
+      if (tx.isLoanPayment || tx.type === 'income') {
+        revertLoanPaymentOnTarget(b);
+      } else {
+        b.actualUsedAmount = Math.max(0, Number(((b.actualUsedAmount || 0) - amt).toFixed(2)));
+        touchedIds.add(b.id);
+      }
+    }
+
+    return { nextBudgets: working, touchedIds: Array.from(touchedIds) };
+  };
+
+  const persistTouchedBudgets = async (touchedIds: string[], updatedBudgets: Budget[]) => {
+    const uniqueIds = Array.from(new Set(touchedIds));
+    if (uniqueIds.length === 0) return updatedBudgets;
+    for (const budgetId of uniqueIds) {
+      const target = updatedBudgets.find(b => b.id === budgetId);
+      if (!target) continue;
       try {
-        await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
-        updatedMap[budgetId] = updatedBudget;
+        await setDoc(doc(db, 'budgets', budgetId), target);
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `budgets/${budgetId}`);
       }
     }
-    const nextBudgets = currentBudgets.map(b => updatedMap[b.id] || b);
-    setBudgets(nextBudgets);
-    return nextBudgets;
+    setBudgets(updatedBudgets);
+    return updatedBudgets;
   };
 
   const ensureBudgetsForCategories = async (
@@ -610,24 +725,25 @@ export default function App() {
       isLoanPayment: Boolean(newTxIsLoanPayment)
     };
 
-    try {
-      await setDoc(doc(db, 'transactions', id), newTx);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-      return;
-    }
-
     const latestBudgets = await ensureBudgetsForCategories(
       { [newTx.category]: newTx.type === 'expense' ? newTx.amount : 0 },
       budgets
     );
 
-    const impacts = getTxAccountImpacts(newTx, latestBudgets);
-    if (Object.keys(impacts).length > 0) {
-      await applyBudgetDeltas(impacts, latestBudgets);
+    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, latestBudgets);
+
+    try {
+      await setDoc(doc(db, 'transactions', id), enrichedTx);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+      return;
     }
 
-    setTransactions(prev => [newTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    if (touchedIds.length > 0) {
+      await persistTouchedBudgets(touchedIds, nextBudgets);
+    }
+
+    setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
     setNewTxTitle('');
     setNewTxAmount('');
     setNewTxNotes('');
@@ -646,13 +762,9 @@ export default function App() {
     }
 
     if (targetTx) {
-      const forwardImpacts = getTxAccountImpacts(targetTx, budgets);
-      const reverseDeltas: Record<string, number> = {};
-      for (const [bId, val] of Object.entries(forwardImpacts)) {
-        reverseDeltas[bId] = -val;
-      }
-      if (Object.keys(reverseDeltas).length > 0) {
-        await applyBudgetDeltas(reverseDeltas, budgets);
+      const { nextBudgets, touchedIds } = revertSingleTxInMemory(targetTx, budgets);
+      if (touchedIds.length > 0) {
+        await persistTouchedBudgets(touchedIds, nextBudgets);
       }
     }
     setTransactions(prev => prev.filter(t => t.id !== id));
@@ -694,13 +806,6 @@ export default function App() {
       ...(isTransferTx ? { transferToBudgetId: editTxTransferToBudgetId.slice(0, 50) } : {})
     };
 
-    try {
-      await setDoc(doc(db, 'transactions', editingTx.id), updatedTx);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `transactions/${editingTx.id}`);
-      return;
-    }
-
     const latestBudgets = isTransferTx
       ? budgets
       : await ensureBudgetsForCategories(
@@ -708,19 +813,23 @@ export default function App() {
           budgets
         );
 
-    const deltas: Record<string, number> = {};
-    const oldImpacts = getTxAccountImpacts(editingTx, latestBudgets);
-    for (const [bId, val] of Object.entries(oldImpacts)) {
-      deltas[bId] = (deltas[bId] || 0) - val;
+    const reverted = revertSingleTxInMemory(editingTx, latestBudgets);
+    const applied = applySingleTxInMemory(updatedTx, reverted.nextBudgets);
+    const allTouched = Array.from(new Set([...reverted.touchedIds, ...applied.touchedIds]));
+
+    try {
+      await setDoc(doc(db, 'transactions', editingTx.id), applied.enrichedTx);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `transactions/${editingTx.id}`);
+      return;
     }
-    const newImpacts = getTxAccountImpacts(updatedTx, latestBudgets);
-    for (const [bId, val] of Object.entries(newImpacts)) {
-      deltas[bId] = (deltas[bId] || 0) + val;
+
+    if (allTouched.length > 0) {
+      await persistTouchedBudgets(allTouched, applied.nextBudgets);
     }
-    await applyBudgetDeltas(deltas, latestBudgets);
 
     setTransactions(prev =>
-      prev.map(t => (t.id === editingTx.id ? updatedTx : t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      prev.map(t => (t.id === editingTx.id ? applied.enrichedTx : t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
     );
     setEditingTx(null);
   };
@@ -769,19 +878,20 @@ export default function App() {
       isLoanPayment: isPayingDebt
     };
 
+    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, budgets);
+
     try {
-      await setDoc(doc(db, 'transactions', id), newTx);
+      await setDoc(doc(db, 'transactions', id), enrichedTx);
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
       return;
     }
 
-    const impacts = getTxAccountImpacts(newTx, budgets);
-    if (Object.keys(impacts).length > 0) {
-      await applyBudgetDeltas(impacts, budgets);
+    if (touchedIds.length > 0) {
+      await persistTouchedBudgets(touchedIds, nextBudgets);
     }
 
-    setTransactions(prev => [newTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
     setIsTransferOpen(false);
   };
 
@@ -816,7 +926,6 @@ export default function App() {
 
     const baseTs = Date.now();
     const createdTxs: Transaction[] = [];
-    const deltas: Record<string, number> = {};
     const categoryTotals: Record<string, number> = {};
 
     for (let i = 0; i < missingRows.length; i++) {
@@ -827,7 +936,8 @@ export default function App() {
       categoryTotals[cat] = (categoryTotals[cat] || 0) + (r.type === 'expense' ? amt : 0);
     }
 
-    const latestBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
+    let workingBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
+    const allTouchedIds = new Set<string>();
 
     for (let i = 0; i < missingRows.length; i++) {
       const r = missingRows[i];
@@ -848,20 +958,20 @@ export default function App() {
         ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {})
       };
 
+      const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, workingBudgets);
+      workingBudgets = nextBudgets;
+      touchedIds.forEach(tid => allTouchedIds.add(tid));
+
       try {
-        await setDoc(doc(db, 'transactions', id), newTx);
-        createdTxs.push(newTx);
-        const impacts = getTxAccountImpacts(newTx, latestBudgets);
-        for (const [bId, val] of Object.entries(impacts)) {
-          deltas[bId] = (deltas[bId] || 0) + val;
-        }
+        await setDoc(doc(db, 'transactions', id), enrichedTx);
+        createdTxs.push(enrichedTx);
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
       }
     }
 
-    if (Object.keys(deltas).length > 0) {
-      await applyBudgetDeltas(deltas, latestBudgets);
+    if (allTouchedIds.size > 0) {
+      await persistTouchedBudgets(Array.from(allTouchedIds), workingBudgets);
     }
 
     setTransactions(prev => [...createdTxs, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
@@ -882,6 +992,137 @@ export default function App() {
     }
   };
 
+  const getUnlinkedLoanPayments = (target: Budget, txList: Transaction[]): Transaction[] => {
+    const targetName = (target.name || target.category || '').trim().toLowerCase();
+    const quotas = target.loanQuotas || [];
+    const linkedTxIds = new Set(
+      quotas.filter(q => q.isPaid && q.paymentTxId).map(q => q.paymentTxId as string)
+    );
+    return txList
+      .filter(
+        t =>
+          ((t.budgetId === target.id || (t.category || '').trim().toLowerCase() === targetName) &&
+            t.isLoanPayment &&
+            !t.isTransfer) ||
+          (t.isTransfer && t.transferToBudgetId === target.id)
+      )
+      .filter(t => {
+        if (linkedTxIds.has(t.id)) return false;
+        if (t.paidQuotaIds && t.paidQuotaIds.length > 0) {
+          const stillPaid = t.paidQuotaIds.some(qid => quotas.some(q => q.id === qid && q.isPaid));
+          if (stillPaid) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  };
+
+  const reconcileUnlinkedPaymentsForLoan = async (
+    target: Budget,
+    unlinked: Transaction[]
+  ): Promise<{ updatedBudget: Budget; updatedTxMap: Record<string, Transaction> } | null> => {
+    if (!target.loanQuotas || unlinked.length === 0) return null;
+
+    const loanPrincipal = Number(target.creditLimit || target.limit || 0);
+    let remPrin = Number(target.actualUsedAmount ?? loanPrincipal);
+    for (const ut of unlinked) {
+      const prevPrin =
+        typeof ut.loanPrincipalPaid === 'number'
+          ? Math.max(0, Number(ut.loanPrincipalPaid) || 0)
+          : Math.abs(Number(ut.amount) || 0);
+      remPrin = Number((remPrin + prevPrin).toFixed(2));
+    }
+    if (loanPrincipal > 0) remPrin = Math.min(loanPrincipal, remPrin);
+
+    let workingQuotas: LoanQuota[] = target.loanQuotas.map(q => ({ ...q }));
+    const updatedTxMap: Record<string, Transaction> = {};
+    let partialTxIds: string[] = [];
+    let partialPoolAmt = 0;
+
+    for (const ut of unlinked) {
+      const split = allocateLoanPayment({
+        amount: Math.abs(Number(ut.amount) || 0),
+        principal: loanPrincipal,
+        remainingPrincipal: remPrin,
+        apr: Number(target.apr || 0),
+        ratePeriod: target.loanRatePeriod || 'annual',
+        calcMethod: target.loanCalcMethod || 'amortized',
+        quotas: workingQuotas,
+        paymentDate: ut.date,
+        paymentTxId: ut.id
+      });
+
+      remPrin = Math.max(0, Number((remPrin - split.principalPaid).toFixed(2)));
+      if (split.updatedQuotas) workingQuotas = split.updatedQuotas;
+
+      let paidIdsForUt = [...split.paidQuotaIds];
+      if (paidIdsForUt.length > 0) {
+        partialTxIds = [];
+        partialPoolAmt = 0;
+      } else {
+        partialTxIds.push(ut.id);
+        partialPoolAmt = Number((partialPoolAmt + Math.abs(Number(ut.amount) || 0)).toFixed(2));
+        const nextUnpaid = workingQuotas.find(q => !q.isPaid);
+        if (nextUnpaid && partialPoolAmt >= nextUnpaid.amount - 1.0) {
+          paidIdsForUt = [nextUnpaid.id];
+          workingQuotas = workingQuotas.map(q =>
+            q.id === nextUnpaid.id
+              ? { ...q, isPaid: true, paidDate: ut.date || new Date().toISOString().split('T')[0], paymentTxId: ut.id }
+              : q
+          );
+          for (const prevId of partialTxIds) {
+            if (prevId !== ut.id && updatedTxMap[prevId]) {
+              updatedTxMap[prevId] = { ...updatedTxMap[prevId], paidQuotaIds: [nextUnpaid.id] };
+            }
+          }
+          partialTxIds = [];
+          partialPoolAmt = 0;
+        }
+      }
+
+      updatedTxMap[ut.id] = {
+        ...ut,
+        loanPrincipalPaid: split.principalPaid,
+        loanInterestPaid: split.interestPaid,
+        ...(paidIdsForUt.length > 0 ? { paidQuotaIds: paidIdsForUt } : {})
+      };
+    }
+
+    const updatedBudget: Budget = {
+      ...target,
+      actualUsedAmount: remPrin,
+      loanQuotas: workingQuotas
+    };
+
+    for (const updatedTx of Object.values(updatedTxMap)) {
+      try {
+        await setDoc(doc(db, 'transactions', updatedTx.id), updatedTx);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `transactions/${updatedTx.id}`);
+      }
+    }
+
+    try {
+      await setDoc(doc(db, 'budgets', target.id), updatedBudget);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `budgets/${target.id}`);
+    }
+
+    setTransactions(prev => prev.map(t => updatedTxMap[t.id] || t));
+    setBudgets(prev => prev.map(b => (b.id === target.id ? updatedBudget : b)));
+
+    return { updatedBudget, updatedTxMap };
+  };
+
+  const handleReconcileLoanPayments = async (budgetId: string) => {
+    if (!firebaseUser) return;
+    const target = budgets.find(b => b.id === budgetId);
+    if (!target || target.accountType !== 'loan' || !target.loanQuotas) return;
+    const unlinked = getUnlinkedLoanPayments(target, transactions);
+    if (unlinked.length === 0) return;
+    await reconcileUnlinkedPaymentsForLoan(target, unlinked);
+  };
+
   const handleToggleLoanQuotaPaid = async (budgetId: string, quotaId: string) => {
     if (!firebaseUser) return;
     const target = budgets.find(b => b.id === budgetId);
@@ -896,64 +1137,178 @@ export default function App() {
     const currentUsed = Number(target.actualUsedAmount ?? target.creditLimit ?? 0);
     const maxCap = Number(target.creditLimit || target.limit || currentUsed);
 
-    let updatedTxId = quota.paymentTxId;
-    if (nextIsPaid) {
-      const txId = `tx_q_${Date.now()}`;
-      const newTx: Transaction = {
-        id: txId,
-        userId: firebaseUser.uid,
-        title: `Quota #${quota.quotaNumber} - ${target.name || target.category}`.slice(0, 200),
-        amount: Math.abs(Number(quota.amount) || 0),
-        type: 'expense',
-        category: (target.category || target.name || 'Loan').slice(0, 50),
-        date: today.slice(0, 20),
-        notes: `Loan quota #${quota.quotaNumber} (Principal: ${quota.principalAmount.toFixed(2)}, Interest: ${quota.interestAmount.toFixed(2)})`.slice(0, 500),
-        budgetId: target.id.slice(0, 50),
-        isLoanPayment: true
-      };
-      try {
-        await setDoc(doc(db, 'transactions', txId), newTx);
-        setTransactions(prev => [newTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-        updatedTxId = txId;
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `transactions/${txId}`);
-        return;
+    if (!nextIsPaid) {
+      const linkedTx = quota.paymentTxId ? transactions.find(t => t.id === quota.paymentTxId) : undefined;
+      const txsReferencingQuota = transactions.filter(
+        t => t.paidQuotaIds && t.paidQuotaIds.includes(quotaId)
+      );
+
+      let nextUsed = currentUsed;
+
+      if (linkedTx && !linkedTx.isTransfer && (!linkedTx.paidQuotaIds || linkedTx.paidQuotaIds.length <= 1)) {
+        // Delete standalone quota payment transaction and restore principal
+        const prinRestore =
+          typeof linkedTx.loanPrincipalPaid === 'number'
+            ? Math.max(0, Number(linkedTx.loanPrincipalPaid) || 0)
+            : balanceStep;
+        try {
+          await deleteDoc(doc(db, 'transactions', linkedTx.id));
+          setTransactions(prev => prev.filter(t => t.id !== linkedTx.id));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `transactions/${linkedTx.id}`);
+        }
+        nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + prinRestore, Number((currentUsed + prinRestore).toFixed(2)));
+      } else if (!linkedTx && quota.paymentTxId) {
+        // Legacy standalone quota tx missing from local list
+        try {
+          await deleteDoc(doc(db, 'transactions', quota.paymentTxId));
+          setTransactions(prev => prev.filter(t => t.id !== quota.paymentTxId));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.DELETE, `transactions/${quota.paymentTxId}`);
+        }
+        nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + balanceStep, Number((currentUsed + balanceStep).toFixed(2)));
+      } else if (!quota.paymentTxId) {
+        // Manually toggled quota without payment tx
+        nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + balanceStep, Number((currentUsed + balanceStep).toFixed(2)));
       }
-    } else if (quota.paymentTxId) {
+
+      // Unlink quotaId from any remaining referencing transactions (e.g., Bank -> Loan transfers) without deleting them
+      for (const refTx of txsReferencingQuota) {
+        if (linkedTx && !linkedTx.isTransfer && refTx.id === linkedTx.id && (!linkedTx.paidQuotaIds || linkedTx.paidQuotaIds.length <= 1)) {
+          continue;
+        }
+        const remainingIds = (refTx.paidQuotaIds || []).filter(id => id !== quotaId);
+        const cleanedTx: Transaction = { ...refTx };
+        if (remainingIds.length > 0) {
+          cleanedTx.paidQuotaIds = remainingIds;
+        } else {
+          delete cleanedTx.paidQuotaIds;
+        }
+        try {
+          await setDoc(doc(db, 'transactions', refTx.id), cleanedTx);
+          setTransactions(prev => prev.map(t => (t.id === refTx.id ? cleanedTx : t)));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `transactions/${refTx.id}`);
+        }
+      }
+
+      const updatedQuotas: LoanQuota[] = target.loanQuotas.map(q => {
+        if (q.id !== quotaId) return q;
+        return {
+          id: q.id,
+          quotaNumber: q.quotaNumber,
+          dueDate: q.dueDate,
+          amount: q.amount,
+          principalAmount: q.principalAmount,
+          interestAmount: q.interestAmount,
+          remainingBalance: q.remainingBalance,
+          isPaid: false
+        };
+      });
+
+      const updatedBudget: Budget = { ...target, actualUsedAmount: nextUsed, loanQuotas: updatedQuotas };
       try {
-        await deleteDoc(doc(db, 'transactions', quota.paymentTxId));
-        setTransactions(prev => prev.filter(t => t.id !== quota.paymentTxId));
-        updatedTxId = undefined;
+        await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
+        setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
       } catch (err) {
-        handleFirestoreError(err, OperationType.DELETE, `transactions/${quota.paymentTxId}`);
+        handleFirestoreError(err, OperationType.UPDATE, `budgets/${budgetId}`);
+      }
+      return;
+    }
+
+    // nextIsPaid === true: Check for existing unlinked transfers / payments before creating a duplicate transaction
+    const unlinked = getUnlinkedLoanPayments(target, transactions);
+    const unlinkedTotal = Number(
+      unlinked.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0).toFixed(2)
+    );
+
+    if (unlinkedTotal >= quota.amount - 1.0) {
+      // Existing unlinked transfer(s)/payment(s) already cover this quota — reconcile without creating a duplicate tx
+      await reconcileUnlinkedPaymentsForLoan(target, unlinked);
+      return;
+    }
+
+    let workingTarget = target;
+    let partialAlreadyInt = 0;
+    const partialTxUpdates: Record<string, Transaction> = {};
+
+    if (unlinked.length > 0) {
+      // First normalize any legacy partial transfer(s) so principal & interest are split properly
+      const reconciled = await reconcileUnlinkedPaymentsForLoan(target, unlinked);
+      if (reconciled) {
+        workingTarget = reconciled.updatedBudget;
+        for (const ut of unlinked) {
+          const updatedUt = reconciled.updatedTxMap[ut.id] || ut;
+          partialAlreadyInt = Number((partialAlreadyInt + (Number(updatedUt.loanInterestPaid) || 0)).toFixed(2));
+          partialTxUpdates[updatedUt.id] = { ...updatedUt, paidQuotaIds: [quota.id] };
+        }
       }
     }
 
-    const nextUsed = nextIsPaid
-      ? Math.max(0, Number((currentUsed - balanceStep).toFixed(2)))
-      : Math.min(maxCap > 0 ? maxCap : currentUsed + balanceStep, Number((currentUsed + balanceStep).toFixed(2)));
+    const remainingCashDue = Math.max(0.01, Number((quota.amount - unlinkedTotal).toFixed(2)));
+    const remainingInt = Math.min(
+      remainingCashDue,
+      Math.max(0, Number((quota.interestAmount - partialAlreadyInt).toFixed(2)))
+    );
+    const workingCurrentUsed = Number(workingTarget.actualUsedAmount ?? workingTarget.creditLimit ?? 0);
+    const remainingPrin = Math.min(
+      workingCurrentUsed,
+      Math.max(0, Number((remainingCashDue - remainingInt).toFixed(2)))
+    );
 
-    const updatedQuotas: LoanQuota[] = target.loanQuotas.map(q => {
-      if (q.id !== quotaId) return q;
-      const base: LoanQuota = {
-        id: q.id,
-        quotaNumber: q.quotaNumber,
-        dueDate: q.dueDate,
-        amount: q.amount,
-        principalAmount: q.principalAmount,
-        interestAmount: q.interestAmount,
-        remainingBalance: q.remainingBalance,
-        isPaid: nextIsPaid
-      };
-      if (nextIsPaid) {
-        base.paidDate = today;
-        if (updatedTxId) base.paymentTxId = updatedTxId;
+    const txId = `tx_q_${Date.now()}`;
+    const newTx: Transaction = {
+      id: txId,
+      userId: firebaseUser.uid,
+      title: `Quota #${quota.quotaNumber} - ${workingTarget.name || workingTarget.category}`.slice(0, 200),
+      amount: remainingCashDue,
+      type: 'expense',
+      category: (workingTarget.category || workingTarget.name || 'Loan').slice(0, 50),
+      date: today.slice(0, 20),
+      notes: (
+        unlinkedTotal > 0
+          ? `Remaining for quota #${quota.quotaNumber} after ${unlinkedTotal.toFixed(2)} transferred (Prin: ${remainingPrin.toFixed(2)}, Int: ${remainingInt.toFixed(2)})`
+          : `Loan quota #${quota.quotaNumber} (Principal: ${remainingPrin.toFixed(2)}, Interest: ${remainingInt.toFixed(2)})`
+      ).slice(0, 500),
+      budgetId: workingTarget.id.slice(0, 50),
+      isLoanPayment: true,
+      loanPrincipalPaid: remainingPrin,
+      loanInterestPaid: remainingInt,
+      paidQuotaIds: [quota.id]
+    };
+
+    try {
+      await setDoc(doc(db, 'transactions', txId), newTx);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `transactions/${txId}`);
+      return;
+    }
+
+    for (const patchedPartial of Object.values(partialTxUpdates)) {
+      try {
+        await setDoc(doc(db, 'transactions', patchedPartial.id), patchedPartial);
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `transactions/${patchedPartial.id}`);
       }
-      return base;
+    }
+
+    setTransactions(prev =>
+      [newTx, ...prev.map(t => partialTxUpdates[t.id] || t)].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    );
+
+    const nextUsed = Math.max(0, Number((workingCurrentUsed - remainingPrin).toFixed(2)));
+    const updatedQuotas: LoanQuota[] = (workingTarget.loanQuotas || []).map(q => {
+      if (q.id !== quotaId) return q;
+      return {
+        ...q,
+        isPaid: true,
+        paidDate: today,
+        paymentTxId: txId
+      };
     });
 
     const updatedBudget: Budget = {
-      ...target,
+      ...workingTarget,
       actualUsedAmount: nextUsed,
       loanQuotas: updatedQuotas
     };
@@ -1036,6 +1391,8 @@ export default function App() {
       annualApr: Number(target.apr || 0),
       termMonths: term,
       startDate: target.loanStartDate || new Date().toISOString().split('T')[0],
+      ratePeriod: target.loanRatePeriod || 'annual',
+      calcMethod: target.loanCalcMethod || 'amortized',
       customMonthlyQuota: target.monthlyQuota,
       existingQuotas: target.loanQuotas
     });
@@ -1078,6 +1435,8 @@ export default function App() {
     setNewBudgetOverdraftPercentage('');
     setNewBudgetLoanTermMonths('12');
     setNewBudgetLoanStartDate(new Date().toISOString().split('T')[0]);
+    setNewBudgetLoanCalcMethod('amortized');
+    setNewBudgetLoanRatePeriod('annual');
     setNewBudgetCustomMonthlyQuota('');
     setNewBudgetLoanQuotas([]);
     setNewBudgetExtraExpenses('');
@@ -1157,17 +1516,25 @@ export default function App() {
         annualApr: aprVal,
         termMonths: termMonthsVal,
         startDate: startDateVal,
+        ratePeriod: newBudgetLoanRatePeriod,
+        calcMethod: newBudgetLoanCalcMethod,
         customMonthlyQuota: customQuotaVal > 0 ? customQuotaVal : undefined
       });
       const finalQuotas = newBudgetLoanQuotas.length > 0 ? newBudgetLoanQuotas : generated.quotas;
       const monthlyQuotaVal =
         customQuotaVal > 0
           ? customQuotaVal
-          : generated.monthlyQuota || calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal);
+          : generated.monthlyQuota ||
+            calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal, {
+              ratePeriod: newBudgetLoanRatePeriod,
+              calcMethod: newBudgetLoanCalcMethod
+            });
       computedLimit = monthlyQuotaVal > 0 ? monthlyQuotaVal : creditLimitVal;
       loanFields = {
         loanTermMonths: finalQuotas.length > 0 ? finalQuotas.length : termMonthsVal,
         loanStartDate: startDateVal,
+        loanCalcMethod: newBudgetLoanCalcMethod,
+        loanRatePeriod: newBudgetLoanRatePeriod,
         monthlyQuota: monthlyQuotaVal,
         loanQuotas: finalQuotas
       };
@@ -1228,6 +1595,18 @@ export default function App() {
 
   const handleOpenEditBudget = (b: Budget) => {
     const isStandard = (b.accountType || 'standard') === 'standard';
+    const ratePeriod: LoanRatePeriod = b.loanRatePeriod || 'annual';
+    const calcMethod: LoanCalcMethod = b.loanCalcMethod || 'amortized';
+    const basePrincipal = Number(b.creditLimit ?? b.limit ?? 0);
+    const formulaQuota = calculateLoanMonthlyQuota(basePrincipal, Number(b.apr || 0), Number(b.loanTermMonths || 12), {
+      ratePeriod,
+      calcMethod
+    });
+    const isCustomQuota =
+      b.monthlyQuota !== undefined &&
+      b.monthlyQuota > 0 &&
+      Math.abs(b.monthlyQuota - formulaQuota) > 0.05;
+
     setEditingBudget(b);
     setEditBudgetCategory(b.name || b.category);
     setEditBudgetDescription(b.description || '');
@@ -1239,7 +1618,9 @@ export default function App() {
     setEditBudgetOverdraftPercentage(b.overdraftPercentage !== undefined ? b.overdraftPercentage.toString() : '');
     setEditBudgetLoanTermMonths(b.loanTermMonths !== undefined ? b.loanTermMonths.toString() : '12');
     setEditBudgetLoanStartDate(b.loanStartDate || new Date().toISOString().split('T')[0]);
-    setEditBudgetCustomMonthlyQuota(b.monthlyQuota !== undefined && b.monthlyQuota > 0 ? b.monthlyQuota.toString() : '');
+    setEditBudgetLoanCalcMethod(calcMethod);
+    setEditBudgetLoanRatePeriod(ratePeriod);
+    setEditBudgetCustomMonthlyQuota(isCustomQuota ? b.monthlyQuota!.toString() : '');
     setEditBudgetLoanQuotas(b.accountType === 'loan' && b.loanQuotas ? [...b.loanQuotas] : []);
     setEditBudgetExtraExpenses(isStandard && b.extraExpenses !== undefined && b.extraExpenses > 0 ? b.extraExpenses.toString() : '');
     setEditBudgetItems(isStandard && b.items ? [...b.items] : []);
@@ -1266,6 +1647,7 @@ export default function App() {
 
     let computedLimit = 0;
     let loanFields: Partial<Budget> = {};
+    let nextLoanUsedAmount = creditLimitVal;
 
     if (isStandard) {
       const itemsSum = editBudgetItems.reduce((s, item) => s + (Number(item.amount) || 0), 0);
@@ -1285,21 +1667,36 @@ export default function App() {
         annualApr: aprVal,
         termMonths: termMonthsVal,
         startDate: startDateVal,
+        ratePeriod: editBudgetLoanRatePeriod,
+        calcMethod: editBudgetLoanCalcMethod,
         customMonthlyQuota: customQuotaVal > 0 ? customQuotaVal : undefined,
-        existingQuotas: editBudgetLoanQuotas
+        existingQuotas: editingBudget.loanQuotas
       });
       const finalQuotas = editBudgetLoanQuotas.length > 0 ? editBudgetLoanQuotas : generated.quotas;
       const monthlyQuotaVal =
         customQuotaVal > 0
           ? customQuotaVal
-          : generated.monthlyQuota || calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal);
+          : generated.monthlyQuota ||
+            calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal, {
+              ratePeriod: editBudgetLoanRatePeriod,
+              calcMethod: editBudgetLoanCalcMethod
+            });
       computedLimit = monthlyQuotaVal > 0 ? monthlyQuotaVal : creditLimitVal;
       loanFields = {
         loanTermMonths: finalQuotas.length > 0 ? finalQuotas.length : termMonthsVal,
         loanStartDate: startDateVal,
+        loanCalcMethod: editBudgetLoanCalcMethod,
+        loanRatePeriod: editBudgetLoanRatePeriod,
         monthlyQuota: monthlyQuotaVal,
         loanQuotas: finalQuotas
       };
+
+      if (editingBudget.accountType === 'loan') {
+        const oldPrincipal = Number(editingBudget.creditLimit ?? creditLimitVal);
+        const oldUsed = Number(editingBudget.actualUsedAmount ?? oldPrincipal);
+        const principalAlreadyPaid = Math.max(0, Number((oldPrincipal - oldUsed).toFixed(2)));
+        nextLoanUsedAmount = Math.max(0, Number((creditLimitVal - principalAlreadyPaid).toFixed(2)));
+      }
     }
 
     const catVal = editBudgetCategory.trim().slice(0, 50);
@@ -1335,10 +1732,7 @@ export default function App() {
             apr: aprVal,
             creditLimit: creditLimitVal,
             overdraftPercentage: 0,
-            actualUsedAmount:
-              editingBudget.accountType === 'loan'
-                ? (editingBudget.actualUsedAmount ?? creditLimitVal)
-                : creditLimitVal,
+            actualUsedAmount: nextLoanUsedAmount,
             ...loanFields
           }
         : {})
@@ -1623,6 +2017,7 @@ export default function App() {
             onOpenRecordPayment={handleOpenRecordPayment}
             onOpenTransfer={handleOpenTransfer}
             onToggleLoanQuotaPaid={handleToggleLoanQuotaPaid}
+            onReconcileLoanPayments={handleReconcileLoanPayments}
             onAddLoanQuota={handleAddLoanQuota}
             onDeleteLoanQuota={handleDeleteLoanQuota}
             onGenerateLoanQuotas={handleGenerateLoanQuotas}
@@ -2175,6 +2570,8 @@ export default function App() {
                   annualApr: apr,
                   termMonths,
                   startDate: newBudgetLoanStartDate || new Date().toISOString().split('T')[0],
+                  ratePeriod: newBudgetLoanRatePeriod,
+                  calcMethod: newBudgetLoanCalcMethod,
                   customMonthlyQuota: customQuota > 0 ? customQuota : undefined
                 });
                 const displayQuotas = newBudgetLoanQuotas.length > 0 ? newBudgetLoanQuotas : previewSchedule.quotas;
@@ -2198,6 +2595,75 @@ export default function App() {
                         )}
                       </div>
 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-[#888] block mb-1">Rate Period</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewBudgetLoanRatePeriod('annual');
+                                setNewBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                newBudgetLoanRatePeriod === 'annual'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Annual (APR %)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewBudgetLoanRatePeriod('monthly');
+                                setNewBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                newBudgetLoanRatePeriod === 'monthly'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Monthly (%)
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-[#888] block mb-1">Interest Method</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewBudgetLoanCalcMethod('amortized');
+                                setNewBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                newBudgetLoanCalcMethod === 'amortized'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Amortized
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setNewBudgetLoanCalcMethod('flat');
+                                setNewBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                newBudgetLoanCalcMethod === 'flat'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Flat Interest
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2.5">
                         <div>
                           <label className="text-[11px] text-[#9b9b9b] block mb-1">Loan Principal ({currencySymbol}) *</label>
@@ -2216,12 +2682,14 @@ export default function App() {
                           />
                         </div>
                         <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest Rate (APR %)</label>
+                          <label className="text-[11px] text-[#9b9b9b] block mb-1">
+                            {newBudgetLoanRatePeriod === 'monthly' ? 'Monthly Interest Rate (%)' : 'Interest Rate (APR %)'}
+                          </label>
                           <input
                             type="number"
                             step="0.01"
                             min="0"
-                            placeholder="e.g. 16.5"
+                            placeholder={newBudgetLoanRatePeriod === 'monthly' ? 'e.g. 1.5' : 'e.g. 18'}
                             value={newBudgetApr}
                             onChange={e => {
                               setNewBudgetApr(e.target.value);
@@ -2268,7 +2736,7 @@ export default function App() {
                           placeholder={
                             previewSchedule.monthlyQuota > 0
                               ? `Auto-calculated: ${previewSchedule.monthlyQuota.toFixed(2)}`
-                              : 'Auto-calculated from Principal + APR + Term'
+                              : 'Auto-calculated from Principal + Rate + Term'
                           }
                           value={newBudgetCustomMonthlyQuota}
                           onChange={e => {
@@ -2710,8 +3178,10 @@ export default function App() {
                   annualApr: apr,
                   termMonths,
                   startDate: editBudgetLoanStartDate || new Date().toISOString().split('T')[0],
+                  ratePeriod: editBudgetLoanRatePeriod,
+                  calcMethod: editBudgetLoanCalcMethod,
                   customMonthlyQuota: customQuota > 0 ? customQuota : undefined,
-                  existingQuotas: editBudgetLoanQuotas
+                  existingQuotas: editingBudget?.loanQuotas
                 });
                 const displayQuotas = editBudgetLoanQuotas.length > 0 ? editBudgetLoanQuotas : previewSchedule.quotas;
 
@@ -2734,6 +3204,75 @@ export default function App() {
                         )}
                       </div>
 
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-[#888] block mb-1">Rate Period</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditBudgetLoanRatePeriod('annual');
+                                setEditBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                editBudgetLoanRatePeriod === 'annual'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Annual (APR %)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditBudgetLoanRatePeriod('monthly');
+                                setEditBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                editBudgetLoanRatePeriod === 'monthly'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Monthly (%)
+                            </button>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-[#888] block mb-1">Interest Method</label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditBudgetLoanCalcMethod('amortized');
+                                setEditBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                editBudgetLoanCalcMethod === 'amortized'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Amortized
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditBudgetLoanCalcMethod('flat');
+                                setEditBudgetLoanQuotas([]);
+                              }}
+                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
+                                editBudgetLoanCalcMethod === 'flat'
+                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
+                              }`}
+                            >
+                              Flat Interest
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2.5">
                         <div>
                           <label className="text-[11px] text-[#9b9b9b] block mb-1">Loan Principal ({currencySymbol}) *</label>
@@ -2744,19 +3283,27 @@ export default function App() {
                             min="0.01"
                             placeholder="150000"
                             value={editBudgetCreditLimit}
-                            onChange={e => setEditBudgetCreditLimit(e.target.value)}
+                            onChange={e => {
+                              setEditBudgetCreditLimit(e.target.value);
+                              setEditBudgetLoanQuotas([]);
+                            }}
                             className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                           />
                         </div>
                         <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest Rate (APR %)</label>
+                          <label className="text-[11px] text-[#9b9b9b] block mb-1">
+                            {editBudgetLoanRatePeriod === 'monthly' ? 'Monthly Interest Rate (%)' : 'Interest Rate (APR %)'}
+                          </label>
                           <input
                             type="number"
                             step="0.01"
                             min="0"
-                            placeholder="e.g. 16.5"
+                            placeholder={editBudgetLoanRatePeriod === 'monthly' ? 'e.g. 1.5' : 'e.g. 18'}
                             value={editBudgetApr}
-                            onChange={e => setEditBudgetApr(e.target.value)}
+                            onChange={e => {
+                              setEditBudgetApr(e.target.value);
+                              setEditBudgetLoanQuotas([]);
+                            }}
                             className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                           />
                         </div>
@@ -2768,7 +3315,10 @@ export default function App() {
                             max="600"
                             placeholder="12"
                             value={editBudgetLoanTermMonths}
-                            onChange={e => setEditBudgetLoanTermMonths(e.target.value)}
+                            onChange={e => {
+                              setEditBudgetLoanTermMonths(e.target.value);
+                              setEditBudgetLoanQuotas([]);
+                            }}
                             className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                           />
                         </div>
@@ -2777,7 +3327,10 @@ export default function App() {
                           <input
                             type="date"
                             value={editBudgetLoanStartDate}
-                            onChange={e => setEditBudgetLoanStartDate(e.target.value)}
+                            onChange={e => {
+                              setEditBudgetLoanStartDate(e.target.value);
+                              setEditBudgetLoanQuotas([]);
+                            }}
                             className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                           />
                         </div>
@@ -2792,10 +3345,13 @@ export default function App() {
                           placeholder={
                             previewSchedule.monthlyQuota > 0
                               ? `Auto-calculated: ${previewSchedule.monthlyQuota.toFixed(2)}`
-                              : 'Auto-calculated from Principal + APR + Term'
+                              : 'Auto-calculated from Principal + Rate + Term'
                           }
                           value={editBudgetCustomMonthlyQuota}
-                          onChange={e => setEditBudgetCustomMonthlyQuota(e.target.value)}
+                          onChange={e => {
+                            setEditBudgetCustomMonthlyQuota(e.target.value);
+                            setEditBudgetLoanQuotas([]);
+                          }}
                           className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                         />
                       </div>

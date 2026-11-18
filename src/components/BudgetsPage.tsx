@@ -17,12 +17,15 @@ import {
 } from 'lucide-react';
 import {
   LoanQuota,
+  LoanCalcMethod,
+  LoanRatePeriod,
   addMonthsToIsoDate,
   calculateCreditCardMonthlyLimit,
-  calculateLoanMonthlyQuota
+  calculateLoanMonthlyQuota,
+  getMonthlyInterestRate
 } from '../utils/financeMath';
 
-export type { LoanQuota };
+export type { LoanQuota, LoanCalcMethod, LoanRatePeriod };
 
 export interface BudgetItem {
   id: string;
@@ -49,6 +52,8 @@ export interface Budget {
   items?: BudgetItem[];
   loanTermMonths?: number;
   loanStartDate?: string;
+  loanCalcMethod?: LoanCalcMethod;
+  loanRatePeriod?: LoanRatePeriod;
   monthlyQuota?: number;
   loanQuotas?: LoanQuota[];
 }
@@ -64,6 +69,7 @@ interface BudgetsPageProps {
   onOpenRecordPayment?: (budget: Budget) => void;
   onOpenTransfer?: (fromBudget?: Budget) => void;
   onToggleLoanQuotaPaid?: (budgetId: string, quotaId: string) => void;
+  onReconcileLoanPayments?: (budgetId: string) => Promise<void>;
   onAddLoanQuota?: (
     budgetId: string,
     quota: { dueDate: string; amount: number; principalAmount: number; interestAmount: number }
@@ -83,6 +89,7 @@ export default function BudgetsPage({
   onOpenRecordPayment,
   onOpenTransfer,
   onToggleLoanQuotaPaid,
+  onReconcileLoanPayments,
   onAddLoanQuota,
   onDeleteLoanQuota,
   onGenerateLoanQuotas
@@ -120,12 +127,19 @@ export default function BudgetsPage({
         ? addMonthsToIsoDate(existing[existing.length - 1].dueDate, 1)
         : b.loanStartDate || new Date().toISOString().split('T')[0];
 
-    const remBal = Number(b.actualUsedAmount ?? b.creditLimit ?? 0);
-    const monthlyRate = (Number(b.apr) || 0) / 100 / 12;
-    const estInterest = Number((remBal * monthlyRate).toFixed(2));
+    const ratePeriod: LoanRatePeriod = b.loanRatePeriod || 'annual';
+    const calcMethod: LoanCalcMethod = b.loanCalcMethod || 'amortized';
+    const basePrincipal = Number(b.creditLimit || b.limit || 0);
+    const remBal = Number(b.actualUsedAmount ?? basePrincipal);
+    const monthlyRate = getMonthlyInterestRate(Number(b.apr) || 0, ratePeriod);
+    const interestBase = calcMethod === 'flat' ? basePrincipal : remBal;
+    const estInterest = Number((interestBase * monthlyRate).toFixed(2));
     const estTotal =
       Number(b.monthlyQuota) ||
-      calculateLoanMonthlyQuota(Number(b.creditLimit || b.limit || 0), Number(b.apr || 0), Number(b.loanTermMonths || 12)) ||
+      calculateLoanMonthlyQuota(basePrincipal, Number(b.apr || 0), Number(b.loanTermMonths || 12), {
+        ratePeriod,
+        calcMethod
+      }) ||
       0;
     const estPrincipal = estTotal > 0 ? Math.max(0, Number((estTotal - estInterest).toFixed(2))) : 0;
 
@@ -312,13 +326,29 @@ export default function BudgetsPage({
 
             // Loan calculations & Quotas
             const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
+            const loanRatePeriod: LoanRatePeriod = b.loanRatePeriod || 'annual';
+            const loanCalcMethod: LoanCalcMethod = b.loanCalcMethod || 'amortized';
+            const monthlyRatePct = getMonthlyInterestRate(Number(b.apr) || 0, loanRatePeriod) * 100;
             const loanQuotas = isLoan ? (b.loanQuotas || []) : [];
             const paidQuotasCount = loanQuotas.filter(q => q.isPaid).length;
             const nextDueQuota = loanQuotas.find(q => !q.isPaid);
             const computedQuota =
               Number(b.monthlyQuota) ||
-              calculateLoanMonthlyQuota(loanPrincipal, Number(b.apr) || 0, Number(b.loanTermMonths) || 0) ||
+              calculateLoanMonthlyQuota(loanPrincipal, Number(b.apr) || 0, Number(b.loanTermMonths) || 0, {
+                ratePeriod: loanRatePeriod,
+                calcMethod: loanCalcMethod
+              }) ||
               (loanQuotas[0]?.amount || 0);
+            const totalLoanInterest =
+              loanQuotas.length > 0
+                ? Number(loanQuotas.reduce((s, q) => s + (Number(q.interestAmount) || 0), 0).toFixed(2))
+                : Math.max(0, Number((computedQuota * (Number(b.loanTermMonths) || 0) - loanPrincipal).toFixed(2)));
+            const remainingLoanInterest = Number(
+              loanQuotas
+                .filter(q => !q.isPaid)
+                .reduce((s, q) => s + (Number(q.interestAmount) || 0), 0)
+                .toFixed(2)
+            );
             const paidOffPrincipal = Math.max(0, loanPrincipal - usedBalance);
             const loanPaidOffPct = loanPrincipal > 0 ? Math.min(100, Math.round((paidOffPrincipal / loanPrincipal) * 100)) : 0;
             const isScheduleExpanded = Boolean(expandedLoans[b.id]);
@@ -330,6 +360,49 @@ export default function BudgetsPage({
                 (t.isTransfer && t.transferToBudgetId === b.id)
             );
             const totalPaymentsMade = relatedPayments.reduce((s, t) => s + t.amount, 0);
+            const hasFullLoanSplit =
+              isLoan &&
+              relatedPayments.length > 0 &&
+              relatedPayments.every(
+                t => typeof t.loanPrincipalPaid === 'number' && typeof t.loanInterestPaid === 'number'
+              );
+            const totalLoanPrincipalPaid = isLoan
+              ? hasFullLoanSplit
+                ? Number(relatedPayments.reduce((s, t) => s + (Number(t.loanPrincipalPaid) || 0), 0).toFixed(2))
+                : paidOffPrincipal
+              : 0;
+            const totalLoanInterestPaid = isLoan
+              ? hasFullLoanSplit
+                ? Number(relatedPayments.reduce((s, t) => s + (Number(t.loanInterestPaid) || 0), 0).toFixed(2))
+                : Number(
+                    Math.max(
+                      loanQuotas.filter(q => q.isPaid).reduce((s, q) => s + (Number(q.interestAmount) || 0), 0),
+                      Math.max(0, totalPaymentsMade - paidOffPrincipal)
+                    ).toFixed(2)
+                  )
+              : 0;
+            const totalLoanPayoffLeft = Number((usedBalance + remainingLoanInterest).toFixed(2));
+            const currentMonthPrefix = new Date().toISOString().slice(0, 7);
+            const currentMonthLoanPaid = relatedPayments
+              .filter(t => String(t.date || '').startsWith(currentMonthPrefix))
+              .reduce((s, t) => s + t.amount, 0);
+
+            const linkedQuotaTxIds = new Set(
+              loanQuotas.filter(q => q.isPaid && q.paymentTxId).map(q => q.paymentTxId as string)
+            );
+            const unlinkedLoanPayments = isLoan
+              ? relatedPayments.filter(t => {
+                  if (linkedQuotaTxIds.has(t.id)) return false;
+                  if (t.paidQuotaIds && t.paidQuotaIds.length > 0) {
+                    const stillPaid = t.paidQuotaIds.some((qid: string) => loanQuotas.some(q => q.id === qid && q.isPaid));
+                    if (stillPaid) return false;
+                  }
+                  return true;
+                })
+              : [];
+            const unlinkedLoanTotal = Number(
+              unlinkedLoanPayments.reduce((s, t) => s + (Number(t.amount) || 0), 0).toFixed(2)
+            );
 
             return (
               <div
@@ -525,21 +598,43 @@ export default function BudgetsPage({
                   <div className="space-y-3 bg-[#171717] p-3.5 rounded-xl border border-[#262626]">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Interest (APR)</span>
-                        <span className="text-xs font-bold text-purple-400 block mt-0.5">{b.apr || 0}%</span>
+                        <span className="text-[10px] text-[#888] block">
+                          {loanRatePeriod === 'monthly' ? 'Monthly Rate' : 'Interest (APR)'}
+                        </span>
+                        <span className="text-xs font-bold text-purple-400 block mt-0.5">
+                          {b.apr || 0}%
+                        </span>
+                        <span className="text-[9px] text-[#777] block">
+                          {monthlyRatePct.toFixed(2)}%/mo • {loanCalcMethod === 'flat' ? 'Flat' : 'Amort.'}
+                        </span>
                       </div>
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
                         <span className="text-[10px] text-[#888] block">Loan Principal</span>
                         <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{loanPrincipal.toLocaleString()}</span>
+                        <span className="text-[9px] text-[#777] block">
+                          Total Int: {currencySymbol}{totalLoanInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
                       </div>
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Remaining Bal.</span>
-                        <span className="text-xs font-bold text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
+                        <span className="text-[10px] text-[#888] block">Rem. Principal</span>
+                        <span className="text-xs font-bold text-rose-400 block mt-0.5">
+                          {currencySymbol}{usedBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                        {loanQuotas.length > 0 && (
+                          <span className="text-[9px] text-[#777] block">
+                            +Int: {currencySymbol}{remainingLoanInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
                       </div>
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
                         <span className="text-[10px] text-[#888] block">Monthly Quota</span>
                         <span className="text-xs font-bold text-emerald-400 block mt-0.5">
                           {currencySymbol}{computedQuota.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[9px] text-[#777] block">
+                          {loanQuotas.length > 0
+                            ? `Payoff Left: ${currencySymbol}${totalLoanPayoffLeft.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : `Repay: ${currencySymbol}${(loanPrincipal + totalLoanInterest).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                         </span>
                       </div>
                     </div>
@@ -547,7 +642,7 @@ export default function BudgetsPage({
                     {/* Loan Payoff Progress */}
                     <div className="space-y-1">
                       <div className="flex justify-between text-[11px] text-[#888]">
-                        <span>Loan Paid Off: {loanPaidOffPct}%</span>
+                        <span>Principal Paid Off: {loanPaidOffPct}%</span>
                         <span className="text-zinc-300">
                           {b.loanTermMonths ? `${b.loanTermMonths} Months Term • ` : ''}
                           {loanQuotas.length > 0 ? `${paidQuotasCount}/${loanQuotas.length} Quotas Paid` : 'No schedule yet'}
@@ -564,29 +659,66 @@ export default function BudgetsPage({
                       </div>
                     </div>
 
-                    {/* Next Due Quota Quick Banner */}
-                    {nextDueQuota && (
-                      <div className="bg-purple-500/10 border border-purple-500/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                    {/* Existing unlinked transfer/payment notice */}
+                    {unlinkedLoanTotal > 0 && loanQuotas.length > 0 && nextDueQuota && (
+                      <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-1.5 text-purple-300 font-semibold">
-                            <Calendar className="w-3.5 h-3.5 shrink-0" />
-                            <span>Next Quota #{nextDueQuota.quotaNumber} • Due {nextDueQuota.dueDate}</span>
-                          </div>
+                          <span className="text-blue-300 font-semibold block">
+                            Unlinked transfer / payment: {currencySymbol}{unlinkedLoanTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
                           <span className="text-[10px] text-zinc-400 block mt-0.5">
-                            Principal: {currencySymbol}{nextDueQuota.principalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Interest: {currencySymbol}{nextDueQuota.interestAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {unlinkedLoanTotal >= nextDueQuota.amount - 1.0
+                              ? `Covers Quota #${nextDueQuota.quotaNumber} without creating a duplicate payment.`
+                              : `Remaining to finish Quota #${nextDueQuota.quotaNumber}: ${currencySymbol}${Math.max(0, nextDueQuota.amount - unlinkedLoanTotal).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
                           </span>
                         </div>
-                        {onToggleLoanQuotaPaid && (
+                        {onReconcileLoanPayments && unlinkedLoanTotal >= nextDueQuota.amount - 1.0 && (
                           <button
                             type="button"
-                            onClick={() => onToggleLoanQuotaPaid(b.id, nextDueQuota.id)}
-                            className="bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition"
+                            onClick={() => onReconcileLoanPayments(b.id)}
+                            className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition"
                           >
-                            Pay {currencySymbol}{nextDueQuota.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            Apply to Quotas
                           </button>
                         )}
                       </div>
                     )}
+
+                    {/* Next Due Quota Quick Banner */}
+                    {nextDueQuota && (() => {
+                      const coveredByTransfer = unlinkedLoanTotal >= nextDueQuota.amount - 1.0;
+                      const partialRemDue = Math.max(0, Number((nextDueQuota.amount - unlinkedLoanTotal).toFixed(2)));
+                      return (
+                        <div className="bg-purple-500/10 border border-purple-500/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-1.5 text-purple-300 font-semibold">
+                              <Calendar className="w-3.5 h-3.5 shrink-0" />
+                              <span>Next Quota #{nextDueQuota.quotaNumber} • Due {nextDueQuota.dueDate}</span>
+                            </div>
+                            <span className="text-[10px] text-zinc-400 block mt-0.5">
+                              Principal: {currencySymbol}{nextDueQuota.principalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Interest: {currencySymbol}{nextDueQuota.interestAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </span>
+                          </div>
+                          {onToggleLoanQuotaPaid && (
+                            <button
+                              type="button"
+                              onClick={() => onToggleLoanQuotaPaid(b.id, nextDueQuota.id)}
+                              className={`${
+                                coveredByTransfer
+                                  ? 'bg-blue-600 hover:bg-blue-500'
+                                  : 'bg-purple-600 hover:bg-purple-500'
+                              } text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition`}
+                            >
+                              {coveredByTransfer
+                                ? 'Apply Transfer'
+                                : unlinkedLoanTotal > 0
+                                ? `Pay Rem. ${currencySymbol}${partialRemDue.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                                : `Pay ${currencySymbol}${nextDueQuota.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
 
                     {/* Quotas Controls Bar */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#262626]">
@@ -747,38 +879,62 @@ export default function BudgetsPage({
                     )}
 
                     {totalPaymentsMade > 0 && (
-                      <div className="text-[11px] text-emerald-400 pt-1 flex items-center justify-between">
-                        <span>Total Payments / Abonos recorded:</span>
-                        <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                      <div className="text-[11px] text-emerald-400 pt-1 space-y-0.5">
+                        <div className="flex items-center justify-between">
+                          <span>Total Payments / Abonos recorded:</span>
+                          <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                          <span>Applied Split (Principal / Interest):</span>
+                          <span>
+                            <span className="text-purple-300 font-medium">
+                              Prin: {currencySymbol}{totalLoanPrincipalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </span>
+                            {' • '}
+                            <span className="text-amber-300 font-medium">
+                              Int: {currencySymbol}{totalLoanInterestPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            </span>
+                          </span>
+                        </div>
                       </div>
                     )}
                   </div>
                 )}
 
                 {/* Monthly Spending / Quota Progress */}
-                {(!isLiquidAccount || effectiveLimit > 0) && (
-                  <div className="space-y-1.5">
-                    <div className="flex justify-between text-xs text-[#9b9b9b]">
-                      <span>Current Month Spent: {currencySymbol}{spent.toFixed(2)}</span>
-                      <span className={isOver ? 'text-rose-400 font-bold' : 'text-white'}>
-                        {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{effectiveLimit.toLocaleString()}
-                      </span>
+                {(!isLiquidAccount || effectiveLimit > 0) && (() => {
+                  const progressTarget = isLoan ? computedQuota : effectiveLimit;
+                  const progressCurrent = isLoan ? currentMonthLoanPaid : spent;
+                  const progressPct = progressTarget > 0 ? Math.min(Math.round((progressCurrent / progressTarget) * 100), 100) : 0;
+                  const isBarOver = !isLoan && progressTarget > 0 && progressCurrent > progressTarget;
+                  return (
+                    <div className="space-y-1.5">
+                      <div className="flex justify-between text-xs text-[#9b9b9b]">
+                        <span>
+                          {isLoan ? 'This Month Paid' : 'Current Month Spent'}: {currencySymbol}{progressCurrent.toFixed(2)}
+                        </span>
+                        <span className={isBarOver ? 'text-rose-400 font-bold' : 'text-white'}>
+                          {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{progressTarget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${progressPct}%`,
+                            backgroundColor: isBarOver ? '#f43f5e' : isLoan ? '#a855f7' : (b.color || '#10b981')
+                          }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[11px] text-[#777]">
+                        <span>
+                          {progressPct}% of {isLoan ? 'monthly quota paid' : 'monthly limit used'}
+                        </span>
+                        {isBarOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
+                      </div>
                     </div>
-                    <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
-                      <div
-                        className="h-full rounded-full transition-all duration-500"
-                        style={{
-                          width: `${percent}%`,
-                          backgroundColor: isOver ? '#f43f5e' : (b.color || '#10b981')
-                        }}
-                      />
-                    </div>
-                    <div className="flex justify-between text-[11px] text-[#777]">
-                      <span>{percent}% of {isLoan ? 'monthly quota' : 'monthly limit'} used</span>
-                      {isOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
-                    </div>
-                  </div>
-                )}
+                  );
+                })()}
 
                 {/* Items Belonging to This Budget (Standard budgets ONLY) */}
                 {isStandard && items.length > 0 && (

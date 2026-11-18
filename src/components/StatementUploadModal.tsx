@@ -21,12 +21,16 @@ export interface ExistingTransactionSummary {
   title: string;
   amount: number;
   date: string;
+  budgetId?: string;
+  transferToBudgetId?: string;
+  isTransfer?: boolean;
 }
 
 export interface ImportedTransactionDraft {
   tempId: string;
   selected: boolean;
   isDuplicate?: boolean;
+  isMatchedTransfer?: boolean;
   title: string;
   amount: number;
   type: 'income' | 'expense';
@@ -52,6 +56,29 @@ function makeTxDedupKey(title: string, amount: number, date: string): string {
   const normAmount = Math.abs(Number(amount) || 0).toFixed(2);
   const normDate = (date || '').trim().slice(0, 10);
   return `${normTitle}|${normAmount}|${normDate}`;
+}
+
+function daysBetweenIso(d1: string, d2: string): number {
+  const t1 = Date.parse((d1 || '').slice(0, 10));
+  const t2 = Date.parse((d2 || '').slice(0, 10));
+  if (isNaN(t1) || isNaN(t2)) return 999;
+  return Math.abs(t1 - t2) / (1000 * 60 * 60 * 24);
+}
+
+function findMatchingTransferInDb(
+  existingTransactions: ExistingTransactionSummary[],
+  accountId: string,
+  amount: number,
+  date: string
+): boolean {
+  if (!accountId || amount <= 0) return false;
+  return existingTransactions.some(
+    et =>
+      Boolean(et.isTransfer) &&
+      (et.budgetId === accountId || et.transferToBudgetId === accountId) &&
+      Math.abs(Math.abs(Number(et.amount) || 0) - amount) < 0.01 &&
+      daysBetweenIso(et.date, date) <= 3
+  );
 }
 
 function parseCsvLine(line: string, delimiter: string): string[] {
@@ -375,14 +402,17 @@ export default function StatementUploadModal({
         const date = t.date || new Date().toISOString().split('T')[0];
         const key = makeTxDedupKey(title, amount, date);
         const remaining = existingCounts.get(key) || 0;
-        const isDuplicate = remaining > 0;
-        if (isDuplicate) {
+        const isExactDup = remaining > 0;
+        if (isExactDup) {
           existingCounts.set(key, remaining - 1);
         }
+        const isMatchedTransfer = !isExactDup && findMatchingTransferInDb(existingTransactions, activeBudgetId, amount, date);
+        const isDuplicate = isExactDup || isMatchedTransfer;
         return {
           tempId: `draft_${Date.now()}_${idx}`,
           selected: !isDuplicate,
           isDuplicate,
+          isMatchedTransfer,
           title,
           amount,
           type: t.type === 'income' ? 'income' : 'expense',
@@ -433,7 +463,21 @@ export default function StatementUploadModal({
     setDefaultBudgetId(budgetId);
     latestBudgetIdRef.current = budgetId;
     setErrorMsg(null);
-    setDrafts(prev => prev.map(d => ({ ...d, budgetId })));
+    setDrafts(prev => {
+      const existingKeys = new Set(existingTransactions.map(et => makeTxDedupKey(et.title, et.amount, et.date)));
+      return prev.map(d => {
+        const isExactDup = existingKeys.has(makeTxDedupKey(d.title, d.amount, d.date));
+        const isMatchedTransfer = !isExactDup && findMatchingTransferInDb(existingTransactions, budgetId, d.amount, d.date);
+        const nextDup = isExactDup || isMatchedTransfer;
+        return {
+          ...d,
+          budgetId,
+          isDuplicate: nextDup,
+          isMatchedTransfer,
+          selected: nextDup ? false : d.isDuplicate ? true : d.selected
+        };
+      });
+    });
   };
 
   const updateDraft = (tempId: string, patch: Partial<ImportedTransactionDraft>) => {
@@ -471,10 +515,28 @@ export default function StatementUploadModal({
     setIsImporting(true);
     setErrorMsg(null);
     try {
-      const normalizedRows = selectedDrafts.map(row => ({
-        ...row,
-        budgetId: row.budgetId || defaultBudgetId
-      }));
+      const normalizedRows = selectedDrafts.map(row => {
+        const baseBudgetId = row.budgetId || defaultBudgetId;
+        if (row.isTransfer && row.transferToBudgetId && baseBudgetId && row.transferToBudgetId !== baseBudgetId) {
+          // If an incoming statement row (income) is linked to another account, the other account is the source (From)
+          if (row.type === 'income') {
+            return {
+              ...row,
+              type: 'expense' as const,
+              budgetId: row.transferToBudgetId,
+              transferToBudgetId: baseBudgetId
+            };
+          }
+          return {
+            ...row,
+            budgetId: baseBudgetId
+          };
+        }
+        return {
+          ...row,
+          budgetId: baseBudgetId
+        };
+      });
       await onImportTransactions(normalizedRows);
       resetState();
       onClose();
@@ -843,8 +905,19 @@ export default function StatementUploadModal({
                           className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-emerald-500"
                         />
                         {row.isDuplicate && (
-                          <span className="shrink-0 bg-amber-500/15 text-amber-300 border border-amber-500/30 px-1.5 py-0.5 rounded text-[10px] font-medium">
-                            Duplicate
+                          <span
+                            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border ${
+                              row.isMatchedTransfer
+                                ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                            }`}
+                            title={
+                              row.isMatchedTransfer
+                                ? 'Already recorded via a Transfer involving this account'
+                                : 'Exact match already exists in database'
+                            }
+                          >
+                            {row.isMatchedTransfer ? 'Transfer in DB' : 'Duplicate'}
                           </span>
                         )}
                       </div>
@@ -885,22 +958,28 @@ export default function StatementUploadModal({
                       <select
                         value={row.transferToBudgetId || ''}
                         onChange={e => {
-                          const nextToId = e.target.value;
-                          if (!nextToId) {
+                          const nextOtherId = e.target.value;
+                          if (!nextOtherId) {
                             updateDraft(row.tempId, {
                               isTransfer: false,
                               transferToBudgetId: ''
                             });
                             return;
                           }
-                          const dest = budgets.find(b => b.id === nextToId);
-                          const isDebtDest = dest?.accountType === 'credit_card' || dest?.accountType === 'loan';
+                          const thisAccId = row.budgetId || defaultBudgetId;
+                          const destAcc = budgets.find(b => b.id === (row.type === 'income' ? thisAccId : nextOtherId));
+                          const isDebtDest = destAcc?.accountType === 'credit_card' || destAcc?.accountType === 'loan';
                           updateDraft(row.tempId, {
                             isTransfer: true,
-                            transferToBudgetId: nextToId,
+                            transferToBudgetId: nextOtherId,
                             isLoanPayment: isDebtDest
                           });
                         }}
+                        title={
+                          row.type === 'income'
+                            ? 'Source account this transfer came from (← From)'
+                            : 'Destination account this transfer went to (→ To)'
+                        }
                         className={`w-full bg-[#121212] border rounded px-2 py-1 text-[11px] focus:outline-none ${
                           row.isTransfer && row.transferToBudgetId
                             ? 'border-blue-500/60 text-blue-300'
@@ -912,6 +991,7 @@ export default function StatementUploadModal({
                           .filter(b => b.id !== (row.budgetId || defaultBudgetId))
                           .map(b => (
                             <option key={b.id} value={b.id}>
+                              {row.type === 'income' ? '← ' : '→ '}
                               {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                             </option>
                           ))}

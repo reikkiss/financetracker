@@ -121,6 +121,13 @@ export default function TransactionsPage({
                         )}
                       </div>
                       {t.notes && <span className="text-[10px] text-[#777] block mt-0.5 truncate max-w-xs">{t.notes}</span>}
+                      {(typeof t.loanPrincipalPaid === 'number' || typeof t.loanInterestPaid === 'number') && (
+                        <span className="text-[10px] text-purple-300 block mt-0.5">
+                          Principal: {currencySymbol}{(Number(t.loanPrincipalPaid) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          {' • '}
+                          Interest: {currencySymbol}{(Number(t.loanInterestPaid) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      )}
                     </td>
                     <td className="p-3.5"><span className="bg-[#292929] text-zinc-300 px-2 py-0.5 rounded text-[11px]">{t.category}</span></td>
                     <td className="p-3.5">
