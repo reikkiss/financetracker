@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Plus,
   Trash2,
@@ -8,10 +8,19 @@ import {
   Wallet,
   CheckSquare,
   Square,
-  Percent,
-  ShieldAlert,
-  ArrowRight
+  Calendar,
+  ChevronDown,
+  ChevronUp,
+  Sparkles
 } from 'lucide-react';
+import {
+  LoanQuota,
+  addMonthsToIsoDate,
+  calculateCreditCardMonthlyLimit,
+  calculateLoanMonthlyQuota
+} from '../utils/financeMath';
+
+export type { LoanQuota };
 
 export interface BudgetItem {
   id: string;
@@ -35,6 +44,10 @@ export interface Budget {
   actualUsedAmount?: number;
   extraExpenses?: number;
   items?: BudgetItem[];
+  loanTermMonths?: number;
+  loanStartDate?: string;
+  monthlyQuota?: number;
+  loanQuotas?: LoanQuota[];
 }
 
 interface BudgetsPageProps {
@@ -46,6 +59,13 @@ interface BudgetsPageProps {
   onDeleteBudget: (id: string) => void;
   onToggleItemPaid: (budgetId: string, itemId: string) => void;
   onOpenRecordPayment?: (budget: Budget) => void;
+  onToggleLoanQuotaPaid?: (budgetId: string, quotaId: string) => void;
+  onAddLoanQuota?: (
+    budgetId: string,
+    quota: { dueDate: string; amount: number; principalAmount: number; interestAmount: number }
+  ) => Promise<void>;
+  onDeleteLoanQuota?: (budgetId: string, quotaId: string) => Promise<void>;
+  onGenerateLoanQuotas?: (budgetId: string) => Promise<void>;
 }
 
 export default function BudgetsPage({
@@ -56,12 +76,72 @@ export default function BudgetsPage({
   onOpenEditBudget,
   onDeleteBudget,
   onToggleItemPaid,
-  onOpenRecordPayment
+  onOpenRecordPayment,
+  onToggleLoanQuotaPaid,
+  onAddLoanQuota,
+  onDeleteLoanQuota,
+  onGenerateLoanQuotas
 }: BudgetsPageProps) {
+  const [expandedLoans, setExpandedLoans] = useState<Record<string, boolean>>({});
+  const [addingQuotaLoanId, setAddingQuotaLoanId] = useState<string | null>(null);
+  const [newQuotaDueDate, setNewQuotaDueDate] = useState('');
+  const [newQuotaAmount, setNewQuotaAmount] = useState('');
+  const [newQuotaPrincipal, setNewQuotaPrincipal] = useState('');
+  const [newQuotaInterest, setNewQuotaInterest] = useState('');
+
   // Aggregate debt metrics
   const debtAccounts = budgets.filter(b => b.accountType === 'credit_card' || b.accountType === 'loan');
   const totalDebtBalance = debtAccounts.reduce((s, b) => s + (b.actualUsedAmount || 0), 0);
-  const totalDebtLimit = debtAccounts.reduce((s, b) => s + (b.creditLimit || b.limit || 0), 0);
+  const totalDebtLimit = debtAccounts.reduce((s, b) => {
+    if (b.accountType === 'credit_card') {
+      const { monthlyLimit } = calculateCreditCardMonthlyLimit(b.creditLimit || b.limit || 0, b.overdraftPercentage || 0);
+      return s + monthlyLimit;
+    }
+    return s + (b.creditLimit || b.limit || 0);
+  }, 0);
+
+  const openInlineAddQuota = (b: Budget) => {
+    const existing = b.loanQuotas || [];
+    const lastDueDate =
+      existing.length > 0
+        ? addMonthsToIsoDate(existing[existing.length - 1].dueDate, 1)
+        : b.loanStartDate || new Date().toISOString().split('T')[0];
+
+    const remBal = Number(b.actualUsedAmount ?? b.creditLimit ?? 0);
+    const monthlyRate = (Number(b.apr) || 0) / 100 / 12;
+    const estInterest = Number((remBal * monthlyRate).toFixed(2));
+    const estTotal =
+      Number(b.monthlyQuota) ||
+      calculateLoanMonthlyQuota(Number(b.creditLimit || b.limit || 0), Number(b.apr || 0), Number(b.loanTermMonths || 12)) ||
+      0;
+    const estPrincipal = estTotal > 0 ? Math.max(0, Number((estTotal - estInterest).toFixed(2))) : 0;
+
+    setAddingQuotaLoanId(b.id);
+    setNewQuotaDueDate(lastDueDate);
+    setNewQuotaInterest(estInterest > 0 ? estInterest.toString() : '0');
+    setNewQuotaPrincipal(estPrincipal > 0 ? estPrincipal.toString() : '');
+    setNewQuotaAmount(estTotal > 0 ? estTotal.toString() : '');
+    setExpandedLoans(prev => ({ ...prev, [b.id]: true }));
+  };
+
+  const handleSaveInlineQuota = async (e: React.FormEvent, budgetId: string) => {
+    e.preventDefault();
+    if (!onAddLoanQuota) return;
+    const principalVal = Math.max(0, parseFloat(newQuotaPrincipal) || 0);
+    const interestVal = Math.max(0, parseFloat(newQuotaInterest) || 0);
+    const parsedAmount = parseFloat(newQuotaAmount);
+    const amountVal = !isNaN(parsedAmount) && parsedAmount > 0 ? parsedAmount : Number((principalVal + interestVal).toFixed(2));
+    if (amountVal <= 0) return;
+
+    const finalPrincipal = principalVal > 0 ? principalVal : Math.max(0, Number((amountVal - interestVal).toFixed(2)));
+    await onAddLoanQuota(budgetId, {
+      dueDate: newQuotaDueDate || new Date().toISOString().split('T')[0],
+      amount: Number(amountVal.toFixed(2)),
+      principalAmount: Number(finalPrincipal.toFixed(2)),
+      interestAmount: Number(interestVal.toFixed(2))
+    });
+    setAddingQuotaLoanId(null);
+  };
 
   return (
     <div className="space-y-6 animate-fadeIn max-w-5xl pb-12">
@@ -70,7 +150,7 @@ export default function BudgetsPage({
         <div>
           <h2 className="text-xl font-bold text-white tracking-tight">Category Budgets & Debt Accounts</h2>
           <p className="text-xs text-[#9b9b9b] mt-0.5">
-            Manage spending limits, itemized checklists, credit cards, and loans with APR & overdraft tracking.
+            Manage standard budgets with checklists, credit cards with overdraft limits, and loan accounts with monthly quotas.
           </p>
         </div>
         <button
@@ -81,30 +161,30 @@ export default function BudgetsPage({
         </button>
       </div>
 
-      {/* Debt & Credit Overview Cards (if any credit cards or loans exist) */}
+      {/* Debt & Credit Overview Cards */}
       {debtAccounts.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
-            <span className="text-[11px] text-[#888] font-medium block">Total Debt / Credit Balance</span>
+            <span className="text-[11px] text-[#888] font-medium block">Total Debt / Loan Balance</span>
             <span className="text-lg font-bold text-rose-400 block mt-1">
               {currencySymbol}{totalDebtBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[10px] text-[#666]">Across {debtAccounts.length} credit lines & loans</span>
           </div>
           <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
-            <span className="text-[11px] text-[#888] font-medium block">Total Approved Credit Lines</span>
+            <span className="text-[11px] text-[#888] font-medium block">Total Authorized Capacity</span>
             <span className="text-lg font-bold text-white block mt-1">
               {currencySymbol}{totalDebtLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
-            <span className="text-[10px] text-[#666]">Maximum borrowing capacity</span>
+            <span className="text-[10px] text-[#666]">Credit limits (incl. overdraft) + loan principals</span>
           </div>
           <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
-            <span className="text-[11px] text-[#888] font-medium block">Available Credit</span>
+            <span className="text-[11px] text-[#888] font-medium block">Available Credit / Paid Principal</span>
             <span className="text-lg font-bold text-emerald-400 block mt-1">
               {currencySymbol}{Math.max(0, totalDebtLimit - totalDebtBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[10px] text-[#666]">
-              {totalDebtLimit > 0 ? `${Math.round(((totalDebtLimit - totalDebtBalance) / totalDebtLimit) * 100)}% available` : '0%'}
+              {totalDebtLimit > 0 ? `${Math.round(((totalDebtLimit - totalDebtBalance) / totalDebtLimit) * 100)}% remaining capacity` : '0%'}
             </span>
           </div>
         </div>
@@ -122,25 +202,54 @@ export default function BudgetsPage({
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
           {budgets.map(b => {
             const budgetCatName = (b.name || b.category || '').trim();
+            const isCreditCard = b.accountType === 'credit_card';
+            const isLoan = b.accountType === 'loan';
+            const isCreditOrLoan = isCreditCard || isLoan;
+
             const spent = transactions
-              .filter(t => t.type === 'expense' && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())
+              .filter(
+                t =>
+                  t.type === 'expense' &&
+                  !t.isLoanPayment &&
+                  (t.budgetId === b.id || (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())
+              )
               .reduce((sum, t) => sum + t.amount, 0);
-            const percent = b.limit > 0 ? Math.min(Math.round((spent / b.limit) * 100), 100) : 0;
-            const isOver = spent > b.limit;
-            const isCreditOrLoan = b.accountType === 'credit_card' || b.accountType === 'loan';
-            
-            // Checklist items calculations
-            const items = b.items || [];
+
+            // Standard budget checklist items ONLY
+            const items = isCreditOrLoan ? [] : (b.items || []);
             const paidItemsCount = items.filter(i => i.isPaid).length;
             const itemsSum = items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-            const extraExpenses = Number(b.extraExpenses) || 0;
+            const extraExpenses = isCreditOrLoan ? 0 : (Number(b.extraExpenses) || 0);
 
-            // Credit/Loan utilization
-            const creditLimit = Number(b.creditLimit || b.limit) || 0;
+            // Credit Card calculations (Credit Limit + Overdraft % = Monthly Limit)
+            const baseCreditLimit = Number(b.creditLimit || b.limit) || 0;
+            const ccCalc = calculateCreditCardMonthlyLimit(baseCreditLimit, b.overdraftPercentage || 0);
+            const effectiveLimit = isCreditCard
+              ? (ccCalc.monthlyLimit > 0 ? ccCalc.monthlyLimit : b.limit)
+              : b.limit;
+
+            const percent = effectiveLimit > 0 ? Math.min(Math.round((spent / effectiveLimit) * 100), 100) : 0;
+            const isOver = effectiveLimit > 0 && spent > effectiveLimit;
+
             const usedBalance = Number(b.actualUsedAmount) || 0;
-            const availableCredit = Math.max(0, creditLimit - usedBalance);
-            const utilizationPct = creditLimit > 0 ? Math.min(Math.round((usedBalance / creditLimit) * 100), 100) : 0;
-            const overdraftBuffer = b.overdraftPercentage ? (creditLimit * (b.overdraftPercentage / 100)) : 0;
+            const availableCredit = isCreditCard
+              ? Math.max(0, ccCalc.monthlyLimit - usedBalance)
+              : Math.max(0, baseCreditLimit - usedBalance);
+            const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
+            const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
+
+            // Loan calculations & Quotas
+            const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
+            const loanQuotas = isLoan ? (b.loanQuotas || []) : [];
+            const paidQuotasCount = loanQuotas.filter(q => q.isPaid).length;
+            const nextDueQuota = loanQuotas.find(q => !q.isPaid);
+            const computedQuota =
+              Number(b.monthlyQuota) ||
+              calculateLoanMonthlyQuota(loanPrincipal, Number(b.apr) || 0, Number(b.loanTermMonths) || 0) ||
+              (loanQuotas[0]?.amount || 0);
+            const paidOffPrincipal = Math.max(0, loanPrincipal - usedBalance);
+            const loanPaidOffPct = loanPrincipal > 0 ? Math.min(100, Math.round((paidOffPrincipal / loanPrincipal) * 100)) : 0;
+            const isScheduleExpanded = Boolean(expandedLoans[b.id]);
 
             // Related payments
             const relatedPayments = transactions.filter(
@@ -157,9 +266,9 @@ export default function BudgetsPage({
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 truncate">
                     <div className="w-9 h-9 rounded-xl bg-[#191919] border border-[#2c2c2c] flex items-center justify-center shrink-0 mt-0.5">
-                      {b.accountType === 'credit_card' ? (
+                      {isCreditCard ? (
                         <CreditCard className="w-4 h-4 text-amber-400" />
-                      ) : b.accountType === 'loan' ? (
+                      ) : isLoan ? (
                         <Landmark className="w-4 h-4 text-purple-400" />
                       ) : (
                         <Wallet className="w-4 h-4 text-emerald-400" />
@@ -169,13 +278,13 @@ export default function BudgetsPage({
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-white text-sm truncate">{budgetCatName}</span>
                         <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
-                          b.accountType === 'credit_card'
+                          isCreditCard
                             ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            : b.accountType === 'loan'
+                            : isLoan
                             ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
                             : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                         }`}>
-                          {b.accountType === 'credit_card' ? 'Credit Card' : b.accountType === 'loan' ? 'Loan' : 'Standard'}
+                          {isCreditCard ? 'Credit Card' : isLoan ? 'Loan Account' : 'Standard'}
                         </span>
                       </div>
                       <span className="text-[11px] text-[#777] block mt-0.5">Category: {b.category || budgetCatName}</span>
@@ -195,7 +304,7 @@ export default function BudgetsPage({
                     <button
                       onClick={() => onOpenEditBudget(b)}
                       className="px-2 py-1 bg-[#282828] hover:bg-[#333] rounded-lg text-xs text-zinc-300 hover:text-white transition flex items-center gap-1"
-                      title="Edit Budget Limit"
+                      title="Edit Budget / Account"
                     >
                       <Pencil className="w-3.5 h-3.5 text-blue-400" />
                       <span>Edit</span>
@@ -210,15 +319,15 @@ export default function BudgetsPage({
                   </div>
                 </div>
 
-                {/* Description (if provided) */}
+                {/* Description */}
                 {b.description && (
                   <p className="text-xs text-zinc-300 bg-[#191919] p-2.5 rounded-lg border border-[#2a2a2a] leading-relaxed">
                     {b.description}
                   </p>
                 )}
 
-                {/* Credit Card / Loan Specifics: APR, Limit, Overdraft, Used Balance */}
-                {isCreditOrLoan && (
+                {/* CREDIT CARD VIEW */}
+                {isCreditCard && (
                   <div className="space-y-2.5 bg-[#171717] p-3 rounded-xl border border-[#262626]">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
@@ -227,24 +336,31 @@ export default function BudgetsPage({
                       </div>
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
                         <span className="text-[10px] text-[#888] block">Credit Limit</span>
-                        <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{creditLimit.toLocaleString()}</span>
+                        <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{ccCalc.baseCreditLimit.toLocaleString()}</span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Overdraft Allowed</span>
+                        <span className="text-xs font-bold text-blue-400 block mt-0.5">
+                          {ccCalc.overdraftPct}% {ccCalc.overdraftBuffer > 0 ? `(+${currencySymbol}${ccCalc.overdraftBuffer.toLocaleString()})` : ''}
+                        </span>
                       </div>
                       <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
                         <span className="text-[10px] text-[#888] block">Used Balance</span>
                         <span className="text-xs font-bold text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Overdraft %</span>
-                        <span className="text-xs font-bold text-blue-400 block mt-0.5">
-                          {b.overdraftPercentage || 0}% {overdraftBuffer > 0 ? `(+${currencySymbol}${overdraftBuffer.toLocaleString()})` : ''}
-                        </span>
-                      </div>
+                    </div>
+
+                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-amber-300 font-medium">Calculated Monthly Limit (Credit + Overdraft)</span>
+                      <span className="text-white font-bold">
+                        {currencySymbol}{effectiveLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </span>
                     </div>
 
                     {/* Credit Utilization Bar */}
                     <div className="space-y-1 pt-1">
                       <div className="flex justify-between text-[11px] text-[#888]">
-                        <span>Credit Line Utilization: {utilizationPct}%</span>
+                        <span>Total Capacity Used: {utilizationPct}%</span>
                         <span className="text-emerald-400 font-medium">Available: {currencySymbol}{availableCredit.toLocaleString()}</span>
                       </div>
                       <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#292929]">
@@ -252,10 +368,15 @@ export default function BudgetsPage({
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${utilizationPct}%`,
-                            backgroundColor: utilizationPct > 80 ? '#f43f5e' : (b.color || '#f59e0b')
+                            backgroundColor: usedBalance > ccCalc.baseCreditLimit ? '#f43f5e' : (b.color || '#f59e0b')
                           }}
                         />
                       </div>
+                      {usedBalance > ccCalc.baseCreditLimit && (
+                        <span className="text-[10px] text-amber-400 block">
+                          Using overdraft allowance ({currencySymbol}{(usedBalance - ccCalc.baseCreditLimit).toLocaleString()} over base limit)
+                        </span>
+                      )}
                     </div>
 
                     {totalPaymentsMade > 0 && (
@@ -267,12 +388,247 @@ export default function BudgetsPage({
                   </div>
                 )}
 
-                {/* Monthly Spending Limit & Progress */}
+                {/* LOAN ACCOUNT VIEW + MONTHLY QUOTAS */}
+                {isLoan && (
+                  <div className="space-y-3 bg-[#171717] p-3.5 rounded-xl border border-[#262626]">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Interest (APR)</span>
+                        <span className="text-xs font-bold text-purple-400 block mt-0.5">{b.apr || 0}%</span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Loan Principal</span>
+                        <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{loanPrincipal.toLocaleString()}</span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Remaining Bal.</span>
+                        <span className="text-xs font-bold text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Monthly Quota</span>
+                        <span className="text-xs font-bold text-emerald-400 block mt-0.5">
+                          {currencySymbol}{computedQuota.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Loan Payoff Progress */}
+                    <div className="space-y-1">
+                      <div className="flex justify-between text-[11px] text-[#888]">
+                        <span>Loan Paid Off: {loanPaidOffPct}%</span>
+                        <span className="text-zinc-300">
+                          {b.loanTermMonths ? `${b.loanTermMonths} Months Term • ` : ''}
+                          {loanQuotas.length > 0 ? `${paidQuotasCount}/${loanQuotas.length} Quotas Paid` : 'No schedule yet'}
+                        </span>
+                      </div>
+                      <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#292929]">
+                        <div
+                          className="h-full rounded-full transition-all duration-500"
+                          style={{
+                            width: `${loanPaidOffPct}%`,
+                            backgroundColor: b.color || '#8b5cf6'
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Next Due Quota Quick Banner */}
+                    {nextDueQuota && (
+                      <div className="bg-purple-500/10 border border-purple-500/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-1.5 text-purple-300 font-semibold">
+                            <Calendar className="w-3.5 h-3.5 shrink-0" />
+                            <span>Next Quota #{nextDueQuota.quotaNumber} • Due {nextDueQuota.dueDate}</span>
+                          </div>
+                          <span className="text-[10px] text-zinc-400 block mt-0.5">
+                            Principal: {currencySymbol}{nextDueQuota.principalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Interest: {currencySymbol}{nextDueQuota.interestAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        {onToggleLoanQuotaPaid && (
+                          <button
+                            type="button"
+                            onClick={() => onToggleLoanQuotaPaid(b.id, nextDueQuota.id)}
+                            className="bg-purple-600 hover:bg-purple-500 text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition"
+                          >
+                            Pay {currencySymbol}{nextDueQuota.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </button>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Quotas Controls Bar */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#262626]">
+                      <div className="flex items-center gap-2">
+                        {loanQuotas.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setExpandedLoans(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
+                            className="text-[11px] text-zinc-300 hover:text-white flex items-center gap-1 bg-[#222] px-2.5 py-1 rounded-lg transition"
+                          >
+                            {isScheduleExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            <span>{isScheduleExpanded ? 'Hide' : 'Follow'} Monthly Quotas ({paidQuotasCount}/{loanQuotas.length})</span>
+                          </button>
+                        )}
+                        {loanQuotas.length === 0 && onGenerateLoanQuotas && loanPrincipal > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => onGenerateLoanQuotas(b.id)}
+                            className="text-[11px] text-purple-300 hover:text-white flex items-center gap-1 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 px-2.5 py-1 rounded-lg transition"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Auto-Generate Quotas</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {onAddLoanQuota && (
+                        <button
+                          type="button"
+                          onClick={() => (addingQuotaLoanId === b.id ? setAddingQuotaLoanId(null) : openInlineAddQuota(b))}
+                          className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 px-2.5 py-1 rounded-lg transition"
+                        >
+                          <Plus className="w-3 h-3" />
+                          <span>{addingQuotaLoanId === b.id ? 'Cancel' : 'Create Quota'}</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Inline Create Quota Form */}
+                    {addingQuotaLoanId === b.id && (
+                      <form onSubmit={e => handleSaveInlineQuota(e, b.id)} className="bg-[#121212] border border-[#2d2d2d] rounded-xl p-3 space-y-2.5">
+                        <span className="text-[11px] font-semibold text-white block">Add Monthly Quota</span>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                          <div>
+                            <label className="text-[10px] text-[#888] block mb-0.5">Due Date</label>
+                            <input
+                              type="date"
+                              required
+                              value={newQuotaDueDate}
+                              onChange={e => setNewQuotaDueDate(e.target.value)}
+                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#888] block mb-0.5">Principal ({currencySymbol})</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              value={newQuotaPrincipal}
+                              onChange={e => {
+                                const p = e.target.value;
+                                setNewQuotaPrincipal(p);
+                                const sum = (parseFloat(p) || 0) + (parseFloat(newQuotaInterest) || 0);
+                                if (sum > 0) setNewQuotaAmount(sum.toFixed(2));
+                              }}
+                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#888] block mb-0.5">Interest ({currencySymbol})</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="0.00"
+                              value={newQuotaInterest}
+                              onChange={e => {
+                                const intr = e.target.value;
+                                setNewQuotaInterest(intr);
+                                const sum = (parseFloat(newQuotaPrincipal) || 0) + (parseFloat(intr) || 0);
+                                if (sum > 0) setNewQuotaAmount(sum.toFixed(2));
+                              }}
+                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                            />
+                          </div>
+                          <div>
+                            <label className="text-[10px] text-[#888] block mb-0.5">Quota Total ({currencySymbol})</label>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              required
+                              placeholder="0.00"
+                              value={newQuotaAmount}
+                              onChange={e => setNewQuotaAmount(e.target.value)}
+                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white font-semibold"
+                            />
+                          </div>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                          <button
+                            type="submit"
+                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-lg text-[11px] font-medium"
+                          >
+                            Save Quota
+                          </button>
+                        </div>
+                      </form>
+                    )}
+
+                    {/* Expandable Monthly Quotas Schedule */}
+                    {isScheduleExpanded && loanQuotas.length > 0 && (
+                      <div className="space-y-1 max-h-60 overflow-y-auto pr-1 scrollbar-thin pt-1">
+                        {loanQuotas.map(q => (
+                          <div
+                            key={q.id}
+                            className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg bg-[#1d1d1d] hover:bg-[#242424] transition text-xs"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => onToggleLoanQuotaPaid && onToggleLoanQuotaPaid(b.id, q.id)}
+                              className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                            >
+                              {q.isPaid ? (
+                                <CheckSquare className="w-4 h-4 text-purple-400 shrink-0" />
+                              ) : (
+                                <Square className="w-4 h-4 text-[#666] hover:text-zinc-300 shrink-0" />
+                              )}
+                              <div className="min-w-0">
+                                <span className={`font-medium block truncate ${q.isPaid ? 'line-through text-zinc-500' : 'text-zinc-200'}`}>
+                                  Quota #{q.quotaNumber} • {q.dueDate}
+                                </span>
+                                <span className="text-[10px] text-[#777] block">
+                                  Prin: {currencySymbol}{q.principalAmount.toFixed(2)} | Int: {currencySymbol}{q.interestAmount.toFixed(2)} | Bal: {currencySymbol}{q.remainingBalance.toFixed(2)}
+                                </span>
+                              </div>
+                            </button>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className={`font-semibold ${q.isPaid ? 'line-through text-zinc-500' : 'text-white'}`}>
+                                {currencySymbol}{q.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                              {onDeleteLoanQuota && (
+                                <button
+                                  type="button"
+                                  onClick={() => onDeleteLoanQuota(b.id, q.id)}
+                                  className="text-[#666] hover:text-rose-400 p-0.5"
+                                  title="Delete Quota"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {totalPaymentsMade > 0 && (
+                      <div className="text-[11px] text-emerald-400 pt-1 flex items-center justify-between">
+                        <span>Total Payments / Abonos recorded:</span>
+                        <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Monthly Spending / Quota Progress */}
                 <div className="space-y-1.5">
                   <div className="flex justify-between text-xs text-[#9b9b9b]">
                     <span>Current Month Spent: {currencySymbol}{spent.toFixed(2)}</span>
                     <span className={isOver ? 'text-rose-400 font-bold' : 'text-white'}>
-                      Limit: {currencySymbol}{b.limit.toLocaleString()}
+                      {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{effectiveLimit.toLocaleString()}
                     </span>
                   </div>
                   <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
@@ -285,13 +641,13 @@ export default function BudgetsPage({
                     />
                   </div>
                   <div className="flex justify-between text-[11px] text-[#777]">
-                    <span>{percent}% of monthly limit used</span>
-                    {isOver && <span className="text-rose-400 font-semibold">Over budget!</span>}
+                    <span>{percent}% of {isLoan ? 'monthly quota' : 'monthly limit'} used</span>
+                    {isOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
                   </div>
                 </div>
 
-                {/* Items Belonging to This Budget (Checklist matching user attachment!) */}
-                {items.length > 0 && (
+                {/* Items Belonging to This Budget (Standard budgets ONLY) */}
+                {!isCreditOrLoan && items.length > 0 && (
                   <div className="space-y-2 bg-[#171717] p-3 rounded-xl border border-[#262626]">
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-semibold text-white">

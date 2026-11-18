@@ -40,7 +40,11 @@
         "overdraftPercentage": { "type": "number" },
         "actualUsedAmount": { "type": "number" },
         "extraExpenses": { "type": "number" },
-        "items": { "type": "array" }
+        "items": { "type": "array" },
+        "loanTermMonths": { "type": "number" },
+        "loanStartDate": { "type": "string", "maxLength": 20 },
+        "monthlyQuota": { "type": "number" },
+        "loanQuotas": { "type": "array" }
       }
     },
     "Goal": {
