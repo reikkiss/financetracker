@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import {
   X,
   Mail,
@@ -9,7 +9,9 @@ import {
   ShieldCheck,
   KeyRound,
   Radio,
-  Power
+  Power,
+  Upload,
+  Server
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import { Transaction } from '../App';
@@ -19,6 +21,14 @@ import {
   findExistingTransactionForEmailAlert
 } from '../utils/bankEmailParser';
 import { GmailAuthError, scanGmailBankAlerts } from '../services/gmailSyncService';
+import {
+  checkBackendHealth,
+  getApiBaseUrl,
+  getApiUrl,
+  isLikelyStaticHost,
+  setSavedApiBaseUrl
+} from '../utils/apiConfig';
+import { parseEmailFilesToAlerts } from '../utils/emlParser';
 
 export interface PersistentGmailState {
   enabled: boolean;
@@ -97,6 +107,11 @@ export default function EmailSyncModal({
   const [isTestingICloud, setIsTestingICloud] = useState(false);
   const [isSyncingICloud, setIsSyncingICloud] = useState(false);
   const [iCloudStatus, setICloudStatus] = useState<{ ok: boolean; msg: string } | null>(null);
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('checking');
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl());
+  const [showBackendConfig, setShowBackendConfig] = useState(false);
+  const [isImportingEml, setIsImportingEml] = useState(false);
+  const emlFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Gmail UI state
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
@@ -124,6 +139,22 @@ export default function EmailSyncModal({
       setICloudLimit(String(iCloudSession.limit));
     }
   }, [iCloudSession]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    setBackendStatus('checking');
+    checkBackendHealth().then(res => {
+      if (cancelled) return;
+      setBackendStatus(res.available && res.imapSupported ? 'connected' : 'unavailable');
+      if (!res.available) {
+        setShowBackendConfig(isLikelyStaticHost());
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
 
   const processedEmailIdSet = useMemo(() => new Set(processedEmailIds), [processedEmailIds]);
 
@@ -182,10 +213,26 @@ export default function EmailSyncModal({
     const raw = await res.text();
     const trimmed = raw.trim();
     if (!trimmed) {
-      if (!res.ok) throw new Error(`Server returned HTTP ${res.status}.`);
+      if (!res.ok) {
+        if (res.status === 405) {
+          setBackendStatus('unavailable');
+          setShowBackendConfig(true);
+          throw new Error(
+            'Live IMAP requires a running backend server (this static site returned HTTP 405). Import .eml/.mbox files below or connect a Backend Server URL.'
+          );
+        }
+        throw new Error(`Server returned HTTP ${res.status}.`);
+      }
       return {};
     }
     if (trimmed.startsWith('<')) {
+      setBackendStatus('unavailable');
+      setShowBackendConfig(true);
+      if (res.status === 405 || res.status === 404 || isLikelyStaticHost()) {
+        throw new Error(
+          'Live iCloud IMAP cannot run directly on GitHub Pages static hosting (no Node server active). Import .eml/.mbox files below or enter a Backend Server URL.'
+        );
+      }
       throw new Error(`Unexpected HTML response (HTTP ${res.status}). Please retry in a moment.`);
     }
     try {
@@ -198,6 +245,56 @@ export default function EmailSyncModal({
     }
   };
 
+  const handleSaveBackendUrl = async () => {
+    const normalized = setSavedApiBaseUrl(backendUrlInput);
+    setBackendUrlInput(normalized);
+    setBackendStatus('checking');
+    setICloudStatus(null);
+    const res = await checkBackendHealth(normalized);
+    if (res.available && res.imapSupported) {
+      setBackendStatus('connected');
+      setShowBackendConfig(false);
+      setICloudStatus({
+        ok: true,
+        msg: normalized
+          ? `Connected to iCloud IMAP backend (${normalized}).`
+          : 'Connected to local iCloud IMAP backend.'
+      });
+    } else {
+      setBackendStatus('unavailable');
+      setICloudStatus({
+        ok: false,
+        msg: res.reason || 'Could not reach /api/health on that server URL.'
+      });
+    }
+  };
+
+  const handleImportEmlFiles = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setIsImportingEml(true);
+    setICloudStatus(null);
+    try {
+      const { totalEmailsScanned, alerts } = await parseEmailFilesToAlerts(files);
+      const mapped = mapAlertsWithAccountMatch(alerts);
+      setDetectedAlerts(mapped);
+      const newCount = mapped.filter(m => !m.imported).length;
+      setICloudStatus({
+        ok: mapped.length > 0,
+        msg:
+          mapped.length > 0
+            ? `Parsed ${totalEmailsScanned} email(s) locally in browser — found ${mapped.length} bank alert(s) (${newCount} new).`
+            : `Scanned ${totalEmailsScanned} email(s) locally, but no supported bank alerts were found.`
+      });
+    } catch (err: any) {
+      setICloudStatus({ ok: false, msg: err?.message || 'Could not read the selected .eml/.mbox file(s).' });
+    } finally {
+      setIsImportingEml(false);
+      if (emlFileInputRef.current) {
+        emlFileInputRef.current.value = '';
+      }
+    }
+  };
+
   // 1. iCloud Sync Handlers
   const handleTestICloud = async () => {
     if (!iCloudEmail.trim() || !iCloudPassword.trim()) {
@@ -207,12 +304,13 @@ export default function EmailSyncModal({
     setIsTestingICloud(true);
     setICloudStatus(null);
     try {
-      const res = await fetch('/api/email/test-icloud', {
+      const res = await fetch(getApiUrl('/api/email/test-icloud'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: iCloudEmail.trim(), password: iCloudPassword.trim() })
       });
       const data = await parseApiJsonSafe(res);
+      setBackendStatus('connected');
       onSetICloudSession({
         connected: true,
         email: iCloudEmail.trim(),
@@ -241,7 +339,7 @@ export default function EmailSyncModal({
     setICloudStatus(null);
     try {
       const limitVal = parseInt(iCloudLimit, 10) || 40;
-      const res = await fetch('/api/email/sync-icloud', {
+      const res = await fetch(getApiUrl('/api/email/sync-icloud'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -251,6 +349,7 @@ export default function EmailSyncModal({
         })
       });
       const data = await parseApiJsonSafe(res);
+      setBackendStatus('connected');
       onSetICloudSession({
         connected: true,
         email: iCloudEmail.trim(),
@@ -489,15 +588,21 @@ export default function EmailSyncModal({
                   type="button"
                   onClick={handleAuthorizeAndScanGmail}
                   disabled={isConnectingGmail || isSyncingGmail}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#1D1D1F] text-white hover:bg-black dark:bg-white dark:text-black dark:hover:bg-zinc-200 transition disabled:opacity-50"
+                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white hover:bg-[#F2F2F7] text-[#1D1D1F] border border-black/[0.1] shadow-xs dark:bg-white dark:text-black dark:hover:bg-zinc-200 transition disabled:opacity-50 inline-flex items-center gap-1.5"
                 >
+                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
+                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
+                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
+                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
+                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
+                  </svg>
                   {isConnectingGmail
                     ? 'Connecting...'
                     : gmailState.enabled && !gmailState.tokenActive
                     ? 'Reconnect Gmail'
                     : gmailState.enabled
                     ? 'Refresh Auth'
-                    : 'Connect Google Gmail'}
+                    : 'Sign in with Google'}
                 </button>
                 {gmailState.enabled && (
                   <button
@@ -545,10 +650,10 @@ export default function EmailSyncModal({
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-[#86868B]">
                 {gmailState.tokenActive
-                  ? 'OAuth session active in memory — safe to close modal.'
+                  ? 'Firebase Google OAuth active in memory — safe to close modal.'
                   : gmailState.enabled
-                  ? 'Click "Reconnect Gmail" or "Scan Now" to renew your 1-hour session token.'
-                  : 'Read-only access (gmail.readonly).'}
+                  ? 'Click "Reconnect Gmail" or "Scan Bank Alerts Now" to renew your 1-hour session token.'
+                  : 'Uses Firebase Auth Google Sign-In (gmail.readonly).'}
               </span>
 
               <button
@@ -586,19 +691,35 @@ export default function EmailSyncModal({
           <div className="space-y-4 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-4 rounded-2xl">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <h4 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">Apple iCloud Mail (IMAP SSL 993)</h4>
-                  {iCloudSession?.connected && (
+                  {iCloudSession?.connected ? (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30">
                       <Radio className="w-2.5 h-2.5" /> Connected
                     </span>
-                  )}
+                  ) : backendStatus === 'connected' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25">
+                      IMAP Bridge Ready
+                    </span>
+                  ) : backendStatus === 'unavailable' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
+                      Static Host Mode
+                    </span>
+                  ) : null}
                 </div>
                 <p className="text-[11px] text-[#86868B] mt-0.5">
-                  Direct encrypted connection to <code className="text-[#0071E3] dark:text-blue-400">imap.mail.me.com</code>.
+                  Direct encrypted connection to <code className="text-[#0071E3] dark:text-blue-400">imap.mail.me.com</code> via backend server, or import <code className="text-[#0071E3] dark:text-blue-400">.eml / .mbox</code> files directly.
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setShowBackendConfig(v => !v)}
+                  title="Configure IMAP Backend URL"
+                  className="text-[11px] text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 dark:bg-white/10 border border-black/[0.06] dark:border-white/10"
+                >
+                  <Server className="w-3 h-3" /> Server
+                </button>
                 <a
                   href="https://account.apple.com"
                   target="_blank"
@@ -622,6 +743,41 @@ export default function EmailSyncModal({
                 )}
               </div>
             </div>
+
+            {/* Static host notice / Backend Server Bridge Configuration */}
+            {(showBackendConfig || backendStatus === 'unavailable') && (
+              <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-2xl p-3.5 space-y-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
+                      <Server className="w-3.5 h-3.5 text-[#0071E3]" />
+                      {backendStatus === 'connected' ? 'IMAP Backend Server URL' : 'Connect iCloud IMAP Backend (Optional for Static Sites)'}
+                    </div>
+                    <p className="text-[11px] text-[#86868B] mt-0.5">
+                      {backendStatus === 'unavailable'
+                        ? 'Static hosts (like GitHub Pages) cannot open IMAP port 993 directly. Point to your running Node server (e.g. http://localhost:3000 or Render/Cloud Run URL), or use Apple Mail .eml/.mbox import below.'
+                        : 'Override the Node backend URL used for live iCloud IMAP & AI parsing.'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="url"
+                    placeholder="http://localhost:3000 or https://your-server.onrender.com"
+                    value={backendUrlInput}
+                    onChange={e => setBackendUrlInput(e.target.value)}
+                    className="flex-1 bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveBackendUrl}
+                    className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#1D1D1F] hover:bg-black dark:bg-white dark:text-black dark:hover:bg-zinc-200 text-white transition shrink-0"
+                  >
+                    Save & Verify
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -652,14 +808,19 @@ export default function EmailSyncModal({
 
             <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/5 p-3 rounded-xl flex items-start gap-2.5 text-[11px] text-[#86868B]">
               <ShieldCheck className="w-4 h-4 text-[#248A3D] dark:text-[#34C759] shrink-0 mt-0.5" />
-              <div>
-                <strong className="text-[#1D1D1F] dark:text-zinc-200">How to get an App-Specific Password:</strong>
-                <p className="mt-0.5">
-                  Sign in at{' '}
-                  <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">
-                    account.apple.com
-                  </a>{' '}
-                  → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
+              <div className="space-y-1">
+                <div>
+                  <strong className="text-[#1D1D1F] dark:text-zinc-200">How to get an App-Specific Password:</strong>
+                  <p className="mt-0.5">
+                    Sign in at{' '}
+                    <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">
+                      account.apple.com
+                    </a>{' '}
+                    → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
+                  </p>
+                </div>
+                <p className="text-[10px] text-[#6E6E73] dark:text-zinc-400">
+                  Tip for GitHub Pages: You can also set an iCloud Mail rule (<span className="font-medium">icloud.com/mail → Settings → Rules</span>) to auto-forward bank alerts to your connected Gmail so Gmail Auto-Sync imports them automatically with zero server setup.
                 </p>
               </div>
             </div>
@@ -719,6 +880,35 @@ export default function EmailSyncModal({
                   {isSyncingICloud ? 'Scanning iCloud...' : 'Scan & Sync Alerts'}
                 </button>
               </div>
+            </div>
+
+            {/* Direct Apple Mail / iCloud .eml & .mbox File Import (works 100% client-side with zero backend) */}
+            <div className="bg-white dark:bg-[#1C1C1E] border border-dashed border-black/[0.12] dark:border-white/15 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white">
+                  Direct Apple Mail / iCloud File Import (.eml, .mbox)
+                </div>
+                <p className="text-[11px] text-[#86868B] mt-0.5">
+                  Works offline & on GitHub Pages without a server — select or drop saved bank alert emails.
+                </p>
+              </div>
+              <input
+                ref={emlFileInputRef}
+                type="file"
+                accept=".eml,.mbox,message/rfc822,text/plain"
+                multiple
+                onChange={e => handleImportEmlFiles(e.target.files)}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => emlFileInputRef.current?.click()}
+                disabled={isImportingEml}
+                className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white transition inline-flex items-center gap-1.5 shrink-0 disabled:opacity-50"
+              >
+                <Upload className="w-3.5 h-3.5 text-[#0071E3]" />
+                {isImportingEml ? 'Parsing...' : 'Import .eml / .mbox'}
+              </button>
             </div>
 
             {iCloudStatus && (

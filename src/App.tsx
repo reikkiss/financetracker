@@ -65,6 +65,7 @@ import {
   trySilentRefreshGmailToken,
   GmailAuthError
 } from './services/gmailSyncService';
+import { getApiUrl } from './utils/apiConfig';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -1142,7 +1143,7 @@ export default function App() {
       if (icloudAutoLockRef.current) return;
       icloudAutoLockRef.current = true;
       try {
-        const res = await fetch('/api/email/sync-icloud', {
+        const res = await fetch(getApiUrl('/api/email/sync-icloud'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1723,7 +1724,7 @@ export default function App() {
     if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
     setAiLoading(true);
     try {
-      const res = await fetch('/api/ai/advice', {
+      const res = await fetch(getApiUrl('/api/ai/advice'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: firebaseUser.uid, prompt: aiPrompt })

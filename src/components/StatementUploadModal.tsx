@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import { parsePdfStatementLocally, PdfPasswordError } from '../utils/pdfStatementParser';
+import { getApiUrl } from '../utils/apiConfig';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -350,7 +351,7 @@ export default function StatementUploadModal({
       // Fall back to backend OCR only for images or unencrypted scanned PDFs with no extractable text transactions
       if (!data) {
         try {
-          const response = await fetch('/api/ai/parse-statement', {
+          const response = await fetch(getApiUrl('/api/ai/parse-statement'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
