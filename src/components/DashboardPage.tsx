@@ -42,6 +42,9 @@ export interface Transaction {
   isTransfer?: boolean;
   transferToBudgetId?: string;
   status?: 'pending' | 'cleared';
+  emailId?: string;
+  emailOutcome?: 'approved' | 'declined' | 'reversed';
+  emailContext?: string;
 }
 
 interface DashboardPageProps {
@@ -84,10 +87,10 @@ const FX_USD_TO_DOP = 60.5;
 function CustomChartTooltip({ active, payload, label, displaySymbol }: any) {
   if (active && payload && payload.length) {
     return (
-      <div className="bg-[#1C1C1E]/95 border border-white/10 rounded-2xl p-3 shadow-2xl backdrop-blur-xl text-xs space-y-1">
+      <div className="bg-white/95 dark:bg-[#1C1C1E]/95 border border-black/[0.08] dark:border-white/10 rounded-2xl p-3 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-2xl backdrop-blur-xl text-xs space-y-1">
         <div className="font-semibold text-[#86868B] text-[11px] tabular-nums">{label}</div>
         {payload.map((entry: any, index: number) => (
-          <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-white">
+          <div key={`item-${index}`} className="flex items-center justify-between gap-3 text-[#1D1D1F] dark:text-white">
             <span className="flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
               <span className="text-[#86868B] capitalize">{entry.name}:</span>
@@ -252,13 +255,13 @@ export default function DashboardPage({
     <div
       className="space-y-8 max-w-7xl mx-auto pb-12"
       style={{
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif'
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif'
       }}
     >
       {/* 1. HERO SHOWCASE (Apple Store Banner Aesthetic) */}
-      <section className="bg-gradient-to-b from-[#1C1C1E] to-[#141416] border border-white/10 rounded-3xl p-6 sm:p-8 shadow-2xl relative overflow-hidden">
-        <div className="absolute -top-24 -right-24 w-96 h-96 bg-[#0071E3]/15 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-[#34C759]/10 rounded-full blur-3xl pointer-events-none" />
+      <section className="bg-white dark:bg-gradient-to-b dark:from-[#1C1C1E] dark:to-[#141416] border border-black/[0.04] dark:border-white/10 rounded-3xl p-6 sm:p-8 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-2xl relative overflow-hidden">
+        <div className="absolute -top-24 -right-24 w-96 h-96 bg-[#0071E3]/[0.07] dark:bg-[#0071E3]/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-[#34C759]/[0.06] dark:bg-[#34C759]/10 rounded-full blur-3xl pointer-events-none" />
 
         <div className="relative z-10 space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -267,10 +270,10 @@ export default function DashboardPage({
                 AVAILABLE NET LIQUID CASH
               </span>
               <div className="flex items-baseline gap-3 flex-wrap">
-                <span className="text-4xl sm:text-5xl font-bold tracking-tight text-white tabular-nums">
+                <span className="text-4xl sm:text-5xl font-bold tracking-[-0.04em] text-[#1D1D1F] dark:text-white tabular-nums">
                   {formatAmt(netLiquidCash)}
                 </span>
-                <span className="text-xs font-semibold text-[#34C759] flex items-center gap-1">
+                <span className="text-xs font-semibold text-[#248A3D] dark:text-[#34C759] flex items-center gap-1 tabular-nums">
                   <ArrowUpRight className="w-4 h-4" />
                   Net Flow: {formatAmt(totalIncome - totalExpense)}
                 </span>
@@ -278,14 +281,14 @@ export default function DashboardPage({
             </div>
 
             {/* Currency Segmented Control (Apple iOS Style Pill) */}
-            <div className="flex items-center p-1 bg-[#2C2C2E] rounded-full border border-white/5 self-start sm:self-center">
+            <div className="flex items-center p-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5 self-start sm:self-center">
               <button
                 type="button"
                 onClick={() => setCurrencySegment('All')}
                 className={`py-1.5 px-3.5 rounded-full text-xs font-semibold transition ${
                   currencySegment === 'All'
                     ? 'bg-[#0071E3] text-white shadow-sm'
-                    : 'text-[#86868B] hover:text-white'
+                    : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 All Accounts
@@ -296,7 +299,7 @@ export default function DashboardPage({
                 className={`py-1.5 px-3.5 rounded-full text-xs font-semibold transition ${
                   currencySegment === 'DOP'
                     ? 'bg-[#0071E3] text-white shadow-sm'
-                    : 'text-[#86868B] hover:text-white'
+                    : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 RD$ Pesos
@@ -307,7 +310,7 @@ export default function DashboardPage({
                 className={`py-1.5 px-3.5 rounded-full text-xs font-semibold transition ${
                   currencySegment === 'USD'
                     ? 'bg-[#0071E3] text-white shadow-sm'
-                    : 'text-[#86868B] hover:text-white'
+                    : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 US$ Dollars
@@ -316,12 +319,12 @@ export default function DashboardPage({
           </div>
 
           {/* Metric Eyebrows Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-white/10">
-            <div className="bg-[#2C2C2E]/50 rounded-2xl p-4 border border-white/5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-black/[0.06] dark:border-white/10">
+            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/50 rounded-2xl p-4 border border-black/[0.03] dark:border-white/5">
               <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block mb-1">
                 TOTAL CREDIT & LOAN EXPOSURE
               </span>
-              <div className="text-xl font-bold text-white tabular-nums">
+              <div className="text-xl font-bold text-[#1D1D1F] dark:text-white tabular-nums">
                 {formatAmt(totalCreditExposure)}
               </div>
               <span className="text-[11px] text-[#86868B] mt-0.5 block">
@@ -331,11 +334,11 @@ export default function DashboardPage({
               </span>
             </div>
 
-            <div className="bg-[#2C2C2E]/50 rounded-2xl p-4 border border-white/5">
-              <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#FF9F0A] block mb-1">
+            <div className="bg-[#FFF9F0] dark:bg-[#2C2C2E]/50 rounded-2xl p-4 border border-[#FF9F0A]/20 dark:border-white/5">
+              <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#B25000] dark:text-[#FF9F0A] block mb-1">
                 PENDING FLOTANTES ({pendingCount})
               </span>
-              <div className="text-xl font-bold text-[#FF9F0A] tabular-nums">
+              <div className="text-xl font-bold text-[#C93400] dark:text-[#FF9F0A] tabular-nums">
                 {formatAmt(pendingFlotantesSum)}
               </div>
               <span className="text-[11px] text-[#86868B] mt-0.5 block">
@@ -343,12 +346,12 @@ export default function DashboardPage({
               </span>
             </div>
 
-            <div className="bg-[#2C2C2E]/50 rounded-2xl p-4 border border-white/5 flex items-center justify-between gap-3">
+            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/50 rounded-2xl p-4 border border-black/[0.03] dark:border-white/5 flex items-center justify-between gap-3">
               <div>
                 <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block mb-1">
                   EMAIL BANK SYNC
                 </span>
-                <span className="text-xs text-white font-medium flex items-center gap-1.5">
+                <span className="text-xs text-[#1D1D1F] dark:text-white font-medium flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-[#0071E3]" /> iCloud & Gmail
                 </span>
               </div>
@@ -373,12 +376,12 @@ export default function DashboardPage({
             <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
               WALLET & ACCOUNTS
             </span>
-            <h3 className="text-xl font-bold tracking-tight text-white">Connected Cards, Banks & Budgets</h3>
+            <h3 className="text-xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Connected Cards, Banks & Budgets</h3>
           </div>
           {onOpenAddBudget && (
             <button
               onClick={onOpenAddBudget}
-              className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white/10 hover:bg-white/15 text-white transition flex items-center gap-1.5 active:scale-[0.98]"
+              className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white hover:bg-[#F2F2F7] dark:bg-white/10 dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white border border-black/[0.06] dark:border-white/10 shadow-sm transition flex items-center gap-1.5 active:scale-[0.98]"
             >
               <Plus className="w-3.5 h-3.5" /> Add Account
             </button>
@@ -416,12 +419,12 @@ export default function DashboardPage({
                 : 0;
 
               const cardGradient = isCredit
-                ? 'from-[#2A2B2E] via-[#1E1F22] to-[#121315]'
+                ? 'from-[#FFFFFF] via-[#FBFBFD] to-[#F2F2F7] dark:from-[#2A2B2E] dark:via-[#1E1F22] dark:to-[#121315]'
                 : isLoan
-                ? 'from-[#241E2F] via-[#1B1624] to-[#121018]'
+                ? 'from-[#FFFFFF] via-[#F9F5FF] to-[#F1E8FE] dark:from-[#241E2F] dark:via-[#1B1624] dark:to-[#121018]'
                 : isBank
-                ? 'from-[#172535] via-[#111C28] to-[#0A121A]'
-                : 'from-[#1D2B26] via-[#14201C] to-[#0B1310]';
+                ? 'from-[#FFFFFF] via-[#F3F8FF] to-[#E6F0FF] dark:from-[#172535] dark:via-[#111C28] dark:to-[#0A121A]'
+                : 'from-[#FFFFFF] via-[#F3FBF6] to-[#E7F7ED] dark:from-[#1D2B26] dark:via-[#14201C] dark:to-[#0B1310]';
 
               const accentColor = isCredit
                 ? '#FF9F0A'
@@ -435,7 +438,7 @@ export default function DashboardPage({
                 <div
                   key={b.id || idx}
                   onClick={() => onNavigateBudgets && onNavigateBudgets()}
-                  className={`bg-gradient-to-br ${cardGradient} border border-white/10 rounded-[22px] p-6 shadow-xl relative overflow-hidden flex flex-col justify-between space-y-5 transition hover:scale-[1.015] duration-300 cursor-pointer`}
+                  className={`bg-gradient-to-br ${cardGradient} border border-black/[0.05] dark:border-white/10 rounded-[22px] p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl relative overflow-hidden flex flex-col justify-between space-y-5 transition hover:scale-[1.015] duration-300 cursor-pointer`}
                 >
                   <div className="flex items-start justify-between">
                     <div className="min-w-0">
@@ -450,11 +453,11 @@ export default function DashboardPage({
                           ? 'Debit Account'
                           : 'Budget Envelope'}
                       </span>
-                      <h4 className="text-lg font-bold text-white tracking-tight mt-0.5 truncate">
+                      <h4 className="text-lg font-bold text-[#1D1D1F] dark:text-white tracking-tight mt-0.5 truncate">
                         {b.name || b.category}
                       </h4>
                     </div>
-                    <div className="w-10 h-10 rounded-2xl bg-white/10 flex items-center justify-center text-white shrink-0">
+                    <div className="w-10 h-10 rounded-2xl bg-black/[0.04] dark:bg-white/10 flex items-center justify-center shrink-0">
                       {isCredit ? (
                         <CreditCard className="w-5 h-5 text-[#FF9F0A]" />
                       ) : isLoan ? (
@@ -473,13 +476,13 @@ export default function DashboardPage({
                         ? 'Monthly Spent'
                         : 'Available Balance'}
                     </span>
-                    <div className="text-2xl font-extrabold text-white tabular-nums tracking-tight">
+                    <div className="text-2xl font-extrabold text-[#1D1D1F] dark:text-white tabular-nums tracking-tight">
                       {formatAmt(isCredit || isLoan ? used : isStandard ? standardSpent : Number(b.accountBalance) || 0)}
                     </div>
                     {(isCredit || isStandard) && limit > 0 && (
                       <div className="flex items-center justify-between text-[11px] text-[#86868B] tabular-nums pt-1">
                         <span>Limit: {formatAmt(limit)}</span>
-                        <span className={utilization > 80 ? 'text-[#FF3B30] font-semibold' : 'text-zinc-300'}>
+                        <span className={utilization > 80 ? 'text-[#D70015] dark:text-[#FF3B30] font-semibold' : 'text-[#6E6E73] dark:text-zinc-300'}>
                           {utilization}% used
                         </span>
                       </div>
@@ -487,7 +490,7 @@ export default function DashboardPage({
                   </div>
 
                   {(isCredit || isStandard) && limit > 0 && (
-                    <div className="h-1.5 w-full bg-white/10 rounded-full overflow-hidden">
+                    <div className="h-1.5 w-full bg-black/[0.08] dark:bg-white/10 rounded-full overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-500"
                         style={{
@@ -502,9 +505,9 @@ export default function DashboardPage({
             })}
           </div>
         ) : (
-          <div className="bg-[#1C1C1E] border border-white/10 rounded-[22px] p-10 text-center space-y-3">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-[22px] p-10 text-center space-y-3 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-none">
             <Wallet className="w-8 h-8 text-[#86868B] mx-auto opacity-60" />
-            <h4 className="text-sm font-semibold text-white">No Accounts or Budgets Yet</h4>
+            <h4 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">No Accounts or Budgets Yet</h4>
             <p className="text-xs text-[#86868B] max-w-md mx-auto">
               Add your bank accounts, credit cards, loans, or monthly category budgets to view live balances and utilization here.
             </p>
@@ -530,12 +533,12 @@ export default function DashboardPage({
           <button
             type="button"
             onClick={() => onOpenUploadStatement && onOpenUploadStatement()}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-[#1C1C1E] border border-white/10 rounded-2xl p-5 shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
+            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
           >
             <span className="text-[10px] font-semibold uppercase tracking-wider text-[#0071E3] flex items-center gap-1.5">
               <Upload className="w-3.5 h-3.5" /> STATEMENT RECONCILIATION
             </span>
-            <h5 className="text-sm font-bold text-white">Upload PDF / CSV Statement</h5>
+            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Upload PDF / CSV Statement</h5>
             <p className="text-xs text-[#86868B] leading-relaxed">
               Fuzzy-match pending flotante alerts with your monthly bank statement to settle exact amounts.
             </p>
@@ -544,12 +547,12 @@ export default function DashboardPage({
           <button
             type="button"
             onClick={() => onOpenEmailSync && onOpenEmailSync()}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-[#1C1C1E] border border-white/10 rounded-2xl p-5 shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
+            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
           >
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#34C759] flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#248A3D] dark:text-[#34C759] flex items-center gap-1.5">
               <Mail className="w-3.5 h-3.5" /> LIVE EMAIL SYNC
             </span>
-            <h5 className="text-sm font-bold text-white">Connect iCloud & Gmail</h5>
+            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Connect iCloud & Gmail</h5>
             <p className="text-xs text-[#86868B] leading-relaxed">
               Fetch transaction alerts directly from your real inbox into your pending ledger.
             </p>
@@ -558,12 +561,12 @@ export default function DashboardPage({
           <button
             type="button"
             onClick={() => onOpenAddTx('expense')}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-[#1C1C1E] border border-white/10 rounded-2xl p-5 shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
+            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
           >
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#FF9F0A] flex items-center gap-1.5">
+            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#B25000] dark:text-[#FF9F0A] flex items-center gap-1.5">
               <Plus className="w-3.5 h-3.5" /> QUICK ENTRY
             </span>
-            <h5 className="text-sm font-bold text-white">Record Expense or Income</h5>
+            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Record Expense or Income</h5>
             <p className="text-xs text-[#86868B] leading-relaxed">
               Log transactions directly to your Firestore account and update linked card balances automatically.
             </p>
@@ -573,23 +576,23 @@ export default function DashboardPage({
 
       {/* 4. CHARTS & SPENDING BREAKDOWN */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 shadow-xl space-y-4">
+        <div className="lg:col-span-2 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-3xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <span className="text-[11px] uppercase tracking-wider font-semibold text-[#86868B] block">
                 TIMELINE ANALYTICS
               </span>
-              <h4 className="text-lg font-bold text-white tracking-tight">Financial Flow Dynamics</h4>
+              <h4 className="text-lg font-bold text-[#1D1D1F] dark:text-white tracking-tight">Financial Flow Dynamics</h4>
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex p-1 bg-[#2C2C2E] rounded-full border border-white/5">
+              <div className="flex p-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5">
                 {(['Cashflow', 'Expense', 'Income'] as const).map(mode => (
                   <button
                     key={mode}
                     onClick={() => setChartMode(mode)}
                     className={`px-3 py-1 text-xs font-semibold rounded-full transition ${
-                      chartMode === mode ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
+                      chartMode === mode ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                     }`}
                   >
                     {mode}
@@ -612,15 +615,15 @@ export default function DashboardPage({
                 <AreaChart data={convertedChartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                   <defs>
                     <linearGradient id="appleBlueGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#0071E3" stopOpacity={0.4} />
+                      <stop offset="5%" stopColor="#0071E3" stopOpacity={0.32} />
                       <stop offset="95%" stopColor="#0071E3" stopOpacity={0.0} />
                     </linearGradient>
                     <linearGradient id="appleGreenGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#34C759" stopOpacity={0.4} />
+                      <stop offset="5%" stopColor="#34C759" stopOpacity={0.32} />
                       <stop offset="95%" stopColor="#34C759" stopOpacity={0.0} />
                     </linearGradient>
                     <linearGradient id="appleRedGrad" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#FF3B30" stopOpacity={0.4} />
+                      <stop offset="5%" stopColor="#FF3B30" stopOpacity={0.32} />
                       <stop offset="95%" stopColor="#FF3B30" stopOpacity={0.0} />
                     </linearGradient>
                   </defs>
@@ -680,12 +683,12 @@ export default function DashboardPage({
         </div>
 
         {/* Category Donut */}
-        <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 shadow-xl space-y-4 flex flex-col justify-between">
+        <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-3xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl space-y-4 flex flex-col justify-between">
           <div>
             <span className="text-[11px] uppercase tracking-wider font-semibold text-[#86868B] block">
               SPENDING BREAKDOWN
             </span>
-            <h4 className="text-lg font-bold text-white tracking-tight">Top Spending Categories</h4>
+            <h4 className="text-lg font-bold text-[#1D1D1F] dark:text-white tracking-tight">Top Spending Categories</h4>
           </div>
 
           <div className="h-48 w-full relative flex items-center justify-center">
@@ -712,7 +715,7 @@ export default function DashboardPage({
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-[10px] uppercase font-semibold text-[#86868B]">Top Category</span>
-                  <span className="text-xs font-bold text-white max-w-[90px] truncate text-center">
+                  <span className="text-xs font-bold text-[#1D1D1F] dark:text-white max-w-[90px] truncate text-center">
                     {categoryData[0]?.name || 'None'}
                   </span>
                 </div>
@@ -722,17 +725,17 @@ export default function DashboardPage({
             )}
           </div>
 
-          <div className="space-y-1.5 pt-2 border-t border-white/10">
+          <div className="space-y-1.5 pt-2 border-t border-black/[0.06] dark:border-white/10">
             {categoryData.slice(0, 4).map((cat, idx) => (
               <div key={cat.name} className="flex items-center justify-between text-xs">
-                <span className="flex items-center gap-2 text-zinc-300">
+                <span className="flex items-center gap-2 text-[#6E6E73] dark:text-zinc-300">
                   <span
                     className="w-2.5 h-2.5 rounded-full shrink-0"
                     style={{ backgroundColor: APPLE_PALETTE[idx % APPLE_PALETTE.length] }}
                   />
                   <span className="truncate max-w-[130px]">{cat.name}</span>
                 </span>
-                <span className="font-semibold text-white tabular-nums">
+                <span className="font-semibold text-[#1D1D1F] dark:text-white tabular-nums">
                   {cat.percent.toFixed(1)}%
                 </span>
               </div>
@@ -748,7 +751,7 @@ export default function DashboardPage({
             <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
               RECENT ACTIVITY & RECONCILIATION
             </span>
-            <h3 className="text-xl font-bold tracking-tight text-white">Activity Feed</h3>
+            <h3 className="text-xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Activity Feed</h3>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -757,15 +760,15 @@ export default function DashboardPage({
               placeholder="Search merchant, category..."
               value={feedSearch}
               onChange={e => setFeedSearch(e.target.value)}
-              className="bg-[#2C2C2E] border border-white/10 rounded-full px-3.5 py-1.5 text-xs text-white focus:outline-none focus:border-[#0071E3] w-48"
+              className="bg-white dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-full px-3.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3] w-48 shadow-sm"
             />
 
-            <div className="flex p-0.5 bg-[#2C2C2E] rounded-full border border-white/5">
+            <div className="flex p-0.5 bg-[#E5E5EA]/70 dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5">
               <button
                 type="button"
                 onClick={() => setFeedStatusFilter('all')}
                 className={`py-1 px-3 rounded-full text-xs font-semibold transition ${
-                  feedStatusFilter === 'all' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
+                  feedStatusFilter === 'all' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 All
@@ -776,7 +779,7 @@ export default function DashboardPage({
                 className={`py-1 px-3 rounded-full text-xs font-semibold transition ${
                   feedStatusFilter === 'pending'
                     ? 'bg-[#FF9F0A] text-black shadow-sm'
-                    : 'text-[#86868B] hover:text-white'
+                    : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 Flotantes
@@ -787,7 +790,7 @@ export default function DashboardPage({
                 className={`py-1 px-3 rounded-full text-xs font-semibold transition ${
                   feedStatusFilter === 'cleared'
                     ? 'bg-[#34C759] text-black shadow-sm'
-                    : 'text-[#86868B] hover:text-white'
+                    : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
                 }`}
               >
                 Cleared
@@ -797,9 +800,9 @@ export default function DashboardPage({
         </div>
 
         {/* Grouped Inset Container */}
-        <div className="bg-[#1C1C1E] border border-white/10 rounded-[20px] overflow-hidden shadow-2xl">
+        <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-[20px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-2xl">
           {filteredFeed.length > 0 ? (
-            <div className="divide-y divide-white/[0.06]">
+            <div className="divide-y divide-black/[0.06] dark:divide-white/[0.06]">
               {filteredFeed.slice(0, 30).map(t => {
                 const isPending = t.status === 'pending';
                 const isIncome = t.type === 'income';
@@ -809,24 +812,24 @@ export default function DashboardPage({
                   <div
                     key={t.id}
                     onClick={() => setSelectedTxForDetail(t)}
-                    className="p-4 hover:bg-white/[0.03] transition flex items-center justify-between gap-4 cursor-pointer active:scale-[0.99]"
+                    className="p-4 hover:bg-[#F5F5F7] dark:hover:bg-white/[0.03] transition flex items-center justify-between gap-4 cursor-pointer active:scale-[0.99]"
                   >
                     <div className="flex items-center gap-3.5 min-w-0">
-                      <div className="w-10 h-10 rounded-[12px] bg-[#2C2C2E] border border-white/5 flex items-center justify-center shrink-0">
+                      <div className="w-10 h-10 rounded-[12px] bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.04] dark:border-white/5 flex items-center justify-center shrink-0">
                         {isIncome ? (
-                          <ArrowUpRight className="w-5 h-5 text-[#34C759]" />
+                          <ArrowUpRight className="w-5 h-5 text-[#248A3D] dark:text-[#34C759]" />
                         ) : t.isTransfer ? (
                           <ArrowRightLeft className="w-5 h-5 text-[#0071E3]" />
                         ) : (
-                          <ArrowDownRight className="w-5 h-5 text-[#FF3B30]" />
+                          <ArrowDownRight className="w-5 h-5 text-[#D70015] dark:text-[#FF3B30]" />
                         )}
                       </div>
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h5 className="text-sm font-semibold text-white truncate">{t.title}</h5>
+                          <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white truncate">{t.title}</h5>
                           {isPending && (
-                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30">
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
                               Flotante
                             </span>
                           )}
@@ -838,12 +841,17 @@ export default function DashboardPage({
                           {matchedBudget && (
                             <>
                               <span>•</span>
-                              <span className="text-zinc-300 truncate max-w-[140px]">
+                              <span className="text-[#6E6E73] dark:text-zinc-300 truncate max-w-[140px]">
                                 {matchedBudget.name || matchedBudget.category}
                               </span>
                             </>
                           )}
                         </div>
+                        {t.emailContext && (
+                          <p className="text-[11px] text-[#6E6E73] dark:text-zinc-400 mt-0.5 truncate max-w-md">
+                            {t.emailContext}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -851,7 +859,11 @@ export default function DashboardPage({
                       <div className="text-right">
                         <div
                           className={`text-base font-bold tabular-nums tracking-tight ${
-                            isIncome ? 'text-[#34C759]' : t.isTransfer ? 'text-[#5AC8FA]' : 'text-white'
+                            isIncome
+                              ? 'text-[#248A3D] dark:text-[#34C759]'
+                              : t.isTransfer
+                              ? 'text-[#0071E3] dark:text-[#5AC8FA]'
+                              : 'text-[#1D1D1F] dark:text-white'
                           }`}
                         >
                           {t.isTransfer ? '' : isIncome ? '+' : '-'} {formatAmt(t.amount)}
@@ -869,7 +881,7 @@ export default function DashboardPage({
           ) : (
             <div className="p-12 text-center space-y-2">
               <CreditCard className="w-8 h-8 text-[#86868B] mx-auto opacity-40" />
-              <h5 className="text-sm font-semibold text-white">No transactions found</h5>
+              <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">No transactions found</h5>
               <p className="text-xs text-[#86868B]">
                 Add a transaction, sync your email alerts, or select another month filter to view activity.
               </p>

@@ -102,29 +102,30 @@ export default function AddTransactionModal({
   const canBeLoanPayment = selectedBudget && (selectedBudget.accountType === 'credit_card' || selectedBudget.accountType === 'loan');
 
   return (
-    <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#1D1D1F] dark:text-[#F5F5F7]">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-bold tracking-tight text-white capitalize">
+          <h3 className="text-lg font-bold tracking-tight text-[#1D1D1F] dark:text-white capitalize">
             {isLoanPayment ? 'Record Payment / Abono' : `New ${type}`}
           </h3>
           <button
+            type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Type selector toggle */}
-        <div className="flex p-1 bg-[#2C2C2E] rounded-full border border-white/5">
+        <div className="flex p-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5">
           <button
             type="button"
             onClick={() => setType('expense')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-full transition ${
               type === 'expense'
                 ? 'bg-[#FF3B30] text-white shadow-sm'
-                : 'text-[#86868B] hover:text-white'
+                : 'text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
             }`}
           >
             Expense
@@ -134,8 +135,8 @@ export default function AddTransactionModal({
             onClick={() => setType('income')}
             className={`flex-1 py-1.5 text-xs font-semibold rounded-full transition ${
               type === 'income'
-                ? 'bg-[#34C759] text-black shadow-sm'
-                : 'text-[#86868B] hover:text-white'
+                ? 'bg-[#34C759] text-white dark:text-black shadow-sm'
+                : 'text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
             }`}
           >
             Income
@@ -144,7 +145,7 @@ export default function AddTransactionModal({
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="text-[11px] text-[#9b9b9b] block mb-1">Title *</label>
+            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Title *</label>
             <input
               type="text"
               required
@@ -152,13 +153,13 @@ export default function AddTransactionModal({
               placeholder={type === 'expense' ? "e.g. Supermercado Bravo, Internet" : "e.g. Salary, Consulting"}
               value={title}
               onChange={e => setTitle(e.target.value)}
-              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-[11px] text-[#9b9b9b] block mb-1">Amount ({currencySymbol}) *</label>
+              <label className="text-[11px] font-medium text-[#86868B] block mb-1">Amount ({currencySymbol}) *</label>
               <input
                 type="number"
                 step="0.01"
@@ -167,26 +168,26 @@ export default function AddTransactionModal({
                 placeholder="0.00"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] tabular-nums focus:outline-none focus:border-[#0071E3]"
               />
             </div>
             <div>
-              <label className="text-[11px] text-[#9b9b9b] block mb-1">Category</label>
+              <label className="text-[11px] font-medium text-[#86868B] block mb-1">Category</label>
               <select
                 value={category}
                 onChange={e => setCategory(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
+                className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
               >
                 {availableCategories.map(c => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">{c}</option>
                 ))}
               </select>
             </div>
           </div>
 
           {budgets.length > 0 && (
-            <div className="space-y-2 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
-              <label className="text-[11px] text-[#9b9b9b] block">
+            <div className="space-y-2 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-3 rounded-2xl">
+              <label className="text-[11px] font-medium text-[#86868B] block">
                 Link to Bank / Debit / Credit Card / Loan / Budget Account (Optional)
               </label>
               <select
@@ -199,11 +200,11 @@ export default function AddTransactionModal({
                     setIsLoanPayment(false);
                   }
                 }}
-                className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
               >
-                <option value="">None (Match by Category only)</option>
+                <option value="" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">None (Match by Category only)</option>
                 {budgets.map(b => (
-                  <option key={b.id} value={b.id}>
+                  <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">
                     {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                   </option>
                 ))}
@@ -215,9 +216,9 @@ export default function AddTransactionModal({
                     type="checkbox"
                     checked={isLoanPayment}
                     onChange={e => setIsLoanPayment(e.target.checked)}
-                    className="accent-emerald-500 w-3.5 h-3.5"
+                    className="accent-[#34C759] w-3.5 h-3.5"
                   />
-                  <span className="text-[11px] text-emerald-400 font-medium">
+                  <span className="text-[11px] text-[#248A3D] dark:text-emerald-400 font-medium">
                     Payment / Abono to {selectedBudget.name || selectedBudget.category} (Reduces balance used)
                   </span>
                 </label>
@@ -226,24 +227,24 @@ export default function AddTransactionModal({
           )}
 
           <div>
-            <label className="text-[11px] text-[#9b9b9b] block mb-1">Date</label>
+            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Date</label>
             <input
               type="date"
               value={date}
               onChange={e => setDate(e.target.value)}
-              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
+              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
           <div>
-            <label className="text-[11px] text-[#9b9b9b] block mb-1">Notes (Optional)</label>
+            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Notes (Optional)</label>
             <input
               type="text"
               maxLength={500}
               placeholder="Optional reference or details..."
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
+              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
@@ -251,7 +252,7 @@ export default function AddTransactionModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-[#2C2C2E] hover:bg-white/15 text-white py-2.5 rounded-full text-xs font-semibold transition"
+              className="flex-1 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white py-2.5 rounded-full text-xs font-semibold transition"
             >
               Cancel
             </button>

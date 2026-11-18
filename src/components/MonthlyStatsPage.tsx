@@ -1,5 +1,5 @@
 import React from 'react';
-import { Calendar, CheckCircle2, TrendingUp, TrendingDown } from 'lucide-react';
+import { TrendingUp, TrendingDown } from 'lucide-react';
 
 interface MonthlyStatsPageProps {
   statsQuarterFilter: 'All' | 'Q1' | 'Q2' | 'Q3' | 'Q4';
@@ -22,7 +22,7 @@ export default function MonthlyStatsPage({
     <div
       className="space-y-6 max-w-7xl mx-auto pb-12"
       style={{
-        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", sans-serif'
+        fontFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", sans-serif'
       }}
     >
       {/* Header & Segmented Quarter Filter */}
@@ -31,11 +31,11 @@ export default function MonthlyStatsPage({
           <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
             HISTORICAL OVERVIEW
           </span>
-          <h2 className="text-2xl font-bold tracking-tight text-white">Monthly Financial Summaries</h2>
+          <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Monthly Financial Summaries</h2>
         </div>
 
         {/* Apple Segmented Pill */}
-        <div className="flex p-1 bg-[#2C2C2E] rounded-full border border-white/5 self-start sm:self-center">
+        <div className="flex p-1 bg-[#E5E5EA]/70 dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5 self-start sm:self-center">
           {(['All', 'Q1', 'Q2', 'Q3', 'Q4'] as const).map(q => (
             <button
               key={q}
@@ -43,7 +43,7 @@ export default function MonthlyStatsPage({
               className={`py-1.5 px-3.5 rounded-full text-xs font-semibold transition ${
                 statsQuarterFilter === q
                   ? 'bg-[#0071E3] text-white shadow-sm'
-                  : 'text-[#86868B] hover:text-white'
+                  : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
               }`}
             >
               {q}
@@ -65,29 +65,29 @@ export default function MonthlyStatsPage({
             <div
               key={m.key}
               onClick={() => onSelectMonth && onSelectMonth(m.key)}
-              className={`bg-[#1C1C1E] rounded-[22px] p-5 space-y-4 shadow-xl flex flex-col justify-between transition cursor-pointer hover:scale-[1.015] duration-300 ${
+              className={`bg-white dark:bg-[#1C1C1E] rounded-[22px] p-5 space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl flex flex-col justify-between transition cursor-pointer hover:scale-[1.015] duration-300 ${
                 isSelected
-                  ? 'border-2 border-[#0071E3] shadow-[#0071E3]/20 ring-1 ring-[#0071E3]/30'
+                  ? 'border-2 border-[#0071E3] shadow-[#0071E3]/15 ring-1 ring-[#0071E3]/25'
                   : m.isCurrentMonth
-                  ? 'border border-[#34C759]/40'
-                  : 'border border-white/10'
+                  ? 'border border-[#34C759]/50'
+                  : 'border border-black/[0.04] dark:border-white/10'
               }`}
             >
               <div>
-                <div className="flex items-center justify-between border-b border-white/10 pb-3 mb-3">
+                <div className="flex items-center justify-between border-b border-black/[0.06] dark:border-white/10 pb-3 mb-3">
                   <div className="flex items-center gap-2">
-                    <span className="font-bold text-white text-base tracking-tight">{m.name}</span>
+                    <span className="font-bold text-[#1D1D1F] dark:text-white text-base tracking-tight">{m.name}</span>
                     {m.isCurrentMonth && (
-                      <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" title="Current Month" />
+                      <span className="w-2 h-2 rounded-full bg-[#34C759]" title="Current Month" />
                     )}
                   </div>
                   <div className="flex items-center gap-1.5">
                     {isSelected && (
-                      <span className="text-[10px] bg-[#0071E3]/20 text-[#0071E3] border border-[#0071E3]/30 px-2 py-0.5 rounded-full font-semibold">
+                      <span className="text-[10px] bg-[#0071E3]/12 text-[#0071E3] border border-[#0071E3]/25 px-2 py-0.5 rounded-full font-semibold">
                         Active Filter
                       </span>
                     )}
-                    <span className="text-[10px] bg-white/10 text-[#86868B] px-2 py-0.5 rounded-full font-semibold">
+                    <span className="text-[10px] bg-[#F2F2F7] dark:bg-white/10 text-[#6E6E73] dark:text-[#86868B] px-2 py-0.5 rounded-full font-semibold">
                       {m.q}
                     </span>
                   </div>
@@ -96,29 +96,29 @@ export default function MonthlyStatsPage({
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between items-center">
                     <span className="text-[#86868B] flex items-center gap-1">
-                      <TrendingUp className="w-3.5 h-3.5 text-[#34C759]" /> Income
+                      <TrendingUp className="w-3.5 h-3.5 text-[#248A3D] dark:text-[#34C759]" /> Income
                     </span>
-                    <span className="text-[#34C759] font-semibold tabular-nums">
+                    <span className="text-[#248A3D] dark:text-[#34C759] font-semibold tabular-nums">
                       {currencySymbol}{mIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
                   <div className="flex justify-between items-center">
                     <span className="text-[#86868B] flex items-center gap-1">
-                      <TrendingDown className="w-3.5 h-3.5 text-[#FF3B30]" /> Expense
+                      <TrendingDown className="w-3.5 h-3.5 text-[#D70015] dark:text-[#FF3B30]" /> Expense
                     </span>
-                    <span className="text-zinc-200 font-semibold tabular-nums">
+                    <span className="text-[#1D1D1F] dark:text-zinc-200 font-semibold tabular-nums">
                       {currencySymbol}{mExpense.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
 
-                  <div className="h-[0.5px] bg-white/10 my-1" />
+                  <div className="h-[0.5px] bg-black/[0.06] dark:bg-white/10 my-1" />
 
                   <div className="flex justify-between items-center">
                     <span className="text-[#86868B] font-medium">Net Cashflow</span>
                     <span
                       className={`font-bold tabular-nums text-sm ${
-                        mCashflow >= 0 ? 'text-[#34C759]' : 'text-[#FF3B30]'
+                        mCashflow >= 0 ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#D70015] dark:text-[#FF3B30]'
                       }`}
                     >
                       {mCashflow >= 0 ? '+' : ''}{currencySymbol}{mCashflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -129,7 +129,7 @@ export default function MonthlyStatsPage({
 
               {/* Expense Ratio Progress Bar */}
               <div className="space-y-1.5 pt-2">
-                <div className="w-full bg-[#2C2C2E] h-2 rounded-full overflow-hidden">
+                <div className="w-full bg-[#F2F2F7] dark:bg-[#2C2C2E] h-2 rounded-full overflow-hidden">
                   <div
                     className="h-full rounded-full transition-all duration-500"
                     style={{
@@ -140,7 +140,7 @@ export default function MonthlyStatsPage({
                 </div>
                 <div className="flex items-center justify-between text-[10px] text-[#86868B]">
                   <span>Expense Ratio</span>
-                  <span className="tabular-nums font-semibold text-zinc-300">{ratio}%</span>
+                  <span className="tabular-nums font-semibold text-[#1D1D1F] dark:text-zinc-300">{ratio}%</span>
                 </div>
               </div>
             </div>

@@ -36,7 +36,8 @@
         "transferToBudgetId": { "type": "string", "maxLength": 50 },
         "status": { "type": "string", "maxLength": 20 },
         "emailId": { "type": "string", "maxLength": 100 },
-        "emailOutcome": { "type": "string", "maxLength": 20 }
+        "emailOutcome": { "type": "string", "maxLength": 20 },
+        "emailContext": { "type": "string", "maxLength": 240 }
       }
     },
     "Budget": {

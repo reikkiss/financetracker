@@ -1,8 +1,9 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
-    --apple-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --apple-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
     --apple-bg-light: #F5F5F7;
     --apple-card-light: #FFFFFF;
     --apple-text-primary-light: #1D1D1F;
@@ -22,10 +23,16 @@
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     text-rendering: optimizeLegibility;
-    background-color: #000000;
-    color: #F5F5F7;
+    background-color: #F5F5F7;
+    color: #1D1D1F;
     margin: 0;
     padding: 0;
+  }
+
+  html.dark,
+  html.dark body {
+    background-color: #000000;
+    color: #F5F5F7;
   }
 
   /* Tabular Numerals for currencies, balances, metrics, dates */
@@ -34,19 +41,39 @@
   }
 }
 
-/* Apple Store & Wallet Glassmorphism */
+/* Apple Store & Wallet Translucent Glassmorphism */
 .apple-glass {
-  background: rgba(28, 28, 30, 0.75);
-  backdrop-filter: blur(24px) saturate(190%);
-  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border-bottom: 0.5px solid rgba(0, 0, 0, 0.08);
+}
+
+.dark .apple-glass {
+  background: rgba(28, 28, 30, 0.72);
   border-bottom: 0.5px solid rgba(255, 255, 255, 0.12);
 }
 
 .apple-glass-card {
-  background: rgba(28, 28, 30, 0.85);
+  background: rgba(255, 255, 255, 0.88);
   backdrop-filter: blur(20px) saturate(180%);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+
+.dark .apple-glass-card {
+  background: rgba(28, 28, 30, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.apple-ambient-shadow {
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.04);
+}
+
+.dark .apple-ambient-shadow {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
 /* Apple Smooth Spring Micro-Interactions */
