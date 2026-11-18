@@ -49,7 +49,6 @@ import {
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
 import StatementUploadModal, { ImportedTransactionDraft } from './components/StatementUploadModal';
-import { getApiUrl } from './utils/api';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -1183,14 +1182,14 @@ export default function App() {
     if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
     setAiLoading(true);
     try {
-      const res = await fetch(getApiUrl('/api/ai/advice'), {
+      const res = await fetch('/api/ai/advice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: firebaseUser.uid, prompt: aiPrompt })
       });
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        setAiResult('AI Financial Advisor requires a running backend server (configure VITE_API_BASE_URL when hosting statically on GitHub Pages).');
+        setAiResult('AI Financial Advisor is unavailable on static hosting.');
         return;
       }
       const data = await res.json();

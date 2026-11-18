@@ -12,7 +12,6 @@ import {
   CreditCard
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
-import { getApiUrl } from '../utils/api';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -278,7 +277,7 @@ export default function StatementUploadModal({
 
       let data: any = null;
       try {
-        const response = await fetch(getApiUrl('/api/ai/parse-statement'), {
+        const response = await fetch('/api/ai/parse-statement', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload)
@@ -298,7 +297,7 @@ export default function StatementUploadModal({
           };
         } else {
           throw new Error(
-            'PDF/Image AI parsing requires a backend API server (VITE_API_BASE_URL). On GitHub Pages without a backend URL, please upload a CSV statement.'
+            'PDF/Image statement parsing requires the server backend. Please upload a CSV statement when running on GitHub Pages.'
           );
         }
       } catch (networkErr: any) {
