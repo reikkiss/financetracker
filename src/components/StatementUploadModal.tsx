@@ -9,10 +9,13 @@ import {
   Trash2,
   AlertCircle,
   CheckCircle2,
-  CreditCard
+  CreditCard,
+  Lock,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
-import { parsePdfStatementLocally } from '../utils/pdfStatementParser';
+import { parsePdfStatementLocally, PdfPasswordError } from '../utils/pdfStatementParser';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -203,6 +206,10 @@ export default function StatementUploadModal({
   const [isParsing, setIsParsing] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [isPasswordRequired, setIsPasswordRequired] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState('');
+  const [showPdfPassword, setShowPdfPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [detectedInfo, setDetectedInfo] = useState<{ accountName: string; period: string } | null>(null);
   const [drafts, setDrafts] = useState<ImportedTransactionDraft[]>([]);
 
@@ -214,6 +221,10 @@ export default function StatementUploadModal({
     latestBudgetIdRef.current = '';
     setDrafts([]);
     setErrorMsg(null);
+    setIsPasswordRequired(false);
+    setPdfPassword('');
+    setShowPdfPassword(false);
+    setPasswordError(null);
     setDetectedInfo(null);
     setIsParsing(false);
     setIsImporting(false);
@@ -227,13 +238,17 @@ export default function StatementUploadModal({
   const handleFilePicked = async (file: File) => {
     setSelectedFile(file);
     setErrorMsg(null);
+    setIsPasswordRequired(false);
+    setPdfPassword('');
+    setShowPdfPassword(false);
+    setPasswordError(null);
     setDetectedInfo(null);
     setDrafts([]);
 
     await parseStatementFile(file);
   };
 
-  const parseStatementFile = async (file: File) => {
+  const parseStatementFile = async (file: File, passwordAttempt?: string) => {
     setIsParsing(true);
     setErrorMsg(null);
     try {
@@ -289,57 +304,63 @@ export default function StatementUploadModal({
       const isPdf = payload.mimeType === 'application/pdf' || lowerName.endsWith('.pdf');
       let data: any = null;
 
-      try {
-        const response = await fetch('/api/ai/parse-statement', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const contentType = response.headers.get('content-type') || '';
-        if (contentType.includes('application/json')) {
-          data = await response.json();
-          if (!response.ok) {
-            throw new Error(data.error || 'Failed to parse statement.');
-          }
-        } else if (isTextBased && payload.textContent) {
-          const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
+      if (isTextBased && payload.textContent) {
+        const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
+        if (localRows.length > 0) {
           data = {
             detectedAccountName: file.name.replace(/\.[^/.]+$/, ''),
             statementPeriod: '',
             transactions: localRows
           };
-        } else if (isPdf) {
-          data = await parsePdfStatementLocally(file, availableCategories, currencyCode);
-        } else {
-          throw new Error(
-            'Image OCR statement parsing requires the backend server. Please upload a PDF or CSV statement when running on GitHub Pages.'
-          );
         }
-      } catch (networkErr: any) {
-        if (!data && isTextBased && payload.textContent) {
-          const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
-          if (localRows.length > 0) {
-            data = {
-              detectedAccountName: file.name.replace(/\.[^/.]+$/, ''),
-              statementPeriod: '',
-              transactions: localRows
-            };
+      } else if (isPdf) {
+        const pdfParsed = await parsePdfStatementLocally(file, availableCategories, currencyCode, passwordAttempt);
+        if (pdfParsed.transactions.length > 0 || passwordAttempt !== undefined) {
+          data = pdfParsed;
+        }
+      }
+
+      // Fall back to backend OCR only for images or unencrypted scanned PDFs with no extractable text transactions
+      if (!data) {
+        try {
+          const response = await fetch('/api/ai/parse-statement', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            const respData = await response.json();
+            if (!response.ok) {
+              throw new Error(respData.error || 'Failed to parse statement.');
+            }
+            data = respData;
+          } else if (isPdf) {
+            throw new Error(
+              'Could not extract text transactions from this PDF (it may be a scanned image). Please upload a text-based PDF or CSV statement.'
+            );
           } else {
+            throw new Error(
+              'Image OCR statement parsing requires the backend server. Please upload a PDF or CSV statement when running on GitHub Pages.'
+            );
+          }
+        } catch (networkErr: any) {
+          if (networkErr instanceof PdfPasswordError) {
             throw networkErr;
           }
-        } else if (!data && isPdf) {
-          const pdfParsed = await parsePdfStatementLocally(file, availableCategories, currencyCode);
-          if (pdfParsed.transactions.length > 0) {
-            data = pdfParsed;
-          } else {
+          if (isPdf) {
             throw new Error(
               'Could not extract text transactions from this PDF (it may be a scanned image). Please upload a text-based PDF or CSV statement.'
             );
           }
-        } else {
           throw networkErr;
         }
       }
+
+      setIsPasswordRequired(false);
+      setPdfPassword('');
+      setShowPdfPassword(false);
+      setPasswordError(null);
 
       const activeBudgetId = latestBudgetIdRef.current;
       const existingCounts = new Map<string, number>();
@@ -385,10 +406,27 @@ export default function StatementUploadModal({
         setErrorMsg('No transactions were found in this statement. Please try another file.');
       }
     } catch (err: any) {
-      setErrorMsg(err.message || 'Unable to parse statement.');
+      if (err instanceof PdfPasswordError) {
+        setIsPasswordRequired(true);
+        setErrorMsg(null);
+        setPasswordError(
+          err.reason === 'INCORRECT_PASSWORD'
+            ? 'Incorrect PDF password. Please check and try again.'
+            : null
+        );
+      } else {
+        setErrorMsg(err.message || 'Unable to parse statement.');
+      }
     } finally {
       setIsParsing(false);
     }
+  };
+
+  const handleUnlockPdf = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedFile || !pdfPassword || isParsing) return;
+    setPasswordError(null);
+    await parseStatementFile(selectedFile, pdfPassword);
   };
 
   const applyDefaultBudgetToAll = (budgetId: string) => {
@@ -584,6 +622,74 @@ export default function StatementUploadModal({
             </div>
           </div>
         </div>
+
+        {/* Password-protected PDF unlock prompt */}
+        {isPasswordRequired && selectedFile && (
+          <form
+            onSubmit={handleUnlockPdf}
+            className="bg-amber-500/10 border border-amber-500/35 rounded-xl p-4 space-y-3 shrink-0"
+          >
+            <div className="flex items-start gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
+                <Lock className="w-4 h-4 text-amber-400" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-amber-200">
+                  This PDF statement is password-protected
+                </p>
+                <p className="text-[11px] text-amber-200/75 mt-0.5">
+                  Enter the document password to decrypt and extract transactions locally in your browser (the password is never saved or sent anywhere).
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+              <div className="relative flex-1">
+                <input
+                  type={showPdfPassword ? 'text' : 'password'}
+                  value={pdfPassword}
+                  onChange={e => {
+                    setPdfPassword(e.target.value);
+                    if (passwordError) setPasswordError(null);
+                  }}
+                  placeholder="Enter PDF password..."
+                  autoFocus
+                  className="w-full bg-[#141414] border border-amber-500/40 rounded-lg pl-3 pr-9 py-2 text-xs text-white placeholder-[#777] focus:outline-none focus:border-amber-400"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPdfPassword(prev => !prev)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#888] hover:text-white"
+                  title={showPdfPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPdfPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={!pdfPassword || isParsing}
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-black text-xs font-semibold transition flex items-center justify-center gap-1.5 shrink-0"
+              >
+                {isParsing ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" /> Unlocking...
+                  </>
+                ) : (
+                  <>
+                    <Lock className="w-3.5 h-3.5" /> Unlock PDF
+                  </>
+                )}
+              </button>
+            </div>
+
+            {passwordError && (
+              <p className="text-[11px] text-rose-300 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
+                <span>{passwordError}</span>
+              </p>
+            )}
+          </form>
+        )}
 
         {/* Error banner */}
         {errorMsg && (

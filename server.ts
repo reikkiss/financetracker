@@ -104,6 +104,15 @@ async function startServer() {
         return res.status(400).json({ error: 'No statement file or text provided.' });
       }
 
+      if (fileDataBase64 && mimeType === 'application/pdf') {
+        const pdfBytes = Buffer.from(fileDataBase64, 'base64');
+        if (pdfBytes.includes('/Encrypt')) {
+          return res.status(400).json({
+            error: 'This PDF statement is password-protected. Please unlock it in the browser first.'
+          });
+        }
+      }
+
       const ai = getAiClient();
       const categoriesList = Array.isArray(availableCategories) && availableCategories.length > 0
         ? availableCategories.join(', ')
@@ -143,7 +152,7 @@ Instructions:
 
       const response = await ai.models.generateContent({
         model: 'gemini-4-hydrogen',
-        contents: { parts },
+        contents: [{ role: 'user', parts }],
         config: {
           responseMimeType: 'application/json',
           responseSchema: {
@@ -197,8 +206,8 @@ Instructions:
         })).filter((t: any) => t.amount > 0)
       });
     } catch (err: any) {
-      console.error('Statement Parse Error:', err);
-      res.status(500).json({ error: err.message || 'Failed to parse statement file' });
+      const status = typeof err?.status === 'number' && err.status >= 400 && err.status < 500 ? 400 : 500;
+      res.status(status).json({ error: err?.message || 'Failed to parse statement file' });
     }
   });
 
