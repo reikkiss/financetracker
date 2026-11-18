@@ -5,6 +5,8 @@ import { GoogleGenAI, Type } from '@google/genai';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, getDocs, doc, setDoc, deleteDoc, updateDoc, query, where, getDoc } from 'firebase/firestore';
 import fs from 'fs';
+import { ImapFlow } from 'imapflow';
+import { parseBankEmailAlert } from './src/utils/bankEmailParser';
 
 // Load Firebase config
 const configPath = path.join(process.cwd(), 'firebase-applet-config.json');
@@ -255,6 +257,201 @@ Instructions:
     } catch (err: any) {
       console.error('AI Advice Error:', err);
       res.status(500).json({ error: err.message || 'Failed to generate AI advice' });
+    }
+  });
+
+  // Test iCloud IMAP Connection
+  app.post('/api/email/test-icloud', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
+      }
+
+      const client = new ImapFlow({
+        host: 'imap.mail.me.com',
+        port: 993,
+        secure: true,
+        auth: {
+          user: email.trim(),
+          pass: password.trim()
+        },
+        logger: false
+      });
+
+      await client.connect();
+      const lock = await client.getMailboxLock('INBOX');
+      const status = await client.status('INBOX', { messages: true });
+      lock.release();
+      await client.logout();
+
+      res.json({
+        success: true,
+        message: 'Successfully connected to iCloud IMAP mailbox.',
+        totalInboxMessages: typeof status === 'object' && status ? (status.messages || 0) : 0
+      });
+    } catch (err: any) {
+      console.error('iCloud test error:', err);
+      res.status(400).json({
+        error: err.message || 'Could not connect to iCloud IMAP. Verify your Apple ID and App-Specific Password (generate at appleid.apple.com).'
+      });
+    }
+  });
+
+  // Real iCloud IMAP Bank Alert Sync
+  app.post('/api/email/sync-icloud', async (req, res) => {
+    try {
+      const { email, password, limit = 40 } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
+      }
+
+      const client = new ImapFlow({
+        host: 'imap.mail.me.com',
+        port: 993,
+        secure: true,
+        auth: {
+          user: email.trim(),
+          pass: password.trim()
+        },
+        logger: false
+      });
+
+      await client.connect();
+      const lock = await client.getMailboxLock('INBOX');
+      const alerts: any[] = [];
+      let totalScanned = 0;
+
+      try {
+        const status = await client.status('INBOX', { messages: true });
+        const total = typeof status === 'object' && status ? (status.messages || 0) : 0;
+        if (total > 0) {
+          const fetchLimit = Math.min(Math.max(1, Number(limit) || 40), total);
+          const startSeq = Math.max(1, total - fetchLimit + 1);
+          const seqRange = `${startSeq}:${total}`;
+
+          for await (const msg of client.fetch(seqRange, { envelope: true, source: true })) {
+            totalScanned++;
+            const subject = msg.envelope?.subject || '';
+            const from = msg.envelope?.from?.[0]?.address || msg.envelope?.from?.[0]?.name || '';
+            const rawEnvDate = msg.envelope?.date;
+            const date =
+              rawEnvDate instanceof Date
+                ? rawEnvDate.toISOString()
+                : typeof rawEnvDate === 'string'
+                ? rawEnvDate
+                : '';
+            const text = msg.source ? msg.source.toString('utf8') : '';
+
+            const parsed = parseBankEmailAlert(text, subject, from, date);
+            if (parsed) {
+              alerts.push({
+                ...parsed,
+                emailId: String(msg.uid || msg.seq),
+                emailSubject: subject,
+                emailFrom: from,
+                emailDate: date
+              });
+            }
+          }
+        }
+      } finally {
+        lock.release();
+      }
+
+      await client.logout();
+
+      res.json({
+        success: true,
+        provider: 'icloud',
+        totalScanned,
+        alertsFound: alerts.length,
+        alerts: alerts.reverse()
+      });
+    } catch (err: any) {
+      console.error('iCloud sync error:', err);
+      res.status(500).json({
+        error: err.message || 'Failed to sync from iCloud IMAP. Please ensure you generated an App-Specific Password at appleid.apple.com.'
+      });
+    }
+  });
+
+  // Real Gmail API Bank Alert Sync
+  app.post('/api/email/sync-gmail', async (req, res) => {
+    try {
+      const { accessToken, maxResults = 30 } = req.body;
+      if (!accessToken) {
+        return res.status(401).json({ error: 'Google OAuth access token is required.' });
+      }
+
+      const query = encodeURIComponent(
+        'from:(banreservas.com OR bpd.com.do OR bhd.com.do OR qik.do OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR alerta OR "pago realizado" OR abono)'
+      );
+      const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${query}&maxResults=${maxResults}`;
+      const listRes = await fetch(listUrl, {
+        headers: { Authorization: `Bearer ${accessToken}` }
+      });
+
+      if (!listRes.ok) {
+        const errText = await listRes.text();
+        return res.status(listRes.status).json({ error: `Gmail API query error: ${errText}` });
+      }
+
+      const listData = await listRes.json();
+      const messageRefs = listData.messages || [];
+      const alerts: any[] = [];
+
+      for (const ref of messageRefs) {
+        const msgUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${ref.id}?format=full`;
+        const msgRes = await fetch(msgUrl, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        if (!msgRes.ok) continue;
+
+        const msgData = await msgRes.json();
+        const headers = msgData.payload?.headers || [];
+        const subject = headers.find((h: any) => h.name?.toLowerCase() === 'subject')?.value || '';
+        const from = headers.find((h: any) => h.name?.toLowerCase() === 'from')?.value || '';
+        const dateHeader = headers.find((h: any) => h.name?.toLowerCase() === 'date')?.value || '';
+
+        // Extract body text recursively
+        let bodyText = msgData.snippet || '';
+        function extractParts(part: any) {
+          if (!part) return;
+          if (part.body?.data) {
+            try {
+              const decoded = Buffer.from(part.body.data, 'base64url').toString('utf8');
+              bodyText += '\n' + decoded;
+            } catch {}
+          }
+          if (part.parts && Array.isArray(part.parts)) {
+            part.parts.forEach(extractParts);
+          }
+        }
+        extractParts(msgData.payload);
+
+        const parsed = parseBankEmailAlert(bodyText, subject, from, dateHeader);
+        if (parsed) {
+          alerts.push({
+            ...parsed,
+            emailId: ref.id,
+            emailSubject: subject,
+            emailFrom: from,
+            emailDate: dateHeader
+          });
+        }
+      }
+
+      res.json({
+        success: true,
+        provider: 'gmail',
+        totalScanned: messageRefs.length,
+        alertsFound: alerts.length,
+        alerts
+      });
+    } catch (err: any) {
+      console.error('Gmail sync error:', err);
+      res.status(500).json({ error: err.message || 'Failed to sync Gmail alerts.' });
     }
   });
 

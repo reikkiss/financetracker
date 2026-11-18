@@ -1,1 +1,82 @@
 @import "tailwindcss";
+
+@layer base {
+  :root {
+    --apple-font: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --apple-bg-light: #F5F5F7;
+    --apple-card-light: #FFFFFF;
+    --apple-text-primary-light: #1D1D1F;
+    --apple-text-secondary-light: #86868B;
+    --apple-blue: #0071E3;
+    --apple-blue-hover: #0077ED;
+    --apple-green: #34C759;
+    --apple-amber: #FF9F0A;
+    --apple-red: #FF3B30;
+    --apple-bg-dark: #000000;
+    --apple-card-dark: #1C1C1E;
+    --apple-grouped-dark: #2C2C2E;
+  }
+
+  html, body {
+    font-family: var(--apple-font);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    background-color: #000000;
+    color: #F5F5F7;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Tabular Numerals for currencies, balances, metrics, dates */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Apple Store & Wallet Glassmorphism */
+.apple-glass {
+  background: rgba(28, 28, 30, 0.75);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.12);
+}
+
+.apple-glass-card {
+  background: rgba(28, 28, 30, 0.85);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Apple Smooth Spring Micro-Interactions */
+.apple-spring {
+  transition: all 300ms cubic-bezier(0.25, 1, 0.5, 1);
+}
+
+.apple-press:active {
+  transform: scale(0.98);
+}
+
+/* Apple Horizontal Product Shelf Snap Scrolling */
+.apple-shelf {
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+}
+
+.apple-shelf-item {
+  scroll-snap-align: start;
+}
+
+/* Squircle & Pill Borders */
+.apple-squircle {
+  border-radius: 18px;
+}
+
+.apple-card-squircle {
+  border-radius: 22px;
+}
+
+.apple-pill {
+  border-radius: 980px;
+}

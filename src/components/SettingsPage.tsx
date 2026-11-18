@@ -39,7 +39,7 @@ export default function SettingsPage({
       };
       await updateDoc(userRef, updated);
       setCurrentUserProfile({ ...currentUserProfile, ...updated });
-      setSuccessMsg('Profile updated successfully in seashore database!');
+      setSuccessMsg('Profile preferences saved.');
     } catch (err) {
       console.error('Error updating profile:', err);
     } finally {
@@ -48,47 +48,49 @@ export default function SettingsPage({
   };
 
   return (
-    <div className="space-y-6 animate-fadeIn max-w-2xl pb-12">
+    <div className="space-y-6 max-w-2xl pb-12">
       <div>
-        <h2 className="text-lg font-bold text-white">Profile & Settings</h2>
-        <p className="text-xs text-[#9b9b9b]">Update your personal workspace settings and currency preferences in seashore.</p>
+        <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
+          ACCOUNT & PREFERENCES
+        </span>
+        <h2 className="text-2xl font-bold tracking-tight text-white">Profile & Settings</h2>
       </div>
 
-      <div className="bg-[#202020] border border-[#282828] rounded-2xl p-6 shadow-sm space-y-6">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 shadow-xl space-y-6">
         {successMsg && (
-          <div className="bg-emerald-950/80 border border-emerald-800 text-emerald-400 p-3 rounded-xl text-xs">
+          <div className="bg-[#34C759]/10 border border-[#34C759]/30 text-[#34C759] p-3 rounded-2xl text-xs font-medium">
             {successMsg}
           </div>
         )}
 
         <form onSubmit={handleSaveProfile} className="space-y-4">
           <div>
-            <label className="text-[11px] text-[#9b9b9b] block mb-1">Full Name</label>
+            <label className="text-[11px] text-[#86868B] block mb-1">Display Name</label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="text-[11px] text-[#9b9b9b] block mb-1">Avatar / Profile Emoji</label>
+              <label className="text-[11px] text-[#86868B] block mb-1">Avatar Emoji</label>
               <input
                 type="text"
                 maxLength={4}
                 value={avatar}
                 onChange={e => setAvatar(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none text-center text-lg"
+                className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-white focus:outline-none text-center text-lg"
               />
             </div>
             <div>
-              <label className="text-[11px] text-[#9b9b9b] block mb-1">Currency</label>
+              <label className="text-[11px] text-[#86868B] block mb-1">Primary Currency</label>
               <select
                 value={currency}
                 onChange={e => setCurrency(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
+                className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
               >
                 {Object.keys(currencies).map(cur => (
                   <option key={cur} value={cur}>{cur} ({currencies[cur]})</option>
@@ -101,28 +103,27 @@ export default function SettingsPage({
             <button
               type="submit"
               disabled={saving}
-              className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-5 py-2.5 rounded-lg text-xs font-medium transition flex items-center gap-2 shadow-sm"
+              className="bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-50 text-white px-5 py-2.5 rounded-full text-xs font-semibold transition flex items-center gap-2 shadow-sm"
             >
-              <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save Profile Changes'}
+              <Save className="w-4 h-4" /> {saving ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>
 
-        <div className="pt-6 border-t border-[#2a2a2a] space-y-4">
-          <h3 className="text-xs font-semibold text-white">Database & Security</h3>
-          <div className="bg-[#191919] p-4 rounded-xl border border-[#2a2a2a] text-xs space-y-1 text-[#9b9b9b]">
-            <p className="flex items-center gap-1.5 text-white">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" /> Firebase Firestore Database: <span className="font-mono text-emerald-400">seashore</span>
+        <div className="pt-6 border-t border-white/10 space-y-4">
+          <h3 className="text-xs font-semibold text-white">Account Security</h3>
+          <div className="bg-[#2C2C2E]/60 p-4 rounded-2xl border border-white/5 text-xs space-y-1 text-[#86868B]">
+            <p className="flex items-center gap-1.5 text-white font-medium">
+              <ShieldCheck className="w-4 h-4 text-[#34C759]" /> Private Cloud Storage Active
             </p>
-            <p>Authenticated User UID: <span className="font-mono text-zinc-300">{firebaseUser.uid}</span></p>
-            <p>Email: {firebaseUser.email}</p>
+            <p>Signed in as: <span className="text-zinc-200">{firebaseUser.email}</span></p>
           </div>
 
           <button
             onClick={onSignOut}
-            className="bg-rose-600/20 hover:bg-rose-600/30 text-rose-400 border border-rose-800 px-4 py-2 rounded-lg text-xs font-medium transition flex items-center gap-2"
+            className="bg-[#FF3B30]/15 hover:bg-[#FF3B30]/25 text-[#FF3B30] border border-[#FF3B30]/30 px-4 py-2 rounded-full text-xs font-semibold transition flex items-center gap-2"
           >
-            <LogOut className="w-3.5 h-3.5" /> Sign Out of Workspace
+            <LogOut className="w-3.5 h-3.5" /> Sign Out
           </button>
         </div>
       </div>

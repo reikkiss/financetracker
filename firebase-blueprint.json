@@ -27,7 +27,8 @@
         "loanInterestPaid": { "type": "number" },
         "paidQuotaIds": { "type": "array" },
         "isTransfer": { "type": "boolean" },
-        "transferToBudgetId": { "type": "string", "maxLength": 50 }
+        "transferToBudgetId": { "type": "string", "maxLength": 50 },
+        "status": { "type": "string", "maxLength": 20 }
       }
     },
     "Budget": {

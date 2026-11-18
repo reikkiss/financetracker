@@ -1,26 +1,16 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus,
-  ShieldCheck,
-  X,
   Sparkles,
   Receipt,
   PieChart,
   LayoutDashboard,
   BarChart2,
   Settings,
-  Pencil,
-  Trash2,
-  CreditCard,
-  Landmark,
-  Wallet,
-  CheckSquare,
-  Square,
-  PlusCircle,
-  Percent,
   Upload,
-  Building2,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Calendar,
+  Mail
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -41,20 +31,26 @@ import firebaseConfig from '../firebase-applet-config.json';
 
 import DashboardPage from './components/DashboardPage';
 import MonthlyStatsPage from './components/MonthlyStatsPage';
-import BudgetsPage, { Budget, BudgetItem } from './components/BudgetsPage';
+import BudgetsPage, { Budget } from './components/BudgetsPage';
 import {
   LoanQuota,
   LoanCalcMethod,
   LoanRatePeriod,
   allocateLoanPayment,
-  calculateCreditCardMonthlyLimit,
-  calculateLoanMonthlyQuota,
   generateLoanQuotasSchedule,
   reverseLoanPaymentOnQuotas
 } from './utils/financeMath';
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
 import StatementUploadModal, { ImportedTransactionDraft } from './components/StatementUploadModal';
+import { ParsedEmailTransaction, findFuzzyPendingMatch } from './utils/bankEmailParser';
+import AddTransactionModal from './components/AddTransactionModal';
+import EditTransactionModal from './components/EditTransactionModal';
+import AddBudgetModal from './components/AddBudgetModal';
+import EditBudgetModal from './components/EditBudgetModal';
+import TransferModal from './components/TransferModal';
+import AiAdvisorModal from './components/AiAdvisorModal';
+import EmailSyncModal from './components/EmailSyncModal';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -108,6 +104,16 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+function stripUndefined<T extends Record<string, any>>(obj: T): T {
+  const clean: Record<string, any> = {};
+  for (const [k, v] of Object.entries(obj)) {
+    if (v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  return clean as T;
+}
+
 async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
@@ -144,14 +150,7 @@ export interface Transaction {
   paidQuotaIds?: string[];
   isTransfer?: boolean;
   transferToBudgetId?: string;
-}
-
-function getAccountTypeLabel(accountType?: Budget['accountType']): string {
-  if (accountType === 'credit_card') return '(Credit Card)';
-  if (accountType === 'loan') return '(Loan)';
-  if (accountType === 'bank_account') return '(Bank Account)';
-  if (accountType === 'debit_account') return '(Debit Account)';
-  return '(Budget)';
+  status?: 'pending' | 'cleared';
 }
 
 const CATEGORIES = [
@@ -169,7 +168,7 @@ const CURRENCIES: Record<string, string> = {
   DOP: 'RD$'
 };
 
-const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ec4899', '#8b5cf6', '#14b8a6', '#f43f5e', '#6366f1'];
+const COLORS = ['#34C759', '#0071E3', '#FF9F0A', '#FF2D55', '#AF52DE', '#5AC8FA', '#FF3B30', '#5856D6'];
 
 export default function App() {
   const [firebaseUser, setFirebaseUser] = useState<any>(null);
@@ -179,100 +178,52 @@ export default function App() {
   const [authError, setAuthError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'stats' | 'budgets' | 'transactions' | 'settings'>('dashboard');
 
-  // Data states (strictly from database)
+  // Data states (strictly from Firestore)
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgets, setBudgets] = useState<Budget[]>([]);
-  
+
   // UI Tabs & Filters
   const [chartMode, setChartMode] = useState<'Expense' | 'Income' | 'Cashflow'>('Cashflow');
   const [breakdownMode, setBreakdownMode] = useState<'Expense' | 'Income'>('Expense');
   const [statsQuarterFilter, setStatsQuarterFilter] = useState<'All' | 'Q1' | 'Q2' | 'Q3' | 'Q4'>('All');
 
-  // Modals
+  // Modals & Prefill Triggers
   const [isAddTxOpen, setIsAddTxOpen] = useState(false);
   const [defaultTxType, setDefaultTxType] = useState<'income' | 'expense'>('expense');
-  const [newTxTitle, setNewTxTitle] = useState('');
-  const [newTxAmount, setNewTxAmount] = useState('');
-  const [newTxCategory, setNewTxCategory] = useState('Groceries');
   const [newTxDate, setNewTxDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newTxNotes, setNewTxNotes] = useState('');
   const [newTxBudgetId, setNewTxBudgetId] = useState('');
   const [newTxIsLoanPayment, setNewTxIsLoanPayment] = useState(false);
+  const [newTxTitle, setNewTxTitle] = useState('');
+  const [newTxCategory, setNewTxCategory] = useState('');
 
-  // Edit Transaction Modal
   const [editingTx, setEditingTx] = useState<Transaction | null>(null);
-  const [editTxTitle, setEditTxTitle] = useState('');
-  const [editTxAmount, setEditTxAmount] = useState('');
-  const [editTxType, setEditTxType] = useState<'income' | 'expense'>('expense');
-  const [editTxCategory, setEditTxCategory] = useState('Groceries');
-  const [editTxDate, setEditTxDate] = useState('');
-  const [editTxNotes, setEditTxNotes] = useState('');
-  const [editTxBudgetId, setEditTxBudgetId] = useState('');
-  const [editTxIsLoanPayment, setEditTxIsLoanPayment] = useState(false);
-  const [editTxIsTransfer, setEditTxIsTransfer] = useState(false);
-  const [editTxTransferToBudgetId, setEditTxTransferToBudgetId] = useState('');
 
-  // Transfer Between Accounts Modal
   const [isTransferOpen, setIsTransferOpen] = useState(false);
-  const [transferFromId, setTransferFromId] = useState('');
-  const [transferToId, setTransferToId] = useState('');
-  const [transferAmount, setTransferAmount] = useState('');
-  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
-  const [transferTitle, setTransferTitle] = useState('');
-  const [transferNotes, setTransferNotes] = useState('');
+  const [transferInitialFromId, setTransferInitialFromId] = useState<string | undefined>(undefined);
 
-  // Add Budget Modal
   const [isAddBudgetOpen, setIsAddBudgetOpen] = useState(false);
-  const [newBudgetCategory, setNewBudgetCategory] = useState('Groceries');
-  const [newBudgetDescription, setNewBudgetDescription] = useState('');
-  const [newBudgetAccountType, setNewBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan' | 'bank_account' | 'debit_account'>('standard');
-  const [newBudgetLimit, setNewBudgetLimit] = useState('');
-  const [newBudgetCreditLimit, setNewBudgetCreditLimit] = useState('');
-  const [newBudgetAccountBalance, setNewBudgetAccountBalance] = useState('');
-  const [newBudgetApr, setNewBudgetApr] = useState('');
-  const [newBudgetOverdraftPercentage, setNewBudgetOverdraftPercentage] = useState('');
-  const [newBudgetLoanTermMonths, setNewBudgetLoanTermMonths] = useState('12');
-  const [newBudgetLoanStartDate, setNewBudgetLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [newBudgetLoanCalcMethod, setNewBudgetLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
-  const [newBudgetLoanRatePeriod, setNewBudgetLoanRatePeriod] = useState<LoanRatePeriod>('annual');
-  const [newBudgetCustomMonthlyQuota, setNewBudgetCustomMonthlyQuota] = useState('');
-  const [newBudgetLoanQuotas, setNewBudgetLoanQuotas] = useState<LoanQuota[]>([]);
-  const [newBudgetExtraExpenses, setNewBudgetExtraExpenses] = useState('');
-  const [newBudgetItems, setNewBudgetItems] = useState<BudgetItem[]>([]);
-  const [newBudgetItemName, setNewBudgetItemName] = useState('');
-  const [newBudgetItemAmount, setNewBudgetItemAmount] = useState('');
-  const [newBudgetColor, setNewBudgetColor] = useState('#10b981');
-
-  // Edit Budget Modal
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
-  const [editBudgetCategory, setEditBudgetCategory] = useState('Groceries');
-  const [editBudgetDescription, setEditBudgetDescription] = useState('');
-  const [editBudgetAccountType, setEditBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan' | 'bank_account' | 'debit_account'>('standard');
-  const [editBudgetLimit, setEditBudgetLimit] = useState('');
-  const [editBudgetCreditLimit, setEditBudgetCreditLimit] = useState('');
-  const [editBudgetAccountBalance, setEditBudgetAccountBalance] = useState('');
-  const [editBudgetApr, setEditBudgetApr] = useState('');
-  const [editBudgetOverdraftPercentage, setEditBudgetOverdraftPercentage] = useState('');
-  const [editBudgetLoanTermMonths, setEditBudgetLoanTermMonths] = useState('12');
-  const [editBudgetLoanStartDate, setEditBudgetLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [editBudgetLoanCalcMethod, setEditBudgetLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
-  const [editBudgetLoanRatePeriod, setEditBudgetLoanRatePeriod] = useState<LoanRatePeriod>('annual');
-  const [editBudgetCustomMonthlyQuota, setEditBudgetCustomMonthlyQuota] = useState('');
-  const [editBudgetLoanQuotas, setEditBudgetLoanQuotas] = useState<LoanQuota[]>([]);
-  const [editBudgetExtraExpenses, setEditBudgetExtraExpenses] = useState('');
-  const [editBudgetItems, setEditBudgetItems] = useState<BudgetItem[]>([]);
-  const [editBudgetItemName, setEditBudgetItemName] = useState('');
-  const [editBudgetItemAmount, setEditBudgetItemAmount] = useState('');
-  const [editBudgetColor, setEditBudgetColor] = useState('#10b981');
 
-  // Statement Upload Modal
   const [isUploadStatementOpen, setIsUploadStatementOpen] = useState(false);
+  const [isEmailParserOpen, setIsEmailParserOpen] = useState(false);
 
-  // AI Modal
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResult, setAiResult] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
+
+  const [globalSelectedMonth, setGlobalSelectedMonth] = useState<string>(() => {
+    return localStorage.getItem('global_selected_month') || new Date().toISOString().slice(0, 7);
+  });
+
+  useEffect(() => {
+    localStorage.setItem('global_selected_month', globalSelectedMonth);
+  }, [globalSelectedMonth]);
+
+  const displayTransactions = useMemo(() => {
+    if (globalSelectedMonth === 'All') return transactions;
+    return transactions.filter(t => t.date && t.date.startsWith(globalSelectedMonth));
+  }, [transactions, globalSelectedMonth]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -300,7 +251,7 @@ export default function App() {
           id: user.uid,
           name: (user.displayName || 'Finance User').slice(0, 100),
           email: (user.email || '').slice(0, 100),
-          avatar: '📊',
+          avatar: '💳',
           currency: 'USD',
           monthlyBudget: 5000
         };
@@ -336,7 +287,7 @@ export default function App() {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
       if (err.code === 'auth/unauthorized-domain') {
-        const host = typeof window !== 'undefined' ? window.location.hostname : 'your-github-pages-domain';
+        const host = typeof window !== 'undefined' ? window.location.hostname : 'your-domain';
         setAuthError(
           `Domain "${host}" is not authorized in Firebase Auth yet. Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains.`
         );
@@ -360,14 +311,13 @@ export default function App() {
   const currencySymbol = currentUserProfile ? (CURRENCIES[currentUserProfile.currency] || '$') : '$';
 
   const totalIncome = useMemo(
-    () => transactions.filter(t => t.type === 'income' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => displayTransactions.filter(t => t.type === 'income' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    [displayTransactions]
   );
   const totalExpense = useMemo(
-    () => transactions.filter(t => t.type === 'expense' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
-    [transactions]
+    () => displayTransactions.filter(t => t.type === 'expense' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    [displayTransactions]
   );
-  const cashflow = totalIncome - totalExpense;
 
   const availableCategories = useMemo(() => {
     const set = new Set<string>(CATEGORIES);
@@ -383,59 +333,65 @@ export default function App() {
 
   const breakdownData = useMemo(() => {
     const map: Record<string, number> = {};
-    transactions
+    displayTransactions
       .filter(t => !t.isTransfer && t.type === breakdownMode.toLowerCase())
       .forEach(t => {
         map[t.category] = (map[t.category] || 0) + t.amount;
       });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [transactions, breakdownMode]);
+  }, [displayTransactions, breakdownMode]);
 
   const monthlyChartData = useMemo(() => {
-    if (transactions.length === 0) {
-      return [
-        { date: 'Jan', value: 0 },
-        { date: 'May', value: 0 },
-        { date: 'Sep', value: 0 }
-      ];
-    }
-    const map: Record<string, number> = {};
+    if (transactions.length === 0) return [];
+    const map: Record<string, { income: number; expense: number }> = {};
     transactions.forEach(t => {
       if (t.isTransfer) return;
-      const monthKey = t.date ? t.date.slice(0, 7) : '2026-11';
-      let val = t.amount;
-      if (chartMode === 'Expense' && t.type !== 'expense') return;
-      if (chartMode === 'Income' && t.type !== 'income') return;
-      if (chartMode === 'Cashflow') {
-        val = t.type === 'income' ? t.amount : -t.amount;
+      const monthKey = t.date ? t.date.slice(0, 7) : 'Unknown';
+      if (!map[monthKey]) {
+        map[monthKey] = { income: 0, expense: 0 };
       }
-      map[monthKey] = (map[monthKey] || 0) + val;
+      if (t.type === 'income') {
+        map[monthKey].income += Number(t.amount) || 0;
+      } else {
+        map[monthKey].expense += Number(t.amount) || 0;
+      }
     });
 
-    const sorted = Object.entries(map).sort(([a], [b]) => a.localeCompare(b));
-    if (sorted.length === 0) {
-      return [{ date: 'Current', value: 0 }];
-    }
-    return sorted.map(([date, value]) => ({ date, value }));
-  }, [transactions, chartMode]);
+    return Object.entries(map)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([monthKey, totals]) => {
+        const income = Number(totals.income.toFixed(2));
+        const expense = Number(totals.expense.toFixed(2));
+        return {
+          name: monthKey,
+          date: monthKey,
+          income,
+          expense,
+          cashflow: Number((income - expense).toFixed(2))
+        };
+      });
+  }, [transactions]);
 
   const currentMonthKey = useMemo(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }, []);
 
-  const currentMonthName = useMemo(() => {
-    return new Date().toLocaleString('en-US', { month: 'long', year: 'numeric' });
-  }, []);
+  const selectedMonthName = useMemo(() => {
+    if (globalSelectedMonth === 'All') return 'All Months';
+    const [y, m] = globalSelectedMonth.split('-').map(Number);
+    if (!y || !m) return globalSelectedMonth;
+    return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  }, [globalSelectedMonth]);
 
-  const currentMonthStats = useMemo(() => {
-    const mTransactions = transactions.filter(t => !t.isTransfer && t.date && t.date.startsWith(currentMonthKey));
+  const selectedMonthStats = useMemo(() => {
+    const mTransactions = displayTransactions.filter(t => !t.isTransfer);
     const income = mTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const expense = mTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     return { income, expense, cashflow: income - expense };
-  }, [transactions, currentMonthKey]);
+  }, [displayTransactions]);
 
-  // 1.5 years (18 months) with actual (current) month as the latest available and placed on top (i = 0)
+  // 18 months list with current actual month first
   const allMonthsList = useMemo(() => {
     const months = [];
     const now = new Date();
@@ -645,7 +601,7 @@ export default function App() {
       const target = updatedBudgets.find(b => b.id === budgetId);
       if (!target) continue;
       try {
-        await setDoc(doc(db, 'budgets', budgetId), target);
+        await setDoc(doc(db, 'budgets', budgetId), stripUndefined(target));
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `budgets/${budgetId}`);
       }
@@ -705,53 +661,6 @@ export default function App() {
     return merged;
   };
 
-  const handleCreateTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseUser || !newTxTitle.trim() || !newTxAmount) return;
-    const parsedAmount = Math.abs(parseFloat(newTxAmount) || 0);
-    if (parsedAmount <= 0) return;
-
-    const id = 'tx_' + Date.now();
-    const newTx: Transaction = {
-      id,
-      userId: firebaseUser.uid,
-      title: newTxTitle.trim().slice(0, 200),
-      amount: parsedAmount,
-      type: defaultTxType,
-      category: (newTxCategory || 'Other').trim().slice(0, 50),
-      date: (newTxDate || new Date().toISOString().split('T')[0]).slice(0, 20),
-      notes: (newTxNotes || '').trim().slice(0, 500),
-      ...(newTxBudgetId ? { budgetId: newTxBudgetId.slice(0, 50) } : {}),
-      isLoanPayment: Boolean(newTxIsLoanPayment)
-    };
-
-    const latestBudgets = await ensureBudgetsForCategories(
-      { [newTx.category]: newTx.type === 'expense' ? newTx.amount : 0 },
-      budgets
-    );
-
-    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, latestBudgets);
-
-    try {
-      await setDoc(doc(db, 'transactions', id), enrichedTx);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-      return;
-    }
-
-    if (touchedIds.length > 0) {
-      await persistTouchedBudgets(touchedIds, nextBudgets);
-    }
-
-    setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-    setNewTxTitle('');
-    setNewTxAmount('');
-    setNewTxNotes('');
-    setNewTxBudgetId('');
-    setNewTxIsLoanPayment(false);
-    setIsAddTxOpen(false);
-  };
-
   const handleDeleteTx = async (id: string) => {
     const targetTx = transactions.find(t => t.id === id);
     try {
@@ -772,116 +681,44 @@ export default function App() {
 
   const handleOpenEditTx = (t: Transaction) => {
     setEditingTx(t);
-    setEditTxTitle(t.title);
-    setEditTxAmount(t.amount.toString());
-    setEditTxType(t.type);
-    setEditTxCategory(t.category);
-    setEditTxDate(t.date || new Date().toISOString().split('T')[0]);
-    setEditTxNotes(t.notes || '');
-    setEditTxBudgetId(t.budgetId || '');
-    setEditTxIsLoanPayment(Boolean(t.isLoanPayment));
-    setEditTxIsTransfer(Boolean(t.isTransfer));
-    setEditTxTransferToBudgetId(t.transferToBudgetId || '');
-  };
-
-  const handleSaveEditTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseUser || !editingTx || !editTxTitle.trim() || !editTxAmount) return;
-    const parsedAmount = Math.abs(parseFloat(editTxAmount) || 0);
-    if (parsedAmount <= 0) return;
-
-    const isTransferTx = Boolean(editTxIsTransfer && editTxBudgetId && editTxTransferToBudgetId && editTxBudgetId !== editTxTransferToBudgetId);
-    const updatedTx: Transaction = {
-      id: editingTx.id,
-      userId: editingTx.userId,
-      title: editTxTitle.trim().slice(0, 200),
-      amount: parsedAmount,
-      type: isTransferTx ? 'expense' : editTxType,
-      category: (editTxCategory || (isTransferTx ? 'Transfer' : 'Other')).trim().slice(0, 50),
-      date: (editTxDate || new Date().toISOString().split('T')[0]).slice(0, 20),
-      notes: (editTxNotes || '').trim().slice(0, 500),
-      ...(editTxBudgetId ? { budgetId: editTxBudgetId.slice(0, 50) } : {}),
-      isLoanPayment: Boolean(editTxIsLoanPayment),
-      isTransfer: isTransferTx,
-      ...(isTransferTx ? { transferToBudgetId: editTxTransferToBudgetId.slice(0, 50) } : {})
-    };
-
-    const latestBudgets = isTransferTx
-      ? budgets
-      : await ensureBudgetsForCategories(
-          { [updatedTx.category]: updatedTx.type === 'expense' ? updatedTx.amount : 0 },
-          budgets
-        );
-
-    const reverted = revertSingleTxInMemory(editingTx, latestBudgets);
-    const applied = applySingleTxInMemory(updatedTx, reverted.nextBudgets);
-    const allTouched = Array.from(new Set([...reverted.touchedIds, ...applied.touchedIds]));
-
-    try {
-      await setDoc(doc(db, 'transactions', editingTx.id), applied.enrichedTx);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `transactions/${editingTx.id}`);
-      return;
-    }
-
-    if (allTouched.length > 0) {
-      await persistTouchedBudgets(allTouched, applied.nextBudgets);
-    }
-
-    setTransactions(prev =>
-      prev.map(t => (t.id === editingTx.id ? applied.enrichedTx : t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-    );
-    setEditingTx(null);
   };
 
   const handleOpenTransfer = (fromBudget?: Budget) => {
     if (budgets.length < 2) return;
-    const defaultFrom =
-      fromBudget?.id ||
-      budgets.find(b => b.accountType === 'bank_account' || b.accountType === 'debit_account')?.id ||
-      budgets[0].id;
-    const defaultTo = budgets.find(b => b.id !== defaultFrom)?.id || '';
-    setTransferFromId(defaultFrom);
-    setTransferToId(defaultTo);
-    setTransferAmount('');
-    setTransferDate(new Date().toISOString().split('T')[0]);
-    setTransferTitle('');
-    setTransferNotes('');
+    setTransferInitialFromId(fromBudget?.id);
     setIsTransferOpen(true);
   };
 
-  const handleSaveTransfer = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseUser || !transferFromId || !transferToId || transferFromId === transferToId) return;
-    const parsedAmount = Math.abs(parseFloat(transferAmount) || 0);
-    if (parsedAmount <= 0) return;
-
-    const fromAcc = budgets.find(b => b.id === transferFromId);
-    const toAcc = budgets.find(b => b.id === transferToId);
-    const fromName = fromAcc?.name || fromAcc?.category || 'Account';
-    const toName = toAcc?.name || toAcc?.category || 'Account';
-    const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
-
-    const id = `tx_tr_${Date.now()}`;
-    const newTx: Transaction = {
+  const handleIngestParsedEmailTx = async (parsed: ParsedEmailTransaction & { budgetId?: string }) => {
+    if (!firebaseUser) return;
+    const id = `tx_email_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const isTrans = parsed.type === 'transfer';
+    const targetBudgetId = parsed.budgetId?.trim() || '';
+    const newTx: Transaction = stripUndefined({
       id,
       userId: firebaseUser.uid,
-      title: (transferTitle.trim() || `Transfer: ${fromName} → ${toName}`).slice(0, 200),
-      amount: parsedAmount,
-      type: 'expense',
-      category: 'Transfer',
-      date: (transferDate || new Date().toISOString().split('T')[0]).slice(0, 20),
-      notes: (transferNotes.trim() || `Internal transfer from ${fromName} to ${toName}`).slice(0, 500),
-      budgetId: transferFromId.slice(0, 50),
-      transferToBudgetId: transferToId.slice(0, 50),
-      isTransfer: true,
-      isLoanPayment: isPayingDebt
-    };
+      title: (parsed.title || 'Bank Alert').slice(0, 200),
+      amount: Math.abs(Number(parsed.amount) || 0),
+      type: isTrans ? 'expense' : (parsed.type as 'income' | 'expense'),
+      category: (isTrans ? 'Transfer' : parsed.category || 'Other').slice(0, 50),
+      date: (parsed.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+      notes: (parsed.notes || '').slice(0, 500),
+      ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
+      status: 'pending' as const,
+      ...(isTrans ? { isTransfer: true } : {})
+    });
 
-    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, budgets);
+    const latestBudgets = isTrans
+      ? budgets
+      : await ensureBudgetsForCategories(
+          { [newTx.category]: newTx.type === 'expense' ? newTx.amount : 0 },
+          budgets
+        );
+
+    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, latestBudgets);
 
     try {
-      await setDoc(doc(db, 'transactions', id), enrichedTx);
+      await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
       return;
@@ -892,78 +729,51 @@ export default function App() {
     }
 
     setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-    setIsTransferOpen(false);
   };
 
-  const handleImportStatementTransactions = async (rows: ImportedTransactionDraft[]) => {
-    if (!firebaseUser || rows.length === 0) return;
+  const handleBatchIngestEmailTxs = async (
+    items: Array<ParsedEmailTransaction & { budgetId?: string }>
+  ): Promise<number> => {
+    if (!firebaseUser || items.length === 0) return 0;
 
-    const makeKey = (title: string, amount: number, date: string) => {
-      const normTitle = (title || '').trim().toLowerCase().replace(/\s+/g, ' ');
-      const normAmount = Math.abs(Number(amount) || 0).toFixed(2);
-      const normDate = (date || '').trim().slice(0, 10);
-      return `${normTitle}|${normAmount}|${normDate}`;
-    };
-
-    const existingCounts = new Map<string, number>();
-    transactions.forEach(et => {
-      const k = makeKey(et.title, et.amount, et.date);
-      existingCounts.set(k, (existingCounts.get(k) || 0) + 1);
-    });
-
-    const missingRows: ImportedTransactionDraft[] = [];
-    for (const r of rows) {
-      const key = makeKey(r.title, r.amount, r.date);
-      const remaining = existingCounts.get(key) || 0;
-      if (remaining > 0) {
-        existingCounts.set(key, remaining - 1);
-      } else {
-        missingRows.push(r);
-      }
-    }
-
-    if (missingRows.length === 0) return;
-
-    const baseTs = Date.now();
-    const createdTxs: Transaction[] = [];
     const categoryTotals: Record<string, number> = {};
-
-    for (let i = 0; i < missingRows.length; i++) {
-      const r = missingRows[i];
-      if (r.isTransfer) continue;
-      const cat = (r.category || 'Other').trim().slice(0, 50);
-      const amt = Math.abs(Number(r.amount) || 0);
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + (r.type === 'expense' ? amt : 0);
+    for (const item of items) {
+      if (item.type === 'transfer') continue;
+      const cat = (item.category || 'Other').trim().slice(0, 50);
+      const amt = Math.abs(Number(item.amount) || 0);
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + (item.type === 'expense' ? amt : 0);
     }
 
     let workingBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
     const allTouchedIds = new Set<string>();
+    const createdTxs: Transaction[] = [];
+    const baseTs = Date.now();
 
-    for (let i = 0; i < missingRows.length; i++) {
-      const r = missingRows[i];
-      const id = `tx_${baseTs}_${i}`;
-      const isTransferTx = Boolean(r.isTransfer && r.budgetId && r.transferToBudgetId && r.budgetId !== r.transferToBudgetId);
-      const newTx: Transaction = {
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const id = `tx_email_${baseTs}_${i}`;
+      const isTrans = item.type === 'transfer';
+      const targetBudgetId = item.budgetId?.trim() || '';
+      const newTx: Transaction = stripUndefined({
         id,
         userId: firebaseUser.uid,
-        title: (r.title || 'Transaction').trim().slice(0, 200),
-        amount: Math.abs(Number(r.amount) || 0),
-        type: isTransferTx ? 'expense' : r.type === 'income' ? 'income' : 'expense',
-        category: (isTransferTx ? (r.category || 'Transfer') : r.category || 'Other').trim().slice(0, 50),
-        date: (r.date || new Date().toISOString().split('T')[0]).slice(0, 20),
-        notes: (r.notes || '').trim().slice(0, 500),
-        ...(r.budgetId ? { budgetId: r.budgetId.slice(0, 50) } : {}),
-        isLoanPayment: Boolean(r.isLoanPayment),
-        isTransfer: isTransferTx,
-        ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {})
-      };
+        title: (item.title || 'Bank Alert').slice(0, 200),
+        amount: Math.abs(Number(item.amount) || 0),
+        type: isTrans ? 'expense' : (item.type as 'income' | 'expense'),
+        category: (isTrans ? 'Transfer' : item.category || 'Other').slice(0, 50),
+        date: (item.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+        notes: (item.notes || '').slice(0, 500),
+        ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
+        status: 'pending' as const,
+        ...(isTrans ? { isTransfer: true } : {})
+      });
 
       const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, workingBudgets);
       workingBudgets = nextBudgets;
       touchedIds.forEach(tid => allTouchedIds.add(tid));
 
       try {
-        await setDoc(doc(db, 'transactions', id), enrichedTx);
+        await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
         createdTxs.push(enrichedTx);
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
@@ -974,7 +784,100 @@ export default function App() {
       await persistTouchedBudgets(Array.from(allTouchedIds), workingBudgets);
     }
 
-    setTransactions(prev => [...createdTxs, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    if (createdTxs.length > 0) {
+      setTransactions(prev =>
+        [...createdTxs, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+      );
+    }
+
+    return createdTxs.length;
+  };
+
+  const handleImportStatementTransactions = async (rows: ImportedTransactionDraft[]) => {
+    if (!firebaseUser || rows.length === 0) return;
+
+    const baseTs = Date.now();
+    const createdTxs: Transaction[] = [];
+    const categoryTotals: Record<string, number> = {};
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      if (r.isTransfer) continue;
+      const cat = (r.category || 'Other').trim().slice(0, 50);
+      const amt = Math.abs(Number(r.amount) || 0);
+      categoryTotals[cat] = (categoryTotals[cat] || 0) + (r.type === 'expense' ? amt : 0);
+    }
+
+    let workingBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
+    const allTouchedIds = new Set<string>();
+    const updatedTxsMap = new Map<string, Transaction>();
+
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const baseBudgetId = r.budgetId || '';
+      const stmtAmt = Math.abs(Number(r.amount) || 0);
+
+      // Fuzzy match against existing pending (flotante) email transactions
+      const matchedPending = findFuzzyPendingMatch(transactions, {
+        budgetId: baseBudgetId,
+        amount: stmtAmt,
+        date: r.date || new Date().toISOString().split('T')[0]
+      });
+
+      if (matchedPending) {
+        const updatedPending: Transaction = stripUndefined({
+          ...matchedPending,
+          amount: stmtAmt,
+          status: 'cleared' as const,
+          date: (r.date || matchedPending.date).slice(0, 20),
+          ...(r.category ? { category: r.category.slice(0, 50) } : {})
+        });
+        updatedTxsMap.set(updatedPending.id, updatedPending);
+        try {
+          await setDoc(doc(db, 'transactions', updatedPending.id), updatedPending);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `transactions/${updatedPending.id}`);
+        }
+      } else {
+        const id = `tx_${baseTs}_${i}`;
+        const isTransferTx = Boolean(r.isTransfer && r.budgetId && r.transferToBudgetId && r.budgetId !== r.transferToBudgetId);
+        const newTx: Transaction = stripUndefined({
+          id,
+          userId: firebaseUser.uid,
+          title: (r.title || 'Transaction').trim().slice(0, 200),
+          amount: stmtAmt,
+          type: isTransferTx ? 'expense' : r.type === 'income' ? 'income' : 'expense',
+          category: (isTransferTx ? (r.category || 'Transfer') : r.category || 'Other').trim().slice(0, 50),
+          date: (r.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+          notes: (r.notes || '').trim().slice(0, 500),
+          ...(r.budgetId ? { budgetId: r.budgetId.slice(0, 50) } : {}),
+          isLoanPayment: Boolean(r.isLoanPayment),
+          isTransfer: isTransferTx,
+          status: 'cleared' as const,
+          ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {})
+        });
+
+        const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, workingBudgets);
+        workingBudgets = nextBudgets;
+        touchedIds.forEach(tid => allTouchedIds.add(tid));
+
+        try {
+          await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
+          createdTxs.push(enrichedTx);
+        } catch (err) {
+          handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+        }
+      }
+    }
+
+    if (allTouchedIds.size > 0) {
+      await persistTouchedBudgets(Array.from(allTouchedIds), workingBudgets);
+    }
+
+    setTransactions(prev => {
+      const merged = prev.map(t => updatedTxsMap.get(t.id) || t);
+      return [...createdTxs, ...merged.filter(t => !createdTxs.some(c => c.id === t.id))].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    });
   };
 
   const handleToggleBudgetItemPaid = async (budgetId: string, itemId: string) => {
@@ -983,7 +886,7 @@ export default function App() {
     const updatedItems = target.items.map(item =>
       item.id === itemId ? { ...item, isPaid: !item.isPaid } : item
     );
-    const updatedBudget: Budget = { ...target, items: updatedItems };
+    const updatedBudget: Budget = stripUndefined({ ...target, items: updatedItems });
     try {
       await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
       setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
@@ -1080,23 +983,23 @@ export default function App() {
         }
       }
 
-      updatedTxMap[ut.id] = {
+      updatedTxMap[ut.id] = stripUndefined({
         ...ut,
         loanPrincipalPaid: split.principalPaid,
         loanInterestPaid: split.interestPaid,
         ...(paidIdsForUt.length > 0 ? { paidQuotaIds: paidIdsForUt } : {})
-      };
+      });
     }
 
-    const updatedBudget: Budget = {
+    const updatedBudget: Budget = stripUndefined({
       ...target,
       actualUsedAmount: remPrin,
       loanQuotas: workingQuotas
-    };
+    });
 
     for (const updatedTx of Object.values(updatedTxMap)) {
       try {
-        await setDoc(doc(db, 'transactions', updatedTx.id), updatedTx);
+        await setDoc(doc(db, 'transactions', updatedTx.id), stripUndefined(updatedTx));
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `transactions/${updatedTx.id}`);
       }
@@ -1146,7 +1049,6 @@ export default function App() {
       let nextUsed = currentUsed;
 
       if (linkedTx && !linkedTx.isTransfer && (!linkedTx.paidQuotaIds || linkedTx.paidQuotaIds.length <= 1)) {
-        // Delete standalone quota payment transaction and restore principal
         const prinRestore =
           typeof linkedTx.loanPrincipalPaid === 'number'
             ? Math.max(0, Number(linkedTx.loanPrincipalPaid) || 0)
@@ -1159,7 +1061,6 @@ export default function App() {
         }
         nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + prinRestore, Number((currentUsed + prinRestore).toFixed(2)));
       } else if (!linkedTx && quota.paymentTxId) {
-        // Legacy standalone quota tx missing from local list
         try {
           await deleteDoc(doc(db, 'transactions', quota.paymentTxId));
           setTransactions(prev => prev.filter(t => t.id !== quota.paymentTxId));
@@ -1168,11 +1069,9 @@ export default function App() {
         }
         nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + balanceStep, Number((currentUsed + balanceStep).toFixed(2)));
       } else if (!quota.paymentTxId) {
-        // Manually toggled quota without payment tx
         nextUsed = Math.min(maxCap > 0 ? maxCap : currentUsed + balanceStep, Number((currentUsed + balanceStep).toFixed(2)));
       }
 
-      // Unlink quotaId from any remaining referencing transactions (e.g., Bank -> Loan transfers) without deleting them
       for (const refTx of txsReferencingQuota) {
         if (linkedTx && !linkedTx.isTransfer && refTx.id === linkedTx.id && (!linkedTx.paidQuotaIds || linkedTx.paidQuotaIds.length <= 1)) {
           continue;
@@ -1185,7 +1084,7 @@ export default function App() {
           delete cleanedTx.paidQuotaIds;
         }
         try {
-          await setDoc(doc(db, 'transactions', refTx.id), cleanedTx);
+          await setDoc(doc(db, 'transactions', refTx.id), stripUndefined(cleanedTx));
           setTransactions(prev => prev.map(t => (t.id === refTx.id ? cleanedTx : t)));
         } catch (err) {
           handleFirestoreError(err, OperationType.UPDATE, `transactions/${refTx.id}`);
@@ -1206,7 +1105,7 @@ export default function App() {
         };
       });
 
-      const updatedBudget: Budget = { ...target, actualUsedAmount: nextUsed, loanQuotas: updatedQuotas };
+      const updatedBudget: Budget = stripUndefined({ ...target, actualUsedAmount: nextUsed, loanQuotas: updatedQuotas });
       try {
         await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
         setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
@@ -1216,14 +1115,12 @@ export default function App() {
       return;
     }
 
-    // nextIsPaid === true: Check for existing unlinked transfers / payments before creating a duplicate transaction
     const unlinked = getUnlinkedLoanPayments(target, transactions);
     const unlinkedTotal = Number(
       unlinked.reduce((s, t) => s + Math.abs(Number(t.amount) || 0), 0).toFixed(2)
     );
 
     if (unlinkedTotal >= quota.amount - 1.0) {
-      // Existing unlinked transfer(s)/payment(s) already cover this quota — reconcile without creating a duplicate tx
       await reconcileUnlinkedPaymentsForLoan(target, unlinked);
       return;
     }
@@ -1233,7 +1130,6 @@ export default function App() {
     const partialTxUpdates: Record<string, Transaction> = {};
 
     if (unlinked.length > 0) {
-      // First normalize any legacy partial transfer(s) so principal & interest are split properly
       const reconciled = await reconcileUnlinkedPaymentsForLoan(target, unlinked);
       if (reconciled) {
         workingTarget = reconciled.updatedBudget;
@@ -1274,11 +1170,12 @@ export default function App() {
       isLoanPayment: true,
       loanPrincipalPaid: remainingPrin,
       loanInterestPaid: remainingInt,
-      paidQuotaIds: [quota.id]
+      paidQuotaIds: [quota.id],
+      status: 'cleared'
     };
 
     try {
-      await setDoc(doc(db, 'transactions', txId), newTx);
+      await setDoc(doc(db, 'transactions', txId), stripUndefined(newTx));
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `transactions/${txId}`);
       return;
@@ -1286,7 +1183,7 @@ export default function App() {
 
     for (const patchedPartial of Object.values(partialTxUpdates)) {
       try {
-        await setDoc(doc(db, 'transactions', patchedPartial.id), patchedPartial);
+        await setDoc(doc(db, 'transactions', patchedPartial.id), stripUndefined(patchedPartial));
       } catch (err) {
         handleFirestoreError(err, OperationType.UPDATE, `transactions/${patchedPartial.id}`);
       }
@@ -1307,11 +1204,11 @@ export default function App() {
       };
     });
 
-    const updatedBudget: Budget = {
+    const updatedBudget: Budget = stripUndefined({
       ...workingTarget,
       actualUsedAmount: nextUsed,
       loanQuotas: updatedQuotas
-    };
+    });
 
     try {
       await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
@@ -1345,13 +1242,13 @@ export default function App() {
     };
     const nextQuotas = [...existing, newQuota].slice(0, 600);
     const nextMonthlyQuota = target.monthlyQuota && target.monthlyQuota > 0 ? target.monthlyQuota : quotaInput.amount;
-    const updatedBudget: Budget = {
+    const updatedBudget: Budget = stripUndefined({
       ...target,
       loanQuotas: nextQuotas,
       loanTermMonths: nextQuotas.length,
       monthlyQuota: nextMonthlyQuota,
       limit: nextMonthlyQuota > 0 ? nextMonthlyQuota : target.limit
-    };
+    });
     try {
       await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
       setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
@@ -1366,11 +1263,11 @@ export default function App() {
     const filtered = target.loanQuotas
       .filter(q => q.id !== quotaId)
       .map((q, idx) => ({ ...q, quotaNumber: idx + 1 }));
-    const updatedBudget: Budget = {
+    const updatedBudget: Budget = stripUndefined({
       ...target,
       loanQuotas: filtered,
       loanTermMonths: filtered.length
-    };
+    });
     try {
       await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
       setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
@@ -1397,14 +1294,14 @@ export default function App() {
       existingQuotas: target.loanQuotas
     });
 
-    const updatedBudget: Budget = {
+    const updatedBudget: Budget = stripUndefined({
       ...target,
       loanTermMonths: term,
       loanStartDate: (target.loanStartDate || new Date().toISOString().split('T')[0]).slice(0, 20),
       monthlyQuota: generated.monthlyQuota,
       limit: generated.monthlyQuota > 0 ? generated.monthlyQuota : target.limit,
       loanQuotas: generated.quotas
-    };
+    });
     try {
       await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
       setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
@@ -1422,329 +1319,6 @@ export default function App() {
     setNewTxIsLoanPayment(true);
     setNewTxDate(new Date().toISOString().split('T')[0]);
     setIsAddTxOpen(true);
-  };
-
-  const resetAddBudgetForm = () => {
-    setNewBudgetCategory('Groceries');
-    setNewBudgetDescription('');
-    setNewBudgetAccountType('standard');
-    setNewBudgetLimit('');
-    setNewBudgetCreditLimit('');
-    setNewBudgetAccountBalance('');
-    setNewBudgetApr('');
-    setNewBudgetOverdraftPercentage('');
-    setNewBudgetLoanTermMonths('12');
-    setNewBudgetLoanStartDate(new Date().toISOString().split('T')[0]);
-    setNewBudgetLoanCalcMethod('amortized');
-    setNewBudgetLoanRatePeriod('annual');
-    setNewBudgetCustomMonthlyQuota('');
-    setNewBudgetLoanQuotas([]);
-    setNewBudgetExtraExpenses('');
-    setNewBudgetItems([]);
-    setNewBudgetItemName('');
-    setNewBudgetItemAmount('');
-    setNewBudgetColor('#10b981');
-  };
-
-  const handleAddNewBudgetItem = () => {
-    const name = newBudgetItemName.trim();
-    const amount = parseFloat(newBudgetItemAmount);
-    if (!name || isNaN(amount) || amount < 0) return;
-    const nextItem: BudgetItem = {
-      id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: name.slice(0, 120),
-      amount,
-      isPaid: false
-    };
-    setNewBudgetItems(prev => [...prev, nextItem]);
-    setNewBudgetItemName('');
-    setNewBudgetItemAmount('');
-  };
-
-  const handleAddEditBudgetItem = () => {
-    const name = editBudgetItemName.trim();
-    const amount = parseFloat(editBudgetItemAmount);
-    if (!name || isNaN(amount) || amount < 0) return;
-    const nextItem: BudgetItem = {
-      id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
-      name: name.slice(0, 120),
-      amount,
-      isPaid: false
-    };
-    setEditBudgetItems(prev => [...prev, nextItem]);
-    setEditBudgetItemName('');
-    setEditBudgetItemAmount('');
-  };
-
-  const handleSaveBudget = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseUser || !newBudgetCategory.trim()) return;
-
-    const isStandard = newBudgetAccountType === 'standard';
-    const isCreditCard = newBudgetAccountType === 'credit_card';
-    const isLoan = newBudgetAccountType === 'loan';
-    const isBankAccount = newBudgetAccountType === 'bank_account';
-    const isDebitAccount = newBudgetAccountType === 'debit_account';
-    const isLiquidAccount = isBankAccount || isDebitAccount;
-
-    const creditLimitVal = Math.max(0, parseFloat(newBudgetCreditLimit) || 0);
-    const aprVal = Math.max(0, parseFloat(newBudgetApr) || 0);
-    const overdraftVal = Math.max(0, parseFloat(newBudgetOverdraftPercentage) || 0);
-    const openingBalanceVal = Number((parseFloat(newBudgetAccountBalance) || 0).toFixed(2));
-
-    let computedLimit = 0;
-    let loanFields: Partial<Budget> = {};
-
-    if (isStandard) {
-      const itemsSum = newBudgetItems.reduce((s, item) => s + (Number(item.amount) || 0), 0);
-      const extraExp = parseFloat(newBudgetExtraExpenses) || 0;
-      const hasChecklist = newBudgetItems.length > 0 || extraExp > 0;
-      computedLimit = hasChecklist ? itemsSum + extraExp : Math.max(0, parseFloat(newBudgetLimit) || 0);
-      if (computedLimit <= 0) return;
-    } else if (isLiquidAccount) {
-      computedLimit = Math.max(0, parseFloat(newBudgetLimit) || 0);
-    } else if (isCreditCard) {
-      if (creditLimitVal <= 0) return;
-      computedLimit = calculateCreditCardMonthlyLimit(creditLimitVal, overdraftVal).monthlyLimit;
-    } else if (isLoan) {
-      if (creditLimitVal <= 0) return;
-      const termMonthsVal = Math.min(600, Math.max(1, Math.floor(parseFloat(newBudgetLoanTermMonths) || 12)));
-      const startDateVal = (newBudgetLoanStartDate || new Date().toISOString().split('T')[0]).slice(0, 20);
-      const customQuotaVal = Math.max(0, parseFloat(newBudgetCustomMonthlyQuota) || 0);
-      const generated = generateLoanQuotasSchedule({
-        principal: creditLimitVal,
-        annualApr: aprVal,
-        termMonths: termMonthsVal,
-        startDate: startDateVal,
-        ratePeriod: newBudgetLoanRatePeriod,
-        calcMethod: newBudgetLoanCalcMethod,
-        customMonthlyQuota: customQuotaVal > 0 ? customQuotaVal : undefined
-      });
-      const finalQuotas = newBudgetLoanQuotas.length > 0 ? newBudgetLoanQuotas : generated.quotas;
-      const monthlyQuotaVal =
-        customQuotaVal > 0
-          ? customQuotaVal
-          : generated.monthlyQuota ||
-            calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal, {
-              ratePeriod: newBudgetLoanRatePeriod,
-              calcMethod: newBudgetLoanCalcMethod
-            });
-      computedLimit = monthlyQuotaVal > 0 ? monthlyQuotaVal : creditLimitVal;
-      loanFields = {
-        loanTermMonths: finalQuotas.length > 0 ? finalQuotas.length : termMonthsVal,
-        loanStartDate: startDateVal,
-        loanCalcMethod: newBudgetLoanCalcMethod,
-        loanRatePeriod: newBudgetLoanRatePeriod,
-        monthlyQuota: monthlyQuotaVal,
-        loanQuotas: finalQuotas
-      };
-    }
-
-    const id = 'b_' + Date.now();
-    const catVal = newBudgetCategory.trim().slice(0, 50);
-    const extraExpStandard = isStandard ? (parseFloat(newBudgetExtraExpenses) || 0) : 0;
-
-    const budget: Budget = {
-      id,
-      userId: firebaseUser.uid,
-      name: catVal,
-      category: catVal,
-      description: newBudgetDescription.trim().slice(0, 500),
-      limit: computedLimit,
-      color: newBudgetColor,
-      accountType: newBudgetAccountType,
-      extraExpenses: extraExpStandard,
-      items: isStandard ? newBudgetItems : [],
-      ...(isLiquidAccount
-        ? {
-            accountBalance: openingBalanceVal,
-            ...(isBankAccount ? { apr: aprVal } : {})
-          }
-        : {}),
-      ...(isCreditCard
-        ? {
-            apr: aprVal,
-            creditLimit: creditLimitVal,
-            overdraftPercentage: overdraftVal,
-            actualUsedAmount: 0
-          }
-        : {}),
-      ...(isLoan
-        ? {
-            apr: aprVal,
-            creditLimit: creditLimitVal,
-            overdraftPercentage: 0,
-            actualUsedAmount: creditLimitVal,
-            ...loanFields
-          }
-        : {})
-    };
-
-    try {
-      await setDoc(doc(db, 'budgets', id), budget);
-      setBudgets(prev => [
-        ...prev.filter(b => (b.category || b.name || '').toLowerCase() !== catVal.toLowerCase()),
-        budget
-      ]);
-      resetAddBudgetForm();
-      setIsAddBudgetOpen(false);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `budgets/${id}`);
-    }
-  };
-
-  const handleOpenEditBudget = (b: Budget) => {
-    const isStandard = (b.accountType || 'standard') === 'standard';
-    const ratePeriod: LoanRatePeriod = b.loanRatePeriod || 'annual';
-    const calcMethod: LoanCalcMethod = b.loanCalcMethod || 'amortized';
-    const basePrincipal = Number(b.creditLimit ?? b.limit ?? 0);
-    const formulaQuota = calculateLoanMonthlyQuota(basePrincipal, Number(b.apr || 0), Number(b.loanTermMonths || 12), {
-      ratePeriod,
-      calcMethod
-    });
-    const isCustomQuota =
-      b.monthlyQuota !== undefined &&
-      b.monthlyQuota > 0 &&
-      Math.abs(b.monthlyQuota - formulaQuota) > 0.05;
-
-    setEditingBudget(b);
-    setEditBudgetCategory(b.name || b.category);
-    setEditBudgetDescription(b.description || '');
-    setEditBudgetAccountType(b.accountType || 'standard');
-    setEditBudgetLimit(b.limit > 0 ? b.limit.toString() : '');
-    setEditBudgetCreditLimit(b.creditLimit !== undefined ? b.creditLimit.toString() : '');
-    setEditBudgetAccountBalance(b.accountBalance !== undefined ? b.accountBalance.toString() : '0');
-    setEditBudgetApr(b.apr !== undefined ? b.apr.toString() : '');
-    setEditBudgetOverdraftPercentage(b.overdraftPercentage !== undefined ? b.overdraftPercentage.toString() : '');
-    setEditBudgetLoanTermMonths(b.loanTermMonths !== undefined ? b.loanTermMonths.toString() : '12');
-    setEditBudgetLoanStartDate(b.loanStartDate || new Date().toISOString().split('T')[0]);
-    setEditBudgetLoanCalcMethod(calcMethod);
-    setEditBudgetLoanRatePeriod(ratePeriod);
-    setEditBudgetCustomMonthlyQuota(isCustomQuota ? b.monthlyQuota!.toString() : '');
-    setEditBudgetLoanQuotas(b.accountType === 'loan' && b.loanQuotas ? [...b.loanQuotas] : []);
-    setEditBudgetExtraExpenses(isStandard && b.extraExpenses !== undefined && b.extraExpenses > 0 ? b.extraExpenses.toString() : '');
-    setEditBudgetItems(isStandard && b.items ? [...b.items] : []);
-    setEditBudgetItemName('');
-    setEditBudgetItemAmount('');
-    setEditBudgetColor(b.color || '#10b981');
-  };
-
-  const handleSaveEditBudget = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!firebaseUser || !editingBudget || !editBudgetCategory.trim()) return;
-
-    const isStandard = editBudgetAccountType === 'standard';
-    const isCreditCard = editBudgetAccountType === 'credit_card';
-    const isLoan = editBudgetAccountType === 'loan';
-    const isBankAccount = editBudgetAccountType === 'bank_account';
-    const isDebitAccount = editBudgetAccountType === 'debit_account';
-    const isLiquidAccount = isBankAccount || isDebitAccount;
-
-    const creditLimitVal = Math.max(0, parseFloat(editBudgetCreditLimit) || 0);
-    const aprVal = Math.max(0, parseFloat(editBudgetApr) || 0);
-    const overdraftVal = Math.max(0, parseFloat(editBudgetOverdraftPercentage) || 0);
-    const accountBalanceVal = Number((parseFloat(editBudgetAccountBalance) || 0).toFixed(2));
-
-    let computedLimit = 0;
-    let loanFields: Partial<Budget> = {};
-    let nextLoanUsedAmount = creditLimitVal;
-
-    if (isStandard) {
-      const itemsSum = editBudgetItems.reduce((s, item) => s + (Number(item.amount) || 0), 0);
-      const extraExp = parseFloat(editBudgetExtraExpenses) || 0;
-      const hasChecklist = editBudgetItems.length > 0 || extraExp > 0;
-      computedLimit = hasChecklist ? itemsSum + extraExp : Math.max(0, parseFloat(editBudgetLimit) || 0);
-    } else if (isLiquidAccount) {
-      computedLimit = Math.max(0, parseFloat(editBudgetLimit) || 0);
-    } else if (isCreditCard) {
-      computedLimit = calculateCreditCardMonthlyLimit(creditLimitVal, overdraftVal).monthlyLimit;
-    } else if (isLoan) {
-      const termMonthsVal = Math.min(600, Math.max(1, Math.floor(parseFloat(editBudgetLoanTermMonths) || 12)));
-      const startDateVal = (editBudgetLoanStartDate || new Date().toISOString().split('T')[0]).slice(0, 20);
-      const customQuotaVal = Math.max(0, parseFloat(editBudgetCustomMonthlyQuota) || 0);
-      const generated = generateLoanQuotasSchedule({
-        principal: creditLimitVal,
-        annualApr: aprVal,
-        termMonths: termMonthsVal,
-        startDate: startDateVal,
-        ratePeriod: editBudgetLoanRatePeriod,
-        calcMethod: editBudgetLoanCalcMethod,
-        customMonthlyQuota: customQuotaVal > 0 ? customQuotaVal : undefined,
-        existingQuotas: editingBudget.loanQuotas
-      });
-      const finalQuotas = editBudgetLoanQuotas.length > 0 ? editBudgetLoanQuotas : generated.quotas;
-      const monthlyQuotaVal =
-        customQuotaVal > 0
-          ? customQuotaVal
-          : generated.monthlyQuota ||
-            calculateLoanMonthlyQuota(creditLimitVal, aprVal, termMonthsVal, {
-              ratePeriod: editBudgetLoanRatePeriod,
-              calcMethod: editBudgetLoanCalcMethod
-            });
-      computedLimit = monthlyQuotaVal > 0 ? monthlyQuotaVal : creditLimitVal;
-      loanFields = {
-        loanTermMonths: finalQuotas.length > 0 ? finalQuotas.length : termMonthsVal,
-        loanStartDate: startDateVal,
-        loanCalcMethod: editBudgetLoanCalcMethod,
-        loanRatePeriod: editBudgetLoanRatePeriod,
-        monthlyQuota: monthlyQuotaVal,
-        loanQuotas: finalQuotas
-      };
-
-      if (editingBudget.accountType === 'loan') {
-        const oldPrincipal = Number(editingBudget.creditLimit ?? creditLimitVal);
-        const oldUsed = Number(editingBudget.actualUsedAmount ?? oldPrincipal);
-        const principalAlreadyPaid = Math.max(0, Number((oldPrincipal - oldUsed).toFixed(2)));
-        nextLoanUsedAmount = Math.max(0, Number((creditLimitVal - principalAlreadyPaid).toFixed(2)));
-      }
-    }
-
-    const catVal = editBudgetCategory.trim().slice(0, 50);
-    const extraExpStandard = isStandard ? (parseFloat(editBudgetExtraExpenses) || 0) : 0;
-
-    const updatedBudget: Budget = {
-      id: editingBudget.id,
-      userId: editingBudget.userId,
-      name: catVal,
-      category: catVal,
-      description: editBudgetDescription.trim().slice(0, 500),
-      limit: computedLimit,
-      color: editBudgetColor,
-      accountType: editBudgetAccountType,
-      extraExpenses: extraExpStandard,
-      items: isStandard ? editBudgetItems : [],
-      ...(isLiquidAccount
-        ? {
-            accountBalance: accountBalanceVal,
-            ...(isBankAccount ? { apr: aprVal } : {})
-          }
-        : {}),
-      ...(isCreditCard
-        ? {
-            apr: aprVal,
-            creditLimit: creditLimitVal,
-            overdraftPercentage: overdraftVal,
-            actualUsedAmount: editingBudget.actualUsedAmount ?? 0
-          }
-        : {}),
-      ...(isLoan
-        ? {
-            apr: aprVal,
-            creditLimit: creditLimitVal,
-            overdraftPercentage: 0,
-            actualUsedAmount: nextLoanUsedAmount,
-            ...loanFields
-          }
-        : {})
-    };
-
-    try {
-      await setDoc(doc(db, 'budgets', editingBudget.id), updatedBudget);
-      setBudgets(prev => prev.map(b => (b.id === editingBudget.id ? updatedBudget : b)));
-      setEditingBudget(null);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `budgets/${editingBudget.id}`);
-    }
   };
 
   const handleDeleteBudget = async (id: string) => {
@@ -1767,7 +1341,7 @@ export default function App() {
       });
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        setAiResult('AI Financial Advisor is unavailable on static hosting.');
+        setAiResult('AI Financial Advisor is unavailable right now.');
         return;
       }
       const data = await res.json();
@@ -1781,10 +1355,10 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="flex h-screen bg-[#191919] text-[#e0e0e0] items-center justify-center font-sans">
+      <div className="flex h-screen bg-[#000000] text-[#F5F5F7] items-center justify-center antialiased">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-          <span className="text-xs text-zinc-400">Loading Finance Tracker...</span>
+          <div className="w-8 h-8 border-[3px] border-[#0071E3] border-t-transparent rounded-full animate-spin" />
+          <span className="text-xs text-[#86868B] font-medium">Loading Wallet & Ledger...</span>
         </div>
       </div>
     );
@@ -1792,19 +1366,26 @@ export default function App() {
 
   if (!firebaseUser) {
     return (
-      <div className="flex h-screen bg-[#191919] text-white font-sans items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute inset-0 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px] pointer-events-none"></div>
-        <div className="max-w-md w-full bg-[#202020] border border-[#2f2f2f] rounded-2xl p-8 shadow-2xl relative z-10 text-center space-y-6">
-          <div className="w-16 h-16 bg-gradient-to-tr from-emerald-600 to-indigo-600 rounded-2xl mx-auto flex items-center justify-center shadow-lg text-3xl">
-            📊
+      <div className="flex h-screen bg-[#000000] text-[#F5F5F7] antialiased items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-[520px] h-[520px] bg-[#0071E3]/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute -bottom-40 -left-40 w-[480px] h-[480px] bg-[#34C759]/10 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="max-w-md w-full bg-[#1C1C1E] border border-white/10 rounded-3xl p-8 shadow-2xl relative z-10 text-center space-y-6">
+          <div className="w-16 h-16 bg-gradient-to-tr from-[#0071E3] to-[#5AC8FA] rounded-2xl mx-auto flex items-center justify-center shadow-lg text-3xl">
+            💳
           </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">Finance Tracker</h1>
-            <p className="text-xs text-[#9b9b9b] mt-1">Private Notion-style financial workspace connected to Firebase DB <span className="text-emerald-400 font-mono">seashore</span></p>
+          <div className="space-y-1.5">
+            <span className="text-[11px] uppercase tracking-[0.06em] font-semibold text-[#86868B] block">
+              PERSONAL FINANCE & WALLET
+            </span>
+            <h1 className="text-3xl font-bold tracking-tight text-white">Finance Tracker</h1>
+            <p className="text-xs text-[#86868B] leading-relaxed">
+              Private multi-account ledger, real-time iCloud & Gmail bank alerts, and statement reconciliation.
+            </p>
           </div>
 
           {authError && (
-            <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl p-3 text-[11px] text-left leading-relaxed">
+            <div className="bg-[#FF3B30]/10 border border-[#FF3B30]/30 text-rose-300 rounded-2xl p-3.5 text-[11px] text-left leading-relaxed">
               {authError}
             </div>
           )}
@@ -1812,10 +1393,10 @@ export default function App() {
           <button
             onClick={handleGoogleSignIn}
             disabled={isLoggingIn}
-            className="w-full bg-white hover:bg-zinc-200 disabled:opacity-50 text-black font-medium py-3 rounded-xl text-xs transition shadow-md flex items-center justify-center gap-2"
+            className="w-full bg-white hover:bg-zinc-200 disabled:opacity-50 text-black font-semibold py-3 rounded-full text-xs transition shadow-md flex items-center justify-center gap-2 active:scale-[0.98]"
           >
             {isLoggingIn ? (
-              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1832,113 +1413,169 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-[#191919] text-[#e0e0e0] font-sans antialiased overflow-hidden select-none">
-      
+    <div className="flex h-screen bg-[#000000] text-[#F5F5F7] antialiased overflow-hidden select-none">
+
       {/* SIDEBAR / LEFT PANEL */}
-      <aside className="w-64 bg-[#191919] border-r border-[#262626] flex flex-col p-4 z-10 overflow-y-auto">
-        <div className="flex items-center justify-between pb-4 mb-4 border-b border-[#262626] cursor-pointer" onClick={() => setActiveTab('settings')}>
-          <div className="flex items-center gap-2 truncate">
-            <span className="text-xl">{currentUserProfile?.avatar || '📊'}</span>
+      <aside className="hidden md:flex w-64 bg-[#141416] border-r border-white/[0.08] flex-col p-4 z-10 overflow-y-auto shrink-0">
+        <div
+          className="flex items-center justify-between pb-4 mb-4 border-b border-white/[0.08] cursor-pointer group"
+          onClick={() => setActiveTab('settings')}
+        >
+          <div className="flex items-center gap-2.5 truncate">
+            <span className="w-9 h-9 rounded-2xl bg-[#2C2C2E] border border-white/10 flex items-center justify-center text-lg shrink-0">
+              {currentUserProfile?.avatar || '💳'}
+            </span>
             <div className="truncate">
-              <span className="text-xs font-medium text-white truncate block">{currentUserProfile?.name || firebaseUser.displayName}</span>
-              <span className="text-[10px] text-[#7a7a7a] truncate block">Edit Profile & Settings ⚙️</span>
+              <span className="text-xs font-semibold text-white truncate block group-hover:text-[#0071E3] transition">
+                {currentUserProfile?.name || firebaseUser.displayName}
+              </span>
+              <span className="text-[10px] text-[#86868B] truncate block">Profile & Settings</span>
             </div>
           </div>
         </div>
 
         {/* Navigation Pages */}
-        <div className="text-[11px] font-semibold text-[#8a8a8a] uppercase tracking-wider mb-2">Views & Pages</div>
+        <div className="text-[11px] font-semibold text-[#86868B] uppercase tracking-[0.04em] mb-2 px-1">
+          Views & Pages
+        </div>
         <div className="space-y-1 mb-6">
           <button
             onClick={() => setActiveTab('dashboard')}
-            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded text-xs font-medium transition ${activeTab === 'dashboard' ? 'bg-[#282828] text-white' : 'text-[#aaa] hover:bg-[#222] hover:text-white'}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              activeTab === 'dashboard'
+                ? 'bg-[#0071E3] text-white shadow-sm'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
+            }`}
           >
-            <LayoutDashboard className="w-3.5 h-3.5 text-emerald-400" /> Dashboard
+            <LayoutDashboard className="w-4 h-4 shrink-0" /> Dashboard
           </button>
           <button
             onClick={() => setActiveTab('stats')}
-            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded text-xs font-medium transition ${activeTab === 'stats' ? 'bg-[#282828] text-white' : 'text-[#aaa] hover:bg-[#222] hover:text-white'}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              activeTab === 'stats'
+                ? 'bg-[#0071E3] text-white shadow-sm'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
+            }`}
           >
-            <BarChart2 className="w-3.5 h-3.5 text-purple-400" /> Monthly Stats
+            <BarChart2 className="w-4 h-4 shrink-0" /> Monthly Stats
           </button>
           <button
             onClick={() => setActiveTab('budgets')}
-            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded text-xs font-medium transition ${activeTab === 'budgets' ? 'bg-[#282828] text-white' : 'text-[#aaa] hover:bg-[#222] hover:text-white'}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              activeTab === 'budgets'
+                ? 'bg-[#0071E3] text-white shadow-sm'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
+            }`}
           >
-            <PieChart className="w-3.5 h-3.5 text-amber-400" /> Budgets Management
+            <PieChart className="w-4 h-4 shrink-0" /> Budgets & Accounts
           </button>
           <button
             onClick={() => setActiveTab('transactions')}
-            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded text-xs font-medium transition ${activeTab === 'transactions' ? 'bg-[#282828] text-white' : 'text-[#aaa] hover:bg-[#222] hover:text-white'}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              activeTab === 'transactions'
+                ? 'bg-[#0071E3] text-white shadow-sm'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
+            }`}
           >
-            <Receipt className="w-3.5 h-3.5 text-blue-400" /> Transactions DB
+            <Receipt className="w-4 h-4 shrink-0" /> Transactions DB
           </button>
           <button
             onClick={() => setActiveTab('settings')}
-            className={`w-full flex items-center gap-2 px-2.5 py-2 rounded text-xs font-medium transition ${activeTab === 'settings' ? 'bg-[#282828] text-white' : 'text-[#aaa] hover:bg-[#222] hover:text-white'}`}
+            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
+              activeTab === 'settings'
+                ? 'bg-[#0071E3] text-white shadow-sm'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
+            }`}
           >
-            <Settings className="w-3.5 h-3.5 text-zinc-400" /> Settings & Profile
+            <Settings className="w-4 h-4 shrink-0" /> Settings & Profile
           </button>
         </div>
 
-        <div className="text-[11px] font-semibold text-[#8a8a8a] uppercase tracking-wider mb-2">Quick Actions</div>
+        <div className="text-[11px] font-semibold text-[#86868B] uppercase tracking-[0.04em] mb-2 px-1">
+          Quick Actions
+        </div>
         <div className="space-y-1.5 mb-6">
           <button
             onClick={() => {
               setDefaultTxType('expense');
               setNewTxBudgetId('');
               setNewTxIsLoanPayment(false);
+              setNewTxTitle('');
+              setNewTxCategory('');
+              setNewTxDate(new Date().toISOString().split('T')[0]);
               setIsAddTxOpen(true);
             }}
-            className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-zinc-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-zinc-200 hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
-            <Plus className="w-3.5 h-3.5 text-rose-400" /> New Expense
+            <Plus className="w-3.5 h-3.5 text-[#FF3B30]" /> New Expense
           </button>
           <button
             onClick={() => {
               setDefaultTxType('income');
               setNewTxBudgetId('');
               setNewTxIsLoanPayment(false);
+              setNewTxTitle('');
+              setNewTxCategory('');
+              setNewTxDate(new Date().toISOString().split('T')[0]);
               setIsAddTxOpen(true);
             }}
-            className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-zinc-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-zinc-200 hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
-            <Plus className="w-3.5 h-3.5 text-emerald-400" /> New Income
+            <Plus className="w-3.5 h-3.5 text-[#34C759]" /> New Income
           </button>
           {budgets.length >= 2 && (
             <button
               onClick={() => handleOpenTransfer()}
-              className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-blue-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
+              className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#5AC8FA] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
             >
-              <ArrowRightLeft className="w-3.5 h-3.5 text-blue-400" /> Transfer Money
+              <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer Money
             </button>
           )}
           <button
             onClick={() => setIsUploadStatementOpen(true)}
-            className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-emerald-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#34C759] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
-            <Upload className="w-3.5 h-3.5 text-emerald-400" /> Upload Statement
+            <Upload className="w-3.5 h-3.5" /> Upload Statement
+          </button>
+          <button
+            onClick={() => setIsEmailParserOpen(true)}
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#FF9F0A] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
+          >
+            <Mail className="w-3.5 h-3.5" /> Sync Email Alerts
           </button>
         </div>
 
-        <div className="space-y-1 mb-6">
-          <div className="bg-[#202020] border border-[#2a2a2a] rounded-xl p-3 space-y-2 text-xs">
-            <div className="font-semibold text-white flex items-center justify-between">
-              <span>{currentMonthName}</span>
-              <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+        {/* Persistent Month Summary Card */}
+        <div className="mt-auto">
+          <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 space-y-2.5 text-xs shadow-lg">
+            <div className="font-semibold text-white flex items-center justify-between gap-2">
+              <span className="truncate">{selectedMonthName}</span>
+              <span
+                className={`w-2 h-2 rounded-full shrink-0 ${
+                  globalSelectedMonth === currentMonthKey
+                    ? 'bg-[#34C759] animate-pulse'
+                    : 'bg-[#0071E3]'
+                }`}
+              />
             </div>
-            <div className="space-y-1 text-[#9b9b9b] text-[11px]">
+            <div className="space-y-1.5 text-[#86868B] text-[11px]">
               <div className="flex justify-between">
-                <span>Income:</span>
-                <span className="text-emerald-400 font-medium">{currencySymbol}{currentMonthStats.income.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span>Income</span>
+                <span className="text-[#34C759] font-semibold tabular-nums">
+                  {currencySymbol}{selectedMonthStats.income.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
               </div>
               <div className="flex justify-between">
-                <span>Expense:</span>
-                <span className="text-rose-400 font-medium">{currencySymbol}{currentMonthStats.expense.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                <span>Expense</span>
+                <span className="text-[#FF3B30] font-semibold tabular-nums">
+                  {currencySymbol}{selectedMonthStats.expense.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
               </div>
-              <div className="flex justify-between border-t border-[#2a2a2a] pt-1">
-                <span>Cashflow:</span>
-                <span className="text-white font-medium">{currencySymbol}{currentMonthStats.cashflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+              <div className="flex justify-between border-t border-white/10 pt-1.5">
+                <span>Cashflow</span>
+                <span className="text-white font-bold tabular-nums">
+                  {currencySymbol}{selectedMonthStats.cashflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </span>
               </div>
             </div>
           </div>
@@ -1946,1823 +1583,440 @@ export default function App() {
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-[#191919] p-6 space-y-6">
-        
-        <div className="flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-white tracking-tight">
-            {activeTab === 'dashboard' && 'Finance Tracker'}
-            {activeTab === 'stats' && 'Monthly Stats'}
-            {activeTab === 'budgets' && 'Budgets Management'}
-            {activeTab === 'transactions' && 'Transactions Database'}
-            {activeTab === 'settings' && 'Profile & Settings'}
-          </h1>
-          <button
-            onClick={() => setIsAiOpen(true)}
-            className="flex items-center gap-1.5 bg-[#252525] hover:bg-[#2f2f2f] text-rose-400 border border-[#333] px-3.5 py-1.5 rounded-md text-xs font-medium transition"
-          >
-            <Sparkles className="w-4 h-4" /> AI Insights
-          </button>
+      <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-[#000000]">
+
+        {/* Sticky Translucent Apple Glass Header */}
+        <header className="sticky top-0 z-20 apple-glass px-6 py-3.5">
+          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
+                {activeTab === 'dashboard' && 'Wallet & Overview'}
+                {activeTab === 'stats' && 'Monthly Stats'}
+                {activeTab === 'budgets' && 'Budgets & Accounts'}
+                {activeTab === 'transactions' && 'Transactions Database'}
+                {activeTab === 'settings' && 'Profile & Settings'}
+              </h1>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-[#2C2C2E] border border-white/10 rounded-full px-3.5 py-1.5 text-xs text-white shadow-sm">
+                <Calendar className="w-3.5 h-3.5 text-[#0071E3] shrink-0" />
+                <span className="text-[#86868B] hidden sm:inline">Month:</span>
+                <select
+                  value={globalSelectedMonth}
+                  onChange={e => setGlobalSelectedMonth(e.target.value)}
+                  className="bg-transparent text-white focus:outline-none cursor-pointer font-semibold tabular-nums"
+                >
+                  <option value="All" className="bg-[#1C1C1E]">All Months</option>
+                  {allMonthsList.map(m => (
+                    <option key={m.key} value={m.key} className="bg-[#1C1C1E]">{m.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <button
+                onClick={() => setIsEmailParserOpen(true)}
+                className="flex items-center gap-1.5 bg-[#2C2C2E] hover:bg-white/15 text-white border border-white/10 px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98]"
+              >
+                <Mail className="w-3.5 h-3.5 text-[#FF9F0A]" />
+                <span className="hidden sm:inline">Sync Email</span>
+              </button>
+
+              <button
+                onClick={() => setIsAiOpen(true)}
+                className="flex items-center gap-1.5 bg-[#0071E3] hover:bg-[#0077ED] text-white px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98]"
+              >
+                <Sparkles className="w-3.5 h-3.5" />
+                <span>AI Insights</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Mobile Nav Bar */}
+          <div className="flex md:hidden items-center gap-1.5 overflow-x-auto pt-3 pb-0.5 scrollbar-none">
+            {([
+              { id: 'dashboard', label: 'Dashboard' },
+              { id: 'stats', label: 'Stats' },
+              { id: 'budgets', label: 'Budgets' },
+              { id: 'transactions', label: 'Ledger' },
+              { id: 'settings', label: 'Settings' }
+            ] as const).map(tab => (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                className={`px-3 py-1 rounded-full text-xs font-semibold shrink-0 transition ${
+                  activeTab === tab.id ? 'bg-[#0071E3] text-white' : 'bg-[#2C2C2E] text-[#86868B]'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        <div className="p-6 flex-1">
+          {/* ROUTED PAGES */}
+          {activeTab === 'dashboard' && (
+            <DashboardPage
+              transactions={displayTransactions}
+              budgets={budgets}
+              chartMode={chartMode}
+              setChartMode={setChartMode}
+              breakdownMode={breakdownMode}
+              setBreakdownMode={setBreakdownMode}
+              monthlyChartData={monthlyChartData}
+              breakdownData={breakdownData}
+              totalIncome={totalIncome}
+              totalExpense={totalExpense}
+              currencySymbol={currencySymbol}
+              currencyCode={currentUserProfile?.currency || 'USD'}
+              colors={COLORS}
+              selectedMonth={globalSelectedMonth}
+              onOpenAddTx={(type, datePrefill) => {
+                setDefaultTxType(type);
+                setNewTxBudgetId('');
+                setNewTxIsLoanPayment(false);
+                setNewTxTitle('');
+                setNewTxCategory('');
+                setNewTxDate(datePrefill || new Date().toISOString().split('T')[0]);
+                setIsAddTxOpen(true);
+              }}
+              onOpenEditTx={handleOpenEditTx}
+              onDeleteTx={handleDeleteTx}
+              onOpenAddBudget={() => setIsAddBudgetOpen(true)}
+              onOpenEmailSync={() => setIsEmailParserOpen(true)}
+              onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
+              onNavigateBudgets={() => setActiveTab('budgets')}
+            />
+          )}
+
+          {activeTab === 'stats' && (
+            <MonthlyStatsPage
+              statsQuarterFilter={statsQuarterFilter}
+              setStatsQuarterFilter={setStatsQuarterFilter}
+              filteredMonthsStats={filteredMonthsStats}
+              currencySymbol={currencySymbol}
+              selectedMonth={globalSelectedMonth}
+              onSelectMonth={setGlobalSelectedMonth}
+            />
+          )}
+
+          {activeTab === 'budgets' && (
+            <BudgetsPage
+              budgets={budgets}
+              transactions={displayTransactions}
+              currencySymbol={currencySymbol}
+              selectedMonth={globalSelectedMonth}
+              onOpenAddBudget={() => setIsAddBudgetOpen(true)}
+              onOpenEditBudget={setEditingBudget}
+              onDeleteBudget={handleDeleteBudget}
+              onToggleItemPaid={handleToggleBudgetItemPaid}
+              onOpenRecordPayment={handleOpenRecordPayment}
+              onOpenTransfer={handleOpenTransfer}
+              onToggleLoanQuotaPaid={handleToggleLoanQuotaPaid}
+              onReconcileLoanPayments={handleReconcileLoanPayments}
+              onAddLoanQuota={handleAddLoanQuota}
+              onDeleteLoanQuota={handleDeleteLoanQuota}
+              onGenerateLoanQuotas={handleGenerateLoanQuotas}
+            />
+          )}
+
+          {activeTab === 'transactions' && (
+            <TransactionsPage
+              transactions={displayTransactions}
+              budgets={budgets}
+              currencySymbol={currencySymbol}
+              selectedMonth={globalSelectedMonth}
+              onSelectMonth={setGlobalSelectedMonth}
+              onOpenAddTx={(type) => {
+                setDefaultTxType(type);
+                setNewTxBudgetId('');
+                setNewTxIsLoanPayment(false);
+                setNewTxTitle('');
+                setNewTxCategory('');
+                setNewTxDate(new Date().toISOString().split('T')[0]);
+                setIsAddTxOpen(true);
+              }}
+              onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
+              onOpenEmailParser={() => setIsEmailParserOpen(true)}
+              onOpenTransfer={() => handleOpenTransfer()}
+              onOpenEditTx={handleOpenEditTx}
+              onDeleteTx={handleDeleteTx}
+            />
+          )}
+
+          {activeTab === 'settings' && (
+            <SettingsPage
+              currentUserProfile={currentUserProfile}
+              setCurrentUserProfile={setCurrentUserProfile}
+              firebaseUser={firebaseUser}
+              db={db}
+              currencies={CURRENCIES}
+              onSignOut={handleSignOut}
+            />
+          )}
         </div>
-
-        {/* ROUTED PAGES */}
-        {activeTab === 'dashboard' && (
-          <DashboardPage
-            transactions={transactions}
-            budgets={budgets}
-            chartMode={chartMode}
-            setChartMode={setChartMode}
-            breakdownMode={breakdownMode}
-            setBreakdownMode={setBreakdownMode}
-            monthlyChartData={monthlyChartData}
-            breakdownData={breakdownData}
-            totalIncome={totalIncome}
-            totalExpense={totalExpense}
-            currencySymbol={currencySymbol}
-            colors={COLORS}
-            onOpenAddTx={(type, datePrefill) => {
-              setDefaultTxType(type);
-              setNewTxBudgetId('');
-              setNewTxIsLoanPayment(false);
-              if (datePrefill) {
-                setNewTxDate(datePrefill);
-              }
-              setIsAddTxOpen(true);
-            }}
-            onOpenEditTx={handleOpenEditTx}
-            onDeleteTx={handleDeleteTx}
-          />
-        )}
-
-        {activeTab === 'stats' && (
-          <MonthlyStatsPage
-            statsQuarterFilter={statsQuarterFilter}
-            setStatsQuarterFilter={setStatsQuarterFilter}
-            filteredMonthsStats={filteredMonthsStats}
-            currencySymbol={currencySymbol}
-          />
-        )}
-
-        {activeTab === 'budgets' && (
-          <BudgetsPage
-            budgets={budgets}
-            transactions={transactions}
-            currencySymbol={currencySymbol}
-            onOpenAddBudget={() => {
-              resetAddBudgetForm();
-              setIsAddBudgetOpen(true);
-            }}
-            onOpenEditBudget={handleOpenEditBudget}
-            onDeleteBudget={handleDeleteBudget}
-            onToggleItemPaid={handleToggleBudgetItemPaid}
-            onOpenRecordPayment={handleOpenRecordPayment}
-            onOpenTransfer={handleOpenTransfer}
-            onToggleLoanQuotaPaid={handleToggleLoanQuotaPaid}
-            onReconcileLoanPayments={handleReconcileLoanPayments}
-            onAddLoanQuota={handleAddLoanQuota}
-            onDeleteLoanQuota={handleDeleteLoanQuota}
-            onGenerateLoanQuotas={handleGenerateLoanQuotas}
-          />
-        )}
-
-        {activeTab === 'transactions' && (
-          <TransactionsPage
-            transactions={transactions}
-            budgets={budgets}
-            currencySymbol={currencySymbol}
-            onOpenAddTx={(type) => {
-              setDefaultTxType(type);
-              setNewTxBudgetId('');
-              setNewTxIsLoanPayment(false);
-              setIsAddTxOpen(true);
-            }}
-            onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
-            onOpenTransfer={() => handleOpenTransfer()}
-            onOpenEditTx={handleOpenEditTx}
-            onDeleteTx={handleDeleteTx}
-          />
-        )}
-
-        {activeTab === 'settings' && (
-          <SettingsPage
-            currentUserProfile={currentUserProfile}
-            setCurrentUserProfile={setCurrentUserProfile}
-            firebaseUser={firebaseUser}
-            db={db}
-            currencies={CURRENCIES}
-            onSignOut={handleSignOut}
-          />
-        )}
-
       </main>
 
       {/* MODALS */}
-      {isAddTxOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white capitalize">
-                {newTxIsLoanPayment ? 'Record Payment / Abono' : `New ${defaultTxType}`}
-              </h3>
-              <button onClick={() => setIsAddTxOpen(false)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleCreateTransaction} className="space-y-3">
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Title</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={200}
-                  placeholder={defaultTxType === 'expense' ? "e.g. Electricity, Groceries" : "e.g. Salary, Freelance"}
-                  value={newTxTitle}
-                  onChange={e => setNewTxTitle(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Amount ({currencySymbol})</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    placeholder="0.00"
-                    value={newTxAmount}
-                    onChange={e => setNewTxAmount(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Category (Matches Budget)</label>
-                  <select
-                    value={newTxCategory}
-                    onChange={e => setNewTxCategory(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                  >
-                    {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
+      <AddTransactionModal
+        isOpen={isAddTxOpen}
+        onClose={() => setIsAddTxOpen(false)}
+        defaultType={defaultTxType}
+        budgets={budgets}
+        availableCategories={availableCategories}
+        currencySymbol={currencySymbol}
+        prefillDate={newTxDate}
+        prefillBudgetId={newTxBudgetId}
+        prefillIsLoanPayment={newTxIsLoanPayment}
+        prefillTitle={newTxTitle}
+        prefillCategory={newTxCategory}
+        onSave={async (txData) => {
+          if (!firebaseUser) return;
+          const id = 'tx_' + Date.now();
+          const newTx: Transaction = stripUndefined({
+            id,
+            userId: firebaseUser.uid,
+            title: txData.title.slice(0, 200),
+            amount: Math.abs(Number(txData.amount) || 0),
+            type: txData.type,
+            category: (txData.category || 'Other').slice(0, 50),
+            date: (txData.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+            notes: (txData.notes || '').slice(0, 500),
+            ...(txData.budgetId ? { budgetId: txData.budgetId.slice(0, 50) } : {}),
+            isLoanPayment: Boolean(txData.isLoanPayment),
+            status: 'cleared' as const
+          });
+          const latestBudgets = await ensureBudgetsForCategories(
+            { [newTx.category]: newTx.type === 'expense' ? newTx.amount : 0 },
+            budgets
+          );
+          const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, latestBudgets);
+          try {
+            await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+            return;
+          }
+          if (touchedIds.length > 0) {
+            await persistTouchedBudgets(touchedIds, nextBudgets);
+          }
+          setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+        }}
+      />
 
-              {budgets.length > 0 && (
-                <div className="space-y-2 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
-                  <label className="text-[11px] text-[#9b9b9b] block">Link to Bank / Debit / Credit Card / Loan / Budget Account (Optional)</label>
-                  <select
-                    value={newTxBudgetId}
-                    onChange={e => {
-                      const nextId = e.target.value;
-                      setNewTxBudgetId(nextId);
-                      const matched = budgets.find(b => b.id === nextId);
-                      if (!matched || (matched.accountType !== 'credit_card' && matched.accountType !== 'loan')) {
-                        setNewTxIsLoanPayment(false);
-                      }
-                    }}
-                    className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="">None (Match by Category only)</option>
-                    {budgets.map(b => (
-                      <option key={b.id} value={b.id}>
-                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
-                      </option>
-                    ))}
-                  </select>
+      <EditTransactionModal
+        tx={editingTx}
+        onClose={() => setEditingTx(null)}
+        budgets={budgets}
+        availableCategories={availableCategories}
+        currencySymbol={currencySymbol}
+        onSave={async (txId, updated) => {
+          if (!firebaseUser || !editingTx) return;
+          const isTransferTx = Boolean(
+            updated.isTransfer && updated.budgetId && updated.transferToBudgetId && updated.budgetId !== updated.transferToBudgetId
+          );
+          const updatedTx: Transaction = stripUndefined({
+            ...editingTx,
+            ...updated,
+            id: txId,
+            userId: editingTx.userId,
+            title: (updated.title || editingTx.title).slice(0, 200),
+            amount: updated.amount !== undefined ? Math.abs(Number(updated.amount) || 0) : editingTx.amount,
+            type: isTransferTx ? 'expense' : (updated.type || editingTx.type),
+            category: (updated.category || (isTransferTx ? 'Transfer' : editingTx.category)).slice(0, 50),
+            date: (updated.date || editingTx.date).slice(0, 20),
+            notes: (updated.notes !== undefined ? updated.notes : editingTx.notes || '').slice(0, 500),
+            budgetId: updated.budgetId ? updated.budgetId.slice(0, 50) : undefined,
+            isLoanPayment: Boolean(updated.isLoanPayment),
+            isTransfer: isTransferTx,
+            transferToBudgetId: isTransferTx && updated.transferToBudgetId ? updated.transferToBudgetId.slice(0, 50) : undefined,
+            status: updated.status || editingTx.status || 'cleared'
+          });
+          const latestBudgets = isTransferTx
+            ? budgets
+            : await ensureBudgetsForCategories(
+                { [updatedTx.category]: updatedTx.type === 'expense' ? updatedTx.amount : 0 },
+                budgets
+              );
+          const reverted = revertSingleTxInMemory(editingTx, latestBudgets);
+          const applied = applySingleTxInMemory(updatedTx, reverted.nextBudgets);
+          const allTouched = Array.from(new Set([...reverted.touchedIds, ...applied.touchedIds]));
+          try {
+            await setDoc(doc(db, 'transactions', txId), stripUndefined(applied.enrichedTx));
+          } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, `transactions/${txId}`);
+            return;
+          }
+          if (allTouched.length > 0) {
+            await persistTouchedBudgets(allTouched, applied.nextBudgets);
+          }
+          setTransactions(prev =>
+            prev.map(t => (t.id === txId ? applied.enrichedTx : t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+          );
+          setEditingTx(null);
+        }}
+      />
 
-                  {(() => {
-                    const linked = budgets.find(b => b.id === newTxBudgetId);
-                    if (linked && (linked.accountType === 'credit_card' || linked.accountType === 'loan')) {
-                      return (
-                        <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={newTxIsLoanPayment}
-                            onChange={e => setNewTxIsLoanPayment(e.target.checked)}
-                            className="accent-emerald-500 w-3.5 h-3.5"
-                          />
-                          <span className="text-[11px] text-emerald-400 font-medium">
-                            Payment / Abono to {linked.name || linked.category} (Reduces balance used)
-                          </span>
-                        </label>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-              )}
+      <AddBudgetModal
+        isOpen={isAddBudgetOpen}
+        onClose={() => setIsAddBudgetOpen(false)}
+        availableCategories={availableCategories}
+        currencySymbol={currencySymbol}
+        colors={COLORS}
+        onSave={async (data) => {
+          if (!firebaseUser) return;
+          const id = 'b_' + Date.now();
+          const catVal = data.category.trim().slice(0, 50);
+          const newBudget: Budget = stripUndefined({
+            id,
+            userId: firebaseUser.uid,
+            name: catVal,
+            category: catVal,
+            description: (data.description || '').trim().slice(0, 500),
+            limit: Number(data.limit) || 0,
+            color: data.color || COLORS[0],
+            accountType: data.accountType,
+            creditLimit: data.creditLimit,
+            actualUsedAmount:
+              data.accountType === 'loan'
+                ? Number(data.creditLimit || data.limit || 0)
+                : data.actualUsedAmount,
+            accountBalance: data.accountBalance,
+            apr: data.apr,
+            overdraftPercentage: data.overdraftPercentage,
+            loanTermMonths: data.loanTermMonths,
+            loanStartDate: data.loanStartDate,
+            loanCalcMethod: data.loanCalcMethod,
+            loanRatePeriod: data.loanRatePeriod,
+            monthlyQuota: data.accountType === 'loan' ? data.limit : undefined,
+            loanQuotas: data.loanQuotas,
+            items: data.accountType === 'standard' ? (data.items || []) : [],
+            extraExpenses: data.accountType === 'standard' ? (data.extraExpenses || 0) : 0
+          });
+          try {
+            await setDoc(doc(db, 'budgets', id), newBudget);
+            setBudgets(prev => [
+              ...prev.filter(b => (b.category || b.name || '').toLowerCase() !== catVal.toLowerCase()),
+              newBudget
+            ]);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, `budgets/${id}`);
+          }
+        }}
+      />
 
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Date</label>
-                <input
-                  type="date"
-                  value={newTxDate}
-                  onChange={e => setNewTxDate(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
+      <EditBudgetModal
+        budget={editingBudget}
+        onClose={() => setEditingBudget(null)}
+        availableCategories={availableCategories}
+        currencySymbol={currencySymbol}
+        colors={COLORS}
+        onSave={async (budgetId, updated) => {
+          if (!firebaseUser || !editingBudget) return;
+          const nextAccountType = updated.accountType || editingBudget.accountType || 'standard';
+          const catVal = (updated.category || editingBudget.category).trim().slice(0, 50);
+          const isLiquid = nextAccountType === 'bank_account' || nextAccountType === 'debit_account';
+          const isCredit = nextAccountType === 'credit_card';
+          const isLoan = nextAccountType === 'loan';
+          const isStandard = !isLiquid && !isCredit && !isLoan;
 
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Notes (Optional)</label>
-                <input
-                  type="text"
-                  maxLength={500}
-                  placeholder="Optional reference or details..."
-                  value={newTxNotes}
-                  onChange={e => setNewTxNotes(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setIsAddTxOpen(false)} className="flex-1 bg-[#333] text-white py-2 rounded-lg text-xs">Cancel</button>
-                <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-xs font-medium">Save to seashore DB</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* EDIT TRANSACTION MODAL */}
-      {editingTx && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Edit {editTxType === 'income' ? 'Income' : 'Expense'}</h3>
-              <button onClick={() => setEditingTx(null)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleSaveEditTransaction} className="space-y-3">
-              {/* Type Switcher */}
-              <div className="flex bg-[#1a1a1a] p-1 rounded-lg border border-[#333]">
-                <button
-                  type="button"
-                  onClick={() => setEditTxType('expense')}
-                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${editTxType === 'expense' ? 'bg-rose-500/20 text-rose-300 border border-rose-500/30' : 'text-[#888] hover:text-white'}`}
-                >
-                  Expense
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setEditTxType('income')}
-                  className={`flex-1 py-1.5 text-xs font-medium rounded-md transition ${editTxType === 'income' ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30' : 'text-[#888] hover:text-white'}`}
-                >
-                  Income
-                </button>
-              </div>
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Title</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={200}
-                  value={editTxTitle}
-                  onChange={e => setEditTxTitle(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Amount ({currencySymbol})</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    value={editTxAmount}
-                    onChange={e => setEditTxAmount(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Category</label>
-                  <select
-                    value={editTxCategory}
-                    onChange={e => setEditTxCategory(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                  >
-                    {availableCategories.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
-
-              {budgets.length > 0 && (
-                <div className="space-y-2.5 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
-                  <label className="text-[11px] text-[#9b9b9b] block">
-                    {editTxIsTransfer ? 'Source Account (Money Leaves)' : 'Link to Bank / Debit / Credit Card / Loan / Budget Account (Optional)'}
-                  </label>
-                  <select
-                    value={editTxBudgetId}
-                    onChange={e => {
-                      const nextId = e.target.value;
-                      setEditTxBudgetId(nextId);
-                      if (nextId === editTxTransferToBudgetId) {
-                        setEditTxTransferToBudgetId('');
-                      }
-                      const matched = budgets.find(b => b.id === nextId);
-                      if (!matched || (matched.accountType !== 'credit_card' && matched.accountType !== 'loan')) {
-                        if (!editTxIsTransfer) setEditTxIsLoanPayment(false);
-                      }
-                    }}
-                    className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
-                  >
-                    <option value="">None (Match by Category only)</option>
-                    {budgets.map(b => (
-                      <option key={b.id} value={b.id}>
-                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
-                      </option>
-                    ))}
-                  </select>
-
-                  {budgets.length >= 2 && editTxBudgetId && (
-                    <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={editTxIsTransfer}
-                        onChange={e => {
-                          const checked = e.target.checked;
-                          setEditTxIsTransfer(checked);
-                          if (!checked) {
-                            setEditTxTransferToBudgetId('');
-                          } else {
-                            const fallbackDest = budgets.find(b => b.id !== editTxBudgetId)?.id || '';
-                            setEditTxTransferToBudgetId(fallbackDest);
-                            const dest = budgets.find(b => b.id === fallbackDest);
-                            setEditTxIsLoanPayment(dest?.accountType === 'credit_card' || dest?.accountType === 'loan');
-                          }
-                        }}
-                        className="accent-blue-500 w-3.5 h-3.5"
-                      />
-                      <span className="text-[11px] text-blue-300 font-medium">
-                        Transfer to another account (Excluded from Income/Expense totals)
-                      </span>
-                    </label>
-                  )}
-
-                  {editTxIsTransfer && editTxBudgetId && (
-                    <div>
-                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Destination Account (Money Enters)</label>
-                      <select
-                        value={editTxTransferToBudgetId}
-                        onChange={e => {
-                          const nextDestId = e.target.value;
-                          setEditTxTransferToBudgetId(nextDestId);
-                          const dest = budgets.find(b => b.id === nextDestId);
-                          setEditTxIsLoanPayment(dest?.accountType === 'credit_card' || dest?.accountType === 'loan');
-                        }}
-                        className="w-full bg-[#121212] border border-blue-500/40 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-400"
-                      >
-                        <option value="">-- Select Destination Account --</option>
-                        {budgets
-                          .filter(b => b.id !== editTxBudgetId)
-                          .map(b => (
-                            <option key={b.id} value={b.id}>
-                              {b.name || b.category} {getAccountTypeLabel(b.accountType)}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  )}
-
-                  {(() => {
-                    const linked = budgets.find(b => b.id === editTxBudgetId);
-                    if (!editTxIsTransfer && linked && (linked.accountType === 'credit_card' || linked.accountType === 'loan')) {
-                      return (
-                        <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
-                          <input
-                            type="checkbox"
-                            checked={editTxIsLoanPayment}
-                            onChange={e => setEditTxIsLoanPayment(e.target.checked)}
-                            className="accent-emerald-500 w-3.5 h-3.5"
-                          />
-                          <span className="text-[11px] text-emerald-400 font-medium">
-                            Payment / Abono to {linked.name || linked.category} (Reduces balance used)
-                          </span>
-                        </label>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-              )}
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Date</label>
-                <input
-                  type="date"
-                  value={editTxDate}
-                  onChange={e => setEditTxDate(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Notes (Optional)</label>
-                <input
-                  type="text"
-                  maxLength={500}
-                  placeholder="Additional notes..."
-                  value={editTxNotes}
-                  onChange={e => setEditTxNotes(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setEditingTx(null)} className="flex-1 bg-[#333] text-white py-2 rounded-lg text-xs">Cancel</button>
-                <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-xs font-medium">Update in seashore DB</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* ADD BUDGET / ACCOUNT MODAL */}
-      {isAddBudgetOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Create Budget / Account</h3>
-              <button onClick={() => setIsAddBudgetOpen(false)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleSaveBudget} className="space-y-3.5">
-              {/* Account Type Switcher */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Account / Budget Type</label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setNewBudgetAccountType('standard')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      newBudgetAccountType === 'standard'
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Standard
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewBudgetAccountType('bank_account')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      newBudgetAccountType === 'bank_account'
-                        ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Building2 className="w-3.5 h-3.5 shrink-0" /> Bank
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewBudgetAccountType('debit_account')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      newBudgetAccountType === 'debit_account'
-                        ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Debit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewBudgetAccountType('credit_card')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      newBudgetAccountType === 'credit_card'
-                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <CreditCard className="w-3.5 h-3.5 shrink-0" /> Credit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewBudgetAccountType('loan')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
-                      newBudgetAccountType === 'loan'
-                        ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Landmark className="w-3.5 h-3.5 shrink-0" /> Loan
-                  </button>
-                </div>
-              </div>
-
-              {/* Budget Name / Category */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Budget Name / Category</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={50}
-                  placeholder="e.g. Prestamo, Visa Popular, Groceries..."
-                  value={newBudgetCategory}
-                  onChange={e => setNewBudgetCategory(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-                <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 scrollbar-thin">
-                  <span className="text-[10px] text-[#777] shrink-0">Quick pick:</span>
-                  {availableCategories.slice(0, 8).map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setNewBudgetCategory(c)}
-                      className={`px-2 py-0.5 rounded text-[10px] shrink-0 transition ${newBudgetCategory.toLowerCase() === c.toLowerCase() ? 'bg-emerald-600 text-white' : 'bg-[#2a2a2a] text-zinc-300 hover:text-white'}`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-[#777]">The budget name matches expense categories for live tracking.</p>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  maxLength={500}
-                  placeholder="Describe what belongs to this budget, due dates, terms..."
-                  value={newBudgetDescription}
-                  onChange={e => setNewBudgetDescription(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Credit Card Terms (NO editable actualUsedAmount; Monthly Limit = Credit Limit + Overdraft %) */}
-              {newBudgetAccountType === 'credit_card' && (() => {
-                const cc = calculateCreditCardMonthlyLimit(
-                  parseFloat(newBudgetCreditLimit) || 0,
-                  parseFloat(newBudgetOverdraftPercentage) || 0
-                );
-                return (
-                  <div className="space-y-3">
-                    <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                      <div className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
-                        <CreditCard className="w-3.5 h-3.5" />
-                        Credit Card Terms
-                      </div>
-                      <div className="grid grid-cols-3 gap-2.5">
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Credit Limit ({currencySymbol}) *</label>
-                          <input
-                            type="number"
-                            required
-                            step="0.01"
-                            min="0.01"
-                            placeholder="50000"
-                            value={newBudgetCreditLimit}
-                            onChange={e => setNewBudgetCreditLimit(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Overdraft % Allowed</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="e.g. 10"
-                            value={newBudgetOverdraftPercentage}
-                            onChange={e => setNewBudgetOverdraftPercentage(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">APR (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="e.g. 24.9"
-                            value={newBudgetApr}
-                            onChange={e => setNewBudgetApr(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-[#777]">
-                        Actual Used Balance starts at {currencySymbol}0.00 and updates automatically from linked transactions and payments.
-                      </p>
-                    </div>
-
-                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="text-amber-300 font-semibold block">Calculated Monthly Limit</span>
-                        <span className="text-[10px] text-amber-400/80">
-                          Credit Limit ({currencySymbol}{cc.baseCreditLimit.toLocaleString()}) + {cc.overdraftPct}% Overdraft ({currencySymbol}{cc.overdraftBuffer.toLocaleString()})
-                        </span>
-                      </div>
-                      <span className="text-base font-bold text-white">
-                        {currencySymbol}{cc.monthlyLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Loan Account Terms & Monthly Quotas Generator */}
-              {newBudgetAccountType === 'loan' && (() => {
-                const principal = Math.max(0, parseFloat(newBudgetCreditLimit) || 0);
-                const apr = Math.max(0, parseFloat(newBudgetApr) || 0);
-                const termMonths = Math.min(600, Math.max(1, Math.floor(parseFloat(newBudgetLoanTermMonths) || 12)));
-                const customQuota = Math.max(0, parseFloat(newBudgetCustomMonthlyQuota) || 0);
-                const previewSchedule = generateLoanQuotasSchedule({
-                  principal,
-                  annualApr: apr,
-                  termMonths,
-                  startDate: newBudgetLoanStartDate || new Date().toISOString().split('T')[0],
-                  ratePeriod: newBudgetLoanRatePeriod,
-                  calcMethod: newBudgetLoanCalcMethod,
-                  customMonthlyQuota: customQuota > 0 ? customQuota : undefined
-                });
-                const displayQuotas = newBudgetLoanQuotas.length > 0 ? newBudgetLoanQuotas : previewSchedule.quotas;
-
-                return (
-                  <div className="space-y-3">
-                    <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-purple-400 flex items-center gap-1.5">
-                          <Landmark className="w-3.5 h-3.5" />
-                          Loan Account Terms & Monthly Quotas
-                        </span>
-                        {principal > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setNewBudgetLoanQuotas(previewSchedule.quotas)}
-                            className="text-[10px] bg-purple-600/20 hover:bg-purple-600/35 text-purple-300 border border-purple-500/30 px-2 py-1 rounded-md transition"
-                          >
-                            Generate {termMonths} Quotas
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] text-[#888] block mb-1">Rate Period</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNewBudgetLoanRatePeriod('annual');
-                                setNewBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                newBudgetLoanRatePeriod === 'annual'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Annual (APR %)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNewBudgetLoanRatePeriod('monthly');
-                                setNewBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                newBudgetLoanRatePeriod === 'monthly'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Monthly (%)
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-[#888] block mb-1">Interest Method</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNewBudgetLoanCalcMethod('amortized');
-                                setNewBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                newBudgetLoanCalcMethod === 'amortized'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Amortized
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setNewBudgetLoanCalcMethod('flat');
-                                setNewBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                newBudgetLoanCalcMethod === 'flat'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Flat Interest
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Loan Principal ({currencySymbol}) *</label>
-                          <input
-                            type="number"
-                            required
-                            step="0.01"
-                            min="0.01"
-                            placeholder="150000"
-                            value={newBudgetCreditLimit}
-                            onChange={e => {
-                              setNewBudgetCreditLimit(e.target.value);
-                              setNewBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">
-                            {newBudgetLoanRatePeriod === 'monthly' ? 'Monthly Interest Rate (%)' : 'Interest Rate (APR %)'}
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder={newBudgetLoanRatePeriod === 'monthly' ? 'e.g. 1.5' : 'e.g. 18'}
-                            value={newBudgetApr}
-                            onChange={e => {
-                              setNewBudgetApr(e.target.value);
-                              setNewBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Term (Months / Quotas)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="600"
-                            placeholder="12"
-                            value={newBudgetLoanTermMonths}
-                            onChange={e => {
-                              setNewBudgetLoanTermMonths(e.target.value);
-                              setNewBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">First Quota Due Date</label>
-                          <input
-                            type="date"
-                            value={newBudgetLoanStartDate}
-                            onChange={e => {
-                              setNewBudgetLoanStartDate(e.target.value);
-                              setNewBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Custom Monthly Quota ({currencySymbol}, optional)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder={
-                            previewSchedule.monthlyQuota > 0
-                              ? `Auto-calculated: ${previewSchedule.monthlyQuota.toFixed(2)}`
-                              : 'Auto-calculated from Principal + Rate + Term'
-                          }
-                          value={newBudgetCustomMonthlyQuota}
-                          onChange={e => {
-                            setNewBudgetCustomMonthlyQuota(e.target.value);
-                            setNewBudgetLoanQuotas([]);
-                          }}
-                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-
-                      {displayQuotas.length > 0 && (
-                        <div className="space-y-1 max-h-32 overflow-y-auto pr-1 pt-1 border-t border-[#262626]">
-                          <span className="text-[10px] text-[#888] block mb-1">
-                            Monthly Quotas Preview ({displayQuotas.length} installments auto-created on save):
-                          </span>
-                          {displayQuotas.slice(0, 12).map(q => (
-                            <div key={q.id} className="flex items-center justify-between text-[11px] bg-[#222] px-2.5 py-1 rounded">
-                              <span className="text-zinc-300">#{q.quotaNumber} • {q.dueDate}</span>
-                              <span className="text-[10px] text-[#888]">
-                                Prin {currencySymbol}{q.principalAmount.toFixed(2)} + Int {currencySymbol}{q.interestAmount.toFixed(2)}
-                              </span>
-                              <span className="font-semibold text-white">{currencySymbol}{q.amount.toFixed(2)}</span>
-                            </div>
-                          ))}
-                          {displayQuotas.length > 12 && (
-                            <span className="text-[10px] text-zinc-400 block text-center pt-0.5">
-                              + {displayQuotas.length - 12} more monthly quotas...
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {principal > 0 && (
-                      <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="text-purple-300 font-semibold block">Monthly Quota Payment</span>
-                          <span className="text-[10px] text-purple-300/80">
-                            Total Interest: {currencySymbol}{previewSchedule.totalInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Total Repay: {currencySymbol}{previewSchedule.totalRepayment.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <span className="text-base font-bold text-white">
-                          {currencySymbol}{(customQuota > 0 ? customQuota : previewSchedule.monthlyQuota).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* Bank / Debit Account Details */}
-              {(newBudgetAccountType === 'bank_account' || newBudgetAccountType === 'debit_account') && (
-                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                  <div className={`text-xs font-semibold flex items-center gap-1.5 ${newBudgetAccountType === 'bank_account' ? 'text-sky-400' : 'text-teal-400'}`}>
-                    {newBudgetAccountType === 'bank_account' ? <Building2 className="w-3.5 h-3.5" /> : <Wallet className="w-3.5 h-3.5" />}
-                    {newBudgetAccountType === 'bank_account' ? 'Bank Account Details' : 'Debit Account Details'}
-                  </div>
-                  <div className={`grid grid-cols-1 ${newBudgetAccountType === 'bank_account' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
-                    <div>
-                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Opening Balance ({currencySymbol})</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={newBudgetAccountBalance}
-                        onChange={e => setNewBudgetAccountBalance(e.target.value)}
-                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0 (No limit)"
-                        value={newBudgetLimit}
-                        onChange={e => setNewBudgetLimit(e.target.value)}
-                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-                    {newBudgetAccountType === 'bank_account' && (
-                      <div>
-                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest APY (%, opt.)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="e.g. 3.5"
-                          value={newBudgetApr}
-                          onChange={e => setNewBudgetApr(e.target.value)}
-                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-[#777]">
-                    Balance automatically increases on incomes or incoming transfers and decreases on expenses, payments, or outgoing transfers.
-                  </p>
-                </div>
-              )}
-
-              {/* Belonging Items Checklist + Extra Expenses Builder (Standard budgets only) */}
-              {newBudgetAccountType === 'standard' && (
-                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">Items Belonging to This Budget</span>
-                    <span className="text-[10px] text-[#888]">Auto-calculates monthly limit</span>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="e.g. Limite Popular, Prestamo Qik"
-                      value={newBudgetItemName}
-                      onChange={e => setNewBudgetItemName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddNewBudgetItem();
-                        }
-                      }}
-                      className="flex-1 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder={`Amount (${currencySymbol})`}
-                      value={newBudgetItemAmount}
-                      onChange={e => setNewBudgetItemAmount(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddNewBudgetItem();
-                        }
-                      }}
-                      className="w-28 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddNewBudgetItem}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add
-                    </button>
-                  </div>
-
-                  {newBudgetItems.length > 0 && (
-                    <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
-                      {newBudgetItems.map(item => (
-                        <div key={item.id} className="flex items-center justify-between gap-2 bg-[#222] px-2.5 py-1.5 rounded-lg text-xs">
-                          <span className="text-zinc-200 truncate flex-1">{item.name}</span>
-                          <span className="text-white font-semibold shrink-0">
-                            {currencySymbol}{Number(item.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setNewBudgetItems(prev => prev.filter(i => i.id !== item.id))}
-                            className="text-[#777] hover:text-rose-400"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="text-[11px] text-[#9b9b9b] block mb-1">Other Extra Expenses ({currencySymbol})</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={newBudgetExtraExpenses}
-                      onChange={e => setNewBudgetExtraExpenses(e.target.value)}
-                      className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Standard Budget Monthly Limit */}
-              {newBudgetAccountType === 'standard' && (() => {
-                const itemsSum = newBudgetItems.reduce((s, item) => s + (Number(item.amount) || 0), 0);
-                const extraExp = parseFloat(newBudgetExtraExpenses) || 0;
-                const hasChecklist = newBudgetItems.length > 0 || extraExp > 0;
-                const totalCalculated = itemsSum + extraExp;
-
-                if (hasChecklist) {
-                  return (
-                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="text-emerald-300 font-semibold block">Calculated Monthly Limit</span>
-                        <span className="text-[10px] text-emerald-400/80">
-                          Items ({currencySymbol}{itemsSum.toLocaleString()}) + Extra ({currencySymbol}{extraExp.toLocaleString()})
-                        </span>
-                      </div>
-                      <span className="text-base font-bold text-white">
-                        {currencySymbol}{totalCalculated.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  );
+          const updatedBudget: Budget = stripUndefined({
+            id: budgetId,
+            userId: editingBudget.userId,
+            name: catVal,
+            category: catVal,
+            description: (updated.description !== undefined ? updated.description : editingBudget.description || '').slice(0, 500),
+            limit: updated.limit !== undefined ? updated.limit : editingBudget.limit,
+            color: updated.color || editingBudget.color || COLORS[0],
+            accountType: nextAccountType,
+            extraExpenses: isStandard ? (updated.extraExpenses || 0) : 0,
+            items: isStandard ? (updated.items || []) : [],
+            ...(isLiquid
+              ? {
+                  accountBalance: updated.accountBalance ?? 0,
+                  ...(nextAccountType === 'bank_account' && updated.apr !== undefined ? { apr: updated.apr } : {})
                 }
-
-                return (
-                  <div>
-                    <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Limit ({currencySymbol})</label>
-                    <input
-                      type="number"
-                      required
-                      step="0.01"
-                      min="0.01"
-                      placeholder="500"
-                      value={newBudgetLimit}
-                      onChange={e => setNewBudgetLimit(e.target.value)}
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
-                    />
-                  </div>
-                );
-              })()}
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Bar Color</label>
-                <div className="flex items-center gap-2">
-                  {COLORS.map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setNewBudgetColor(c)}
-                      className={`w-5 h-5 rounded-full transition-transform ${newBudgetColor === c ? 'scale-125 ring-2 ring-white' : 'opacity-80 hover:opacity-100'}`}
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setIsAddBudgetOpen(false)} className="flex-1 bg-[#333] text-white py-2 rounded-lg text-xs">Cancel</button>
-                <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg text-xs font-medium">Save Budget</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* EDIT BUDGET / ACCOUNT MODAL */}
-      {editingBudget && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Edit Budget / Account</h3>
-              <button onClick={() => setEditingBudget(null)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            <form onSubmit={handleSaveEditBudget} className="space-y-3.5">
-              {/* Account Type Switcher */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Account / Budget Type</label>
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => setEditBudgetAccountType('standard')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      editBudgetAccountType === 'standard'
-                        ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Standard
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditBudgetAccountType('bank_account')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      editBudgetAccountType === 'bank_account'
-                        ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Building2 className="w-3.5 h-3.5 shrink-0" /> Bank
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditBudgetAccountType('debit_account')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      editBudgetAccountType === 'debit_account'
-                        ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Debit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditBudgetAccountType('credit_card')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
-                      editBudgetAccountType === 'credit_card'
-                        ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <CreditCard className="w-3.5 h-3.5 shrink-0" /> Credit
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setEditBudgetAccountType('loan')}
-                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
-                      editBudgetAccountType === 'loan'
-                        ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
-                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
-                    }`}
-                  >
-                    <Landmark className="w-3.5 h-3.5 shrink-0" /> Loan
-                  </button>
-                </div>
-              </div>
-
-              {/* Name / Category */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Budget Name / Category</label>
-                <input
-                  type="text"
-                  required
-                  maxLength={50}
-                  placeholder="e.g. Prestamo, Groceries, Dining..."
-                  value={editBudgetCategory}
-                  onChange={e => setEditBudgetCategory(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-                <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 scrollbar-thin">
-                  <span className="text-[10px] text-[#777] shrink-0">Quick pick:</span>
-                  {availableCategories.slice(0, 8).map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setEditBudgetCategory(c)}
-                      className={`px-2 py-0.5 rounded text-[10px] shrink-0 transition ${editBudgetCategory.toLowerCase() === c.toLowerCase() ? 'bg-emerald-600 text-white' : 'bg-[#2a2a2a] text-zinc-300 hover:text-white'}`}
-                    >
-                      {c}
-                    </button>
-                  ))}
-                </div>
-                <p className="text-[10px] text-[#777]">The budget name and expense category match for live tracking.</p>
-              </div>
-
-              {/* Description */}
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Description</label>
-                <textarea
-                  rows={2}
-                  maxLength={500}
-                  placeholder="Describe what belongs to this budget..."
-                  value={editBudgetDescription}
-                  onChange={e => setEditBudgetDescription(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                />
-              </div>
-
-              {/* Edit Credit Card Terms (NO editable actualUsedAmount; Monthly Limit = Credit Limit + Overdraft %) */}
-              {editBudgetAccountType === 'credit_card' && (() => {
-                const cc = calculateCreditCardMonthlyLimit(
-                  parseFloat(editBudgetCreditLimit) || 0,
-                  parseFloat(editBudgetOverdraftPercentage) || 0
-                );
-                return (
-                  <div className="space-y-3">
-                    <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                      <div className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
-                        <CreditCard className="w-3.5 h-3.5" />
-                        Credit Card Terms
-                      </div>
-                      <div className="grid grid-cols-3 gap-2.5">
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Credit Limit ({currencySymbol}) *</label>
-                          <input
-                            type="number"
-                            required
-                            step="0.01"
-                            min="0.01"
-                            placeholder="50000"
-                            value={editBudgetCreditLimit}
-                            onChange={e => setEditBudgetCreditLimit(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Overdraft % Allowed</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="e.g. 10"
-                            value={editBudgetOverdraftPercentage}
-                            onChange={e => setEditBudgetOverdraftPercentage(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">APR (%)</label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="e.g. 24.9"
-                            value={editBudgetApr}
-                            onChange={e => setEditBudgetApr(e.target.value)}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
-                          />
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-[#777]">
-                        Used Balance ({currencySymbol}{(editingBudget?.actualUsedAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}) is read-only and updated automatically from transactions and payments.
-                      </p>
-                    </div>
-
-                    <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="text-amber-300 font-semibold block">Calculated Monthly Limit</span>
-                        <span className="text-[10px] text-amber-400/80">
-                          Credit Limit ({currencySymbol}{cc.baseCreditLimit.toLocaleString()}) + {cc.overdraftPct}% Overdraft ({currencySymbol}{cc.overdraftBuffer.toLocaleString()})
-                        </span>
-                      </div>
-                      <span className="text-base font-bold text-white">
-                        {currencySymbol}{cc.monthlyLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Edit Loan Terms & Monthly Quotas */}
-              {editBudgetAccountType === 'loan' && (() => {
-                const principal = Math.max(0, parseFloat(editBudgetCreditLimit) || 0);
-                const apr = Math.max(0, parseFloat(editBudgetApr) || 0);
-                const termMonths = Math.min(600, Math.max(1, Math.floor(parseFloat(editBudgetLoanTermMonths) || 12)));
-                const customQuota = Math.max(0, parseFloat(editBudgetCustomMonthlyQuota) || 0);
-                const previewSchedule = generateLoanQuotasSchedule({
-                  principal,
-                  annualApr: apr,
-                  termMonths,
-                  startDate: editBudgetLoanStartDate || new Date().toISOString().split('T')[0],
-                  ratePeriod: editBudgetLoanRatePeriod,
-                  calcMethod: editBudgetLoanCalcMethod,
-                  customMonthlyQuota: customQuota > 0 ? customQuota : undefined,
-                  existingQuotas: editingBudget?.loanQuotas
-                });
-                const displayQuotas = editBudgetLoanQuotas.length > 0 ? editBudgetLoanQuotas : previewSchedule.quotas;
-
-                return (
-                  <div className="space-y-3">
-                    <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                      <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-purple-400 flex items-center gap-1.5">
-                          <Landmark className="w-3.5 h-3.5" />
-                          Loan Account Terms & Monthly Quotas
-                        </span>
-                        {principal > 0 && (
-                          <button
-                            type="button"
-                            onClick={() => setEditBudgetLoanQuotas(previewSchedule.quotas)}
-                            className="text-[10px] bg-purple-600/20 hover:bg-purple-600/35 text-purple-300 border border-purple-500/30 px-2 py-1 rounded-md transition"
-                          >
-                            Regenerate {termMonths} Quotas
-                          </button>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        <div>
-                          <label className="text-[10px] text-[#888] block mb-1">Rate Period</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditBudgetLoanRatePeriod('annual');
-                                setEditBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                editBudgetLoanRatePeriod === 'annual'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Annual (APR %)
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditBudgetLoanRatePeriod('monthly');
-                                setEditBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                editBudgetLoanRatePeriod === 'monthly'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Monthly (%)
-                            </button>
-                          </div>
-                        </div>
-                        <div>
-                          <label className="text-[10px] text-[#888] block mb-1">Interest Method</label>
-                          <div className="grid grid-cols-2 gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditBudgetLoanCalcMethod('amortized');
-                                setEditBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                editBudgetLoanCalcMethod === 'amortized'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Amortized
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setEditBudgetLoanCalcMethod('flat');
-                                setEditBudgetLoanQuotas([]);
-                              }}
-                              className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
-                                editBudgetLoanCalcMethod === 'flat'
-                                  ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
-                                  : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
-                              }`}
-                            >
-                              Flat Interest
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Loan Principal ({currencySymbol}) *</label>
-                          <input
-                            type="number"
-                            required
-                            step="0.01"
-                            min="0.01"
-                            placeholder="150000"
-                            value={editBudgetCreditLimit}
-                            onChange={e => {
-                              setEditBudgetCreditLimit(e.target.value);
-                              setEditBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">
-                            {editBudgetLoanRatePeriod === 'monthly' ? 'Monthly Interest Rate (%)' : 'Interest Rate (APR %)'}
-                          </label>
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder={editBudgetLoanRatePeriod === 'monthly' ? 'e.g. 1.5' : 'e.g. 18'}
-                            value={editBudgetApr}
-                            onChange={e => {
-                              setEditBudgetApr(e.target.value);
-                              setEditBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">Term (Months / Quotas)</label>
-                          <input
-                            type="number"
-                            min="1"
-                            max="600"
-                            placeholder="12"
-                            value={editBudgetLoanTermMonths}
-                            onChange={e => {
-                              setEditBudgetLoanTermMonths(e.target.value);
-                              setEditBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                        <div>
-                          <label className="text-[11px] text-[#9b9b9b] block mb-1">First Quota Due Date</label>
-                          <input
-                            type="date"
-                            value={editBudgetLoanStartDate}
-                            onChange={e => {
-                              setEditBudgetLoanStartDate(e.target.value);
-                              setEditBudgetLoanQuotas([]);
-                            }}
-                            className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                          />
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Custom Monthly Quota ({currencySymbol}, optional)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder={
-                            previewSchedule.monthlyQuota > 0
-                              ? `Auto-calculated: ${previewSchedule.monthlyQuota.toFixed(2)}`
-                              : 'Auto-calculated from Principal + Rate + Term'
-                          }
-                          value={editBudgetCustomMonthlyQuota}
-                          onChange={e => {
-                            setEditBudgetCustomMonthlyQuota(e.target.value);
-                            setEditBudgetLoanQuotas([]);
-                          }}
-                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
-                        />
-                      </div>
-
-                      {displayQuotas.length > 0 && (
-                        <div className="space-y-1 max-h-32 overflow-y-auto pr-1 pt-1 border-t border-[#262626]">
-                          <span className="text-[10px] text-[#888] block mb-1">
-                            Monthly Quotas ({displayQuotas.length} installments):
-                          </span>
-                          {displayQuotas.slice(0, 12).map(q => (
-                            <div key={q.id} className="flex items-center justify-between text-[11px] bg-[#222] px-2.5 py-1 rounded">
-                              <span className={q.isPaid ? 'line-through text-zinc-500' : 'text-zinc-300'}>
-                                #{q.quotaNumber} • {q.dueDate}
-                              </span>
-                              <span className="text-[10px] text-[#888]">
-                                Prin {currencySymbol}{q.principalAmount.toFixed(2)} + Int {currencySymbol}{q.interestAmount.toFixed(2)}
-                              </span>
-                              <span className="font-semibold text-white">{currencySymbol}{q.amount.toFixed(2)}</span>
-                            </div>
-                          ))}
-                          {displayQuotas.length > 12 && (
-                            <span className="text-[10px] text-zinc-400 block text-center pt-0.5">
-                              + {displayQuotas.length - 12} more monthly quotas...
-                            </span>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {principal > 0 && (
-                      <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                        <div>
-                          <span className="text-purple-300 font-semibold block">Monthly Quota Payment</span>
-                          <span className="text-[10px] text-purple-300/80">
-                            Total Interest: {currencySymbol}{previewSchedule.totalInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Total Repay: {currencySymbol}{previewSchedule.totalRepayment.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                        </div>
-                        <span className="text-base font-bold text-white">
-                          {currencySymbol}{(customQuota > 0 ? customQuota : previewSchedule.monthlyQuota).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })()}
-
-              {/* Edit Bank / Debit Account Details */}
-              {(editBudgetAccountType === 'bank_account' || editBudgetAccountType === 'debit_account') && (
-                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                  <div className={`text-xs font-semibold flex items-center gap-1.5 ${editBudgetAccountType === 'bank_account' ? 'text-sky-400' : 'text-teal-400'}`}>
-                    {editBudgetAccountType === 'bank_account' ? <Building2 className="w-3.5 h-3.5" /> : <Wallet className="w-3.5 h-3.5" />}
-                    {editBudgetAccountType === 'bank_account' ? 'Bank Account Details' : 'Debit Account Details'}
-                  </div>
-                  <div className={`grid grid-cols-1 ${editBudgetAccountType === 'bank_account' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
-                    <div>
-                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Current Balance ({currencySymbol})</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={editBudgetAccountBalance}
-                        onChange={e => setEditBudgetAccountBalance(e.target.value)}
-                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0 (No limit)"
-                        value={editBudgetLimit}
-                        onChange={e => setEditBudgetLimit(e.target.value)}
-                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                      />
-                    </div>
-                    {editBudgetAccountType === 'bank_account' && (
-                      <div>
-                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest APY (%, opt.)</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          placeholder="e.g. 3.5"
-                          value={editBudgetApr}
-                          onChange={e => setEditBudgetApr(e.target.value)}
-                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-[#777]">
-                    Updates automatically with linked transactions and transfers, or adjust manually here to reconcile.
-                  </p>
-                </div>
-              )}
-
-              {/* Belonging Items Checklist + Extra Expenses Builder (Standard budgets only) */}
-              {editBudgetAccountType === 'standard' && (
-                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-white">Items Belonging to This Budget</span>
-                    <span className="text-[10px] text-[#888]">Auto-calculates monthly limit</span>
-                  </div>
-
-                  <div className="flex gap-2">
-                    <input
-                      type="text"
-                      placeholder="e.g. Limite Popular, Prestamo Qik"
-                      value={editBudgetItemName}
-                      onChange={e => setEditBudgetItemName(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddEditBudgetItem();
-                        }
-                      }}
-                      className="flex-1 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder={`Amount (${currencySymbol})`}
-                      value={editBudgetItemAmount}
-                      onChange={e => setEditBudgetItemAmount(e.target.value)}
-                      onKeyDown={e => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          handleAddEditBudgetItem();
-                        }
-                      }}
-                      className="w-28 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={handleAddEditBudgetItem}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0"
-                    >
-                      <Plus className="w-3.5 h-3.5" /> Add
-                    </button>
-                  </div>
-
-                  {editBudgetItems.length > 0 && (
-                    <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                      {editBudgetItems.map(item => (
-                        <div key={item.id} className="flex items-center justify-between gap-2 bg-[#222] px-2.5 py-1.5 rounded-lg text-xs">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setEditBudgetItems(prev =>
-                                prev.map(i => (i.id === item.id ? { ...i, isPaid: !i.isPaid } : i))
-                              )
-                            }
-                            className="shrink-0"
-                          >
-                            {item.isPaid ? (
-                              <CheckSquare className="w-4 h-4 text-blue-500" />
-                            ) : (
-                              <Square className="w-4 h-4 text-[#666]" />
-                            )}
-                          </button>
-                          <span className={`truncate flex-1 ${item.isPaid ? 'line-through text-zinc-500' : 'text-zinc-200'}`}>
-                            {item.name}
-                          </span>
-                          <span className={`font-semibold shrink-0 ${item.isPaid ? 'line-through text-zinc-500' : 'text-white'}`}>
-                            {currencySymbol}{Number(item.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => setEditBudgetItems(prev => prev.filter(i => i.id !== item.id))}
-                            className="text-[#777] hover:text-rose-400"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  <div>
-                    <label className="text-[11px] text-[#9b9b9b] block mb-1">Other Extra Expenses ({currencySymbol})</label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      placeholder="0.00"
-                      value={editBudgetExtraExpenses}
-                      onChange={e => setEditBudgetExtraExpenses(e.target.value)}
-                      className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Standard Budget Monthly Limit */}
-              {editBudgetAccountType === 'standard' && (() => {
-                const itemsSum = editBudgetItems.reduce((s, item) => s + (Number(item.amount) || 0), 0);
-                const extraExp = parseFloat(editBudgetExtraExpenses) || 0;
-                const hasChecklist = editBudgetItems.length > 0 || extraExp > 0;
-                const totalCalculated = itemsSum + extraExp;
-
-                if (hasChecklist) {
-                  return (
-                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
-                      <div>
-                        <span className="text-emerald-300 font-semibold block">Calculated Monthly Limit</span>
-                        <span className="text-[10px] text-emerald-400/80">
-                          Items ({currencySymbol}{itemsSum.toLocaleString()}) + Extra ({currencySymbol}{extraExp.toLocaleString()})
-                        </span>
-                      </div>
-                      <span className="text-base font-bold text-white">
-                        {currencySymbol}{totalCalculated.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                      </span>
-                    </div>
-                  );
+              : {}),
+            ...(isCredit
+              ? {
+                  apr: updated.apr ?? 0,
+                  creditLimit: updated.creditLimit ?? 0,
+                  overdraftPercentage: updated.overdraftPercentage ?? 0,
+                  actualUsedAmount: updated.actualUsedAmount ?? editingBudget.actualUsedAmount ?? 0
                 }
+              : {}),
+            ...(isLoan
+              ? {
+                  apr: updated.apr ?? 0,
+                  creditLimit: updated.creditLimit ?? 0,
+                  overdraftPercentage: 0,
+                  actualUsedAmount: updated.actualUsedAmount ?? editingBudget.actualUsedAmount ?? updated.creditLimit ?? 0,
+                  loanTermMonths: updated.loanTermMonths,
+                  loanStartDate: updated.loanStartDate,
+                  loanCalcMethod: updated.loanCalcMethod,
+                  loanRatePeriod: updated.loanRatePeriod,
+                  monthlyQuota: updated.monthlyQuota,
+                  loanQuotas: updated.loanQuotas
+                }
+              : {})
+          });
 
-                return (
-                  <div>
-                    <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Limit ({currencySymbol})</label>
-                    <input
-                      type="number"
-                      required
-                      step="0.01"
-                      min="0.01"
-                      placeholder="500"
-                      value={editBudgetLimit}
-                      onChange={e => setEditBudgetLimit(e.target.value)}
-                      className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
-                    />
-                  </div>
-                );
-              })()}
+          try {
+            await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
+            setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
+            setEditingBudget(null);
+          } catch (err) {
+            handleFirestoreError(err, OperationType.UPDATE, `budgets/${budgetId}`);
+          }
+        }}
+      />
 
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Bar Color</label>
-                <div className="flex items-center gap-2">
-                  {COLORS.map(c => (
-                    <button
-                      key={c}
-                      type="button"
-                      onClick={() => setEditBudgetColor(c)}
-                      className={`w-5 h-5 rounded-full transition-transform ${editBudgetColor === c ? 'scale-125 ring-2 ring-white' : 'opacity-80 hover:opacity-100'}`}
-                      style={{ backgroundColor: c }}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setEditingBudget(null)} className="flex-1 bg-[#333] hover:bg-[#3a3a3a] text-white py-2 rounded-lg text-xs transition">Cancel</button>
-                <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg text-xs font-medium transition">Update Budget</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <TransferModal
+        isOpen={isTransferOpen}
+        onClose={() => setIsTransferOpen(false)}
+        budgets={budgets}
+        currencySymbol={currencySymbol}
+        initialFromId={transferInitialFromId}
+        onSave={async ({ fromBudgetId, toBudgetId, amount, date, title, notes }) => {
+          if (!firebaseUser || !fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) return;
+          const fromAcc = budgets.find(b => b.id === fromBudgetId);
+          const toAcc = budgets.find(b => b.id === toBudgetId);
+          const fromName = fromAcc?.name || fromAcc?.category || 'Account';
+          const toName = toAcc?.name || toAcc?.category || 'Account';
+          const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+          const id = `tx_tr_${Date.now()}`;
 
-      {/* TRANSFER BETWEEN ACCOUNTS MODAL */}
-      {isTransferOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <ArrowRightLeft className="w-4 h-4 text-blue-400" />
-                Transfer Between Accounts
-              </h3>
-              <button onClick={() => setIsTransferOpen(false)} className="text-[#888] hover:text-white">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-[11px] text-[#9b9b9b]">
-              Move funds between your accounts (or pay a credit card / loan from a bank or debit account) without inflating your expense or income totals.
-            </p>
-            <form onSubmit={handleSaveTransfer} className="space-y-3">
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">From Account *</label>
-                <select
-                  required
-                  value={transferFromId}
-                  onChange={e => {
-                    const nextFrom = e.target.value;
-                    setTransferFromId(nextFrom);
-                    if (nextFrom === transferToId) {
-                      const nextTo = budgets.find(b => b.id !== nextFrom)?.id || '';
-                      setTransferToId(nextTo);
-                    }
-                  }}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                >
-                  {budgets.map(b => (
-                    <option key={b.id} value={b.id}>
-                      {b.name || b.category} {getAccountTypeLabel(b.accountType)}
-                    </option>
-                  ))}
-                </select>
-              </div>
+          const newTx: Transaction = stripUndefined({
+            id,
+            userId: firebaseUser.uid,
+            title: (title || `Transfer: ${fromName} → ${toName}`).slice(0, 200),
+            amount: Math.abs(Number(amount) || 0),
+            type: 'expense',
+            category: 'Transfer',
+            date: (date || new Date().toISOString().split('T')[0]).slice(0, 20),
+            notes: (notes || `Internal transfer from ${fromName} to ${toName}`).slice(0, 500),
+            budgetId: fromBudgetId.slice(0, 50),
+            transferToBudgetId: toBudgetId.slice(0, 50),
+            isTransfer: true,
+            isLoanPayment: isPayingDebt,
+            status: 'cleared' as const
+          });
 
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">To Account *</label>
-                <select
-                  required
-                  value={transferToId}
-                  onChange={e => setTransferToId(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">-- Select Destination Account --</option>
-                  {budgets
-                    .filter(b => b.id !== transferFromId)
-                    .map(b => (
-                      <option key={b.id} value={b.id}>
-                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
-                      </option>
-                    ))}
-                </select>
-              </div>
+          const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, budgets);
+          try {
+            await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
+          } catch (err) {
+            handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+            return;
+          }
+          if (touchedIds.length > 0) {
+            await persistTouchedBudgets(touchedIds, nextBudgets);
+          }
+          setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+        }}
+      />
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Amount ({currencySymbol}) *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    required
-                    placeholder="0.00"
-                    value={transferAmount}
-                    onChange={e => setTransferAmount(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-                <div>
-                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Date</label>
-                  <input
-                    type="date"
-                    value={transferDate}
-                    onChange={e => setTransferDate(e.target.value)}
-                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Title (Optional)</label>
-                <input
-                  type="text"
-                  maxLength={200}
-                  placeholder="Auto-generated if left blank"
-                  value={transferTitle}
-                  onChange={e => setTransferTitle(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1">Notes (Optional)</label>
-                <input
-                  type="text"
-                  maxLength={500}
-                  placeholder="Reference or transfer details..."
-                  value={transferNotes}
-                  onChange={e => setTransferNotes(e.target.value)}
-                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
-                />
-              </div>
-
-              {(() => {
-                const amt = Math.abs(parseFloat(transferAmount) || 0);
-                const fromAcc = budgets.find(b => b.id === transferFromId);
-                const toAcc = budgets.find(b => b.id === transferToId);
-                if (!fromAcc || !toAcc || amt <= 0) return null;
-                const toIsDebt = toAcc.accountType === 'credit_card' || toAcc.accountType === 'loan';
-                const fromIsLiquid = fromAcc.accountType === 'bank_account' || fromAcc.accountType === 'debit_account';
-                const toIsLiquid = toAcc.accountType === 'bank_account' || toAcc.accountType === 'debit_account';
-                return (
-                  <div className="bg-blue-500/10 border border-blue-500/25 rounded-xl p-3 text-[11px] space-y-1 text-blue-200">
-                    {fromIsLiquid && (
-                      <div>• {fromAcc.name}: balance decreases by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                    )}
-                    {toIsLiquid && (
-                      <div>• {toAcc.name}: balance increases by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                    )}
-                    {toIsDebt && (
-                      <div>• {toAcc.name}: debt/used balance reduced by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                    )}
-                    <div className="text-[10px] text-blue-300/80 pt-0.5">
-                      Excluded from monthly Expenses, Income, and Budget spending limits.
-                    </div>
-                  </div>
-                );
-              })()}
-
-              <div className="flex gap-2 pt-2">
-                <button type="button" onClick={() => setIsTransferOpen(false)} className="flex-1 bg-[#333] text-white py-2 rounded-lg text-xs">
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={!transferFromId || !transferToId || transferFromId === transferToId || !(parseFloat(transferAmount) > 0)}
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-medium"
-                >
-                  Save Transfer
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* STATEMENT UPLOAD MODAL */}
       <StatementUploadModal
         isOpen={isUploadStatementOpen}
         onClose={() => setIsUploadStatementOpen(false)}
@@ -3772,48 +2026,28 @@ export default function App() {
         currencyCode={currentUserProfile?.currency || 'USD'}
         currencySymbol={currencySymbol}
         onImportTransactions={handleImportStatementTransactions}
-        onOpenCreateBudget={() => {
-          resetAddBudgetForm();
-          setIsAddBudgetOpen(true);
-        }}
+        onOpenCreateBudget={() => setIsAddBudgetOpen(true)}
       />
 
-      {isAiOpen && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-2xl">
-            <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Sparkles className="w-4 h-4 text-rose-400" /> NotionFin AI Assistant
-              </h3>
-              <button onClick={() => setIsAiOpen(false)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
-            </div>
-            
-            <div className="space-y-3">
-              <textarea
-                rows={3}
-                placeholder="Ask for financial insights, budget advice, or spending analysis..."
-                value={aiPrompt}
-                onChange={e => setAiPrompt(e.target.value)}
-                className="w-full bg-[#1a1a1a] border border-[#333] rounded-xl p-3 text-xs text-white focus:outline-none focus:border-rose-400"
-              />
-              <button
-                onClick={handleAskAi}
-                disabled={aiLoading || !aiPrompt.trim()}
-                className="w-full bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white py-2.5 rounded-xl text-xs font-medium transition flex items-center justify-center gap-1.5"
-              >
-                {aiLoading ? 'Analyzing...' : 'Generate AI Insights'}
-              </button>
+      <EmailSyncModal
+        isOpen={isEmailParserOpen}
+        onClose={() => setIsEmailParserOpen(false)}
+        budgets={budgets}
+        existingTransactions={transactions}
+        currencySymbol={currencySymbol}
+        onIngestParsedTx={handleIngestParsedEmailTx}
+        onBatchIngestTxs={handleBatchIngestEmailTxs}
+      />
 
-              {aiResult && (
-                <div className="bg-[#1a1a1a] border border-[#333] rounded-xl p-4 text-xs text-zinc-200 max-h-60 overflow-y-auto whitespace-pre-wrap leading-relaxed">
-                  {aiResult}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
+      <AiAdvisorModal
+        isOpen={isAiOpen}
+        onClose={() => setIsAiOpen(false)}
+        aiPrompt={aiPrompt}
+        setAiPrompt={setAiPrompt}
+        aiResult={aiResult}
+        aiLoading={aiLoading}
+        onAskAi={handleAskAi}
+      />
     </div>
   );
 }
