@@ -1,0 +1,6 @@
+{
+  "name": "NotionFin - Private Multi-User Finance Tracker",
+  "description": "A Notion-inspired, private multi-user personal finance management platform with analytics, budgeting, investment tracking, and AI financial coaching.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,89 @@
+{
+  "entities": {
+    "User": {
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "email": { "type": "string", "maxLength": 100 },
+        "avatar": { "type": "string", "maxLength": 10 },
+        "currency": { "type": "string", "maxLength": 5 },
+        "monthlyBudget": { "type": "number" },
+        "pin": { "type": "string", "maxLength": 10 }
+      }
+    },
+    "Transaction": {
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 200 },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "maxLength": 20 },
+        "category": { "type": "string", "maxLength": 50 },
+        "date": { "type": "string", "maxLength": 20 },
+        "notes": { "type": "string", "maxLength": 500 },
+        "budgetId": { "type": "string", "maxLength": 50 },
+        "isLoanPayment": { "type": "boolean" }
+      }
+    },
+    "Budget": {
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "category": { "type": "string", "maxLength": 50 },
+        "description": { "type": "string", "maxLength": 500 },
+        "limit": { "type": "number" },
+        "color": { "type": "string", "maxLength": 20 },
+        "accountType": { "type": "string", "maxLength": 30 },
+        "apr": { "type": "number" },
+        "creditLimit": { "type": "number" },
+        "overdraftPercentage": { "type": "number" },
+        "actualUsedAmount": { "type": "number" },
+        "extraExpenses": { "type": "number" },
+        "items": { "type": "array" }
+      }
+    },
+    "Goal": {
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "title": { "type": "string", "maxLength": 100 },
+        "target": { "type": "number" },
+        "current": { "type": "number" },
+        "deadline": { "type": "string", "maxLength": 20 },
+        "color": { "type": "string", "maxLength": 20 }
+      }
+    },
+    "Investment": {
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string", "maxLength": 100 },
+        "symbol": { "type": "string", "maxLength": 20 },
+        "shares": { "type": "number" },
+        "purchasePrice": { "type": "number" },
+        "currentPrice": { "type": "number" },
+        "type": { "type": "string", "maxLength": 30 }
+      }
+    }
+  },
+  "firestore": {
+    "paths": {
+      "users/{userId}": {
+        "entity": "User"
+      },
+      "transactions/{txId}": {
+        "entity": "Transaction"
+      },
+      "budgets/{budgetId}": {
+        "entity": "Budget"
+      },
+      "goals/{goalId}": {
+        "entity": "Goal"
+      },
+      "investments/{invId}": {
+        "entity": "Investment"
+      }
+    }
+  }
+}
