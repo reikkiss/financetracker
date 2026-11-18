@@ -12,6 +12,7 @@ import {
   CreditCard
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
+import { parsePdfStatementLocally } from '../utils/pdfStatementParser';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -275,7 +276,9 @@ export default function StatementUploadModal({
         payload.mimeType = mime === 'image/jpg' ? 'image/jpeg' : mime;
       }
 
+      const isPdf = payload.mimeType === 'application/pdf' || lowerName.endsWith('.pdf');
       let data: any = null;
+
       try {
         const response = await fetch('/api/ai/parse-statement', {
           method: 'POST',
@@ -295,13 +298,15 @@ export default function StatementUploadModal({
             statementPeriod: '',
             transactions: localRows
           };
+        } else if (isPdf) {
+          data = await parsePdfStatementLocally(file, availableCategories, currencyCode);
         } else {
           throw new Error(
-            'PDF/Image statement parsing requires the server backend. Please upload a CSV statement when running on GitHub Pages.'
+            'Image OCR statement parsing requires the backend server. Please upload a PDF or CSV statement when running on GitHub Pages.'
           );
         }
       } catch (networkErr: any) {
-        if (isTextBased && payload.textContent && !data) {
+        if (!data && isTextBased && payload.textContent) {
           const localRows = parseCsvTransactionsLocally(payload.textContent, availableCategories);
           if (localRows.length > 0) {
             data = {
@@ -311,6 +316,15 @@ export default function StatementUploadModal({
             };
           } else {
             throw networkErr;
+          }
+        } else if (!data && isPdf) {
+          const pdfParsed = await parsePdfStatementLocally(file, availableCategories, currencyCode);
+          if (pdfParsed.transactions.length > 0) {
+            data = pdfParsed;
+          } else {
+            throw new Error(
+              'Could not extract text transactions from this PDF (it may be a scanned image). Please upload a text-based PDF or CSV statement.'
+            );
           }
         } else {
           throw networkErr;
