@@ -6,6 +6,8 @@ import {
   CreditCard,
   Landmark,
   Wallet,
+  Building2,
+  ArrowRightLeft,
   CheckSquare,
   Square,
   Calendar,
@@ -37,11 +39,12 @@ export interface Budget {
   description?: string;
   limit: number;
   color: string;
-  accountType?: 'standard' | 'credit_card' | 'loan';
+  accountType?: 'standard' | 'credit_card' | 'loan' | 'bank_account' | 'debit_account';
   apr?: number;
   creditLimit?: number;
   overdraftPercentage?: number;
   actualUsedAmount?: number;
+  accountBalance?: number;
   extraExpenses?: number;
   items?: BudgetItem[];
   loanTermMonths?: number;
@@ -59,6 +62,7 @@ interface BudgetsPageProps {
   onDeleteBudget: (id: string) => void;
   onToggleItemPaid: (budgetId: string, itemId: string) => void;
   onOpenRecordPayment?: (budget: Budget) => void;
+  onOpenTransfer?: (fromBudget?: Budget) => void;
   onToggleLoanQuotaPaid?: (budgetId: string, quotaId: string) => void;
   onAddLoanQuota?: (
     budgetId: string,
@@ -77,6 +81,7 @@ export default function BudgetsPage({
   onDeleteBudget,
   onToggleItemPaid,
   onOpenRecordPayment,
+  onOpenTransfer,
   onToggleLoanQuotaPaid,
   onAddLoanQuota,
   onDeleteLoanQuota,
@@ -99,6 +104,14 @@ export default function BudgetsPage({
     }
     return s + (b.creditLimit || b.limit || 0);
   }, 0);
+
+  // Aggregate liquid (bank & debit) account metrics
+  const bankAccounts = budgets.filter(b => b.accountType === 'bank_account');
+  const debitAccounts = budgets.filter(b => b.accountType === 'debit_account');
+  const liquidAccounts = [...bankAccounts, ...debitAccounts];
+  const totalBankBalance = bankAccounts.reduce((s, b) => s + (Number(b.accountBalance) || 0), 0);
+  const totalDebitBalance = debitAccounts.reduce((s, b) => s + (Number(b.accountBalance) || 0), 0);
+  const totalLiquidBalance = totalBankBalance + totalDebitBalance;
 
   const openInlineAddQuota = (b: Budget) => {
     const existing = b.loanQuotas || [];
@@ -148,18 +161,55 @@ export default function BudgetsPage({
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold text-white tracking-tight">Category Budgets & Debt Accounts</h2>
+          <h2 className="text-xl font-bold text-white tracking-tight">Budgets, Bank & Debt Accounts</h2>
           <p className="text-xs text-[#9b9b9b] mt-0.5">
-            Manage standard budgets with checklists, credit cards with overdraft limits, and loan accounts with monthly quotas.
+            Manage bank & debit accounts, standard budgets, credit cards with overdraft limits, loans, and transfers.
           </p>
         </div>
-        <button
-          onClick={onOpenAddBudget}
-          className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-sm shrink-0"
-        >
-          <Plus className="w-4 h-4" /> Set New Budget / Account
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {onOpenTransfer && budgets.length >= 2 && (
+            <button
+              onClick={() => onOpenTransfer()}
+              className="bg-blue-600/15 hover:bg-blue-600/25 text-blue-300 border border-blue-500/30 px-3.5 py-2 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
+            >
+              <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer
+            </button>
+          )}
+          <button
+            onClick={onOpenAddBudget}
+            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shadow-sm"
+          >
+            <Plus className="w-4 h-4" /> Set New Budget / Account
+          </button>
+        </div>
       </div>
+
+      {/* Liquid Accounts Overview Cards */}
+      {liquidAccounts.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
+            <span className="text-[11px] text-[#888] font-medium block">Total Bank & Debit Balance</span>
+            <span className={`text-lg font-bold block mt-1 ${totalLiquidBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+              {currencySymbol}{totalLiquidBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[10px] text-[#666]">Across {liquidAccounts.length} cash & checking accounts</span>
+          </div>
+          <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
+            <span className="text-[11px] text-[#888] font-medium block">Bank Accounts ({bankAccounts.length})</span>
+            <span className="text-lg font-bold text-sky-400 block mt-1">
+              {currencySymbol}{totalBankBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[10px] text-[#666]">Checking & savings balances</span>
+          </div>
+          <div className="bg-[#202020] border border-[#282828] p-4 rounded-xl shadow-sm">
+            <span className="text-[11px] text-[#888] font-medium block">Debit Accounts ({debitAccounts.length})</span>
+            <span className="text-lg font-bold text-teal-400 block mt-1">
+              {currencySymbol}{totalDebitBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </span>
+            <span className="text-[10px] text-[#666]">Debit cards & everyday cash</span>
+          </div>
+        </div>
+      )}
 
       {/* Debt & Credit Overview Cards */}
       {debtAccounts.length > 0 && (
@@ -193,9 +243,9 @@ export default function BudgetsPage({
       {/* Empty State */}
       {budgets.length === 0 ? (
         <div className="bg-[#202020] border border-[#282828] rounded-2xl p-12 text-center text-xs text-[#777] space-y-3">
-          <p>No budgets or debt accounts configured in database yet.</p>
+          <p>No budgets, bank accounts, or debt accounts configured in database yet.</p>
           <button onClick={onOpenAddBudget} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-xl font-medium">
-            Create First Budget
+            Create First Budget / Account
           </button>
         </div>
       ) : (
@@ -204,22 +254,27 @@ export default function BudgetsPage({
             const budgetCatName = (b.name || b.category || '').trim();
             const isCreditCard = b.accountType === 'credit_card';
             const isLoan = b.accountType === 'loan';
+            const isBankAccount = b.accountType === 'bank_account';
+            const isDebitAccount = b.accountType === 'debit_account';
             const isCreditOrLoan = isCreditCard || isLoan;
+            const isLiquidAccount = isBankAccount || isDebitAccount;
+            const isStandard = !isCreditOrLoan && !isLiquidAccount;
 
             const spent = transactions
               .filter(
                 t =>
                   t.type === 'expense' &&
                   !t.isLoanPayment &&
+                  !t.isTransfer &&
                   (t.budgetId === b.id || (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())
               )
               .reduce((sum, t) => sum + t.amount, 0);
 
             // Standard budget checklist items ONLY
-            const items = isCreditOrLoan ? [] : (b.items || []);
+            const items = isStandard ? (b.items || []) : [];
             const paidItemsCount = items.filter(i => i.isPaid).length;
             const itemsSum = items.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-            const extraExpenses = isCreditOrLoan ? 0 : (Number(b.extraExpenses) || 0);
+            const extraExpenses = isStandard ? (Number(b.extraExpenses) || 0) : 0;
 
             // Credit Card calculations (Credit Limit + Overdraft % = Monthly Limit)
             const baseCreditLimit = Number(b.creditLimit || b.limit) || 0;
@@ -238,6 +293,23 @@ export default function BudgetsPage({
             const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
             const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
 
+            // Liquid Account (Bank / Debit) metrics
+            const currentCashBalance = Number(b.accountBalance) || 0;
+            const directInflows = transactions
+              .filter(t => !t.isTransfer && t.type === 'income' && t.budgetId === b.id)
+              .reduce((s, t) => s + t.amount, 0);
+            const transfersIn = transactions
+              .filter(t => t.isTransfer && t.transferToBudgetId === b.id)
+              .reduce((s, t) => s + t.amount, 0);
+            const directOutflows = transactions
+              .filter(t => !t.isTransfer && t.type === 'expense' && t.budgetId === b.id)
+              .reduce((s, t) => s + t.amount, 0);
+            const transfersOut = transactions
+              .filter(t => t.isTransfer && t.budgetId === b.id)
+              .reduce((s, t) => s + t.amount, 0);
+            const totalInflows = directInflows + transfersIn;
+            const totalOutflows = directOutflows + transfersOut;
+
             // Loan calculations & Quotas
             const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
             const loanQuotas = isLoan ? (b.loanQuotas || []) : [];
@@ -251,9 +323,11 @@ export default function BudgetsPage({
             const loanPaidOffPct = loanPrincipal > 0 ? Math.min(100, Math.round((paidOffPrincipal / loanPrincipal) * 100)) : 0;
             const isScheduleExpanded = Boolean(expandedLoans[b.id]);
 
-            // Related payments
+            // Related payments (including transfers targeting this credit card or loan)
             const relatedPayments = transactions.filter(
-              t => (t.budgetId === b.id || (t.category || '').toLowerCase() === budgetCatName.toLowerCase()) && t.isLoanPayment
+              t =>
+                ((t.budgetId === b.id || (t.category || '').toLowerCase() === budgetCatName.toLowerCase()) && t.isLoanPayment && !t.isTransfer) ||
+                (t.isTransfer && t.transferToBudgetId === b.id)
             );
             const totalPaymentsMade = relatedPayments.reduce((s, t) => s + t.amount, 0);
 
@@ -270,6 +344,10 @@ export default function BudgetsPage({
                         <CreditCard className="w-4 h-4 text-amber-400" />
                       ) : isLoan ? (
                         <Landmark className="w-4 h-4 text-purple-400" />
+                      ) : isBankAccount ? (
+                        <Building2 className="w-4 h-4 text-sky-400" />
+                      ) : isDebitAccount ? (
+                        <Wallet className="w-4 h-4 text-teal-400" />
                       ) : (
                         <Wallet className="w-4 h-4 text-emerald-400" />
                       )}
@@ -282,9 +360,21 @@ export default function BudgetsPage({
                             ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                             : isLoan
                             ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                            : isBankAccount
+                            ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                            : isDebitAccount
+                            ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
                             : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                         }`}>
-                          {isCreditCard ? 'Credit Card' : isLoan ? 'Loan Account' : 'Standard'}
+                          {isCreditCard
+                            ? 'Credit Card'
+                            : isLoan
+                            ? 'Loan Account'
+                            : isBankAccount
+                            ? 'Bank Account'
+                            : isDebitAccount
+                            ? 'Debit Account'
+                            : 'Standard'}
                         </span>
                       </div>
                       <span className="text-[11px] text-[#777] block mt-0.5">Category: {b.category || budgetCatName}</span>
@@ -292,6 +382,16 @@ export default function BudgetsPage({
                   </div>
 
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {onOpenTransfer && (isLiquidAccount || isCreditOrLoan) && budgets.length >= 2 && (
+                      <button
+                        onClick={() => onOpenTransfer(b)}
+                        className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-medium transition flex items-center gap-1"
+                        title="Transfer funds between accounts"
+                      >
+                        <ArrowRightLeft className="w-3 h-3" />
+                        <span>Transfer</span>
+                      </button>
+                    )}
                     {isCreditOrLoan && onOpenRecordPayment && (
                       <button
                         onClick={() => onOpenRecordPayment(b)}
@@ -324,6 +424,38 @@ export default function BudgetsPage({
                   <p className="text-xs text-zinc-300 bg-[#191919] p-2.5 rounded-lg border border-[#2a2a2a] leading-relaxed">
                     {b.description}
                   </p>
+                )}
+
+                {/* BANK / DEBIT ACCOUNT VIEW */}
+                {isLiquidAccount && (
+                  <div className="space-y-2.5 bg-[#171717] p-3 rounded-xl border border-[#262626]">
+                    <div className={`grid grid-cols-3 ${isBankAccount && (b.apr || 0) > 0 ? 'sm:grid-cols-4' : ''} gap-2`}>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Current Balance</span>
+                        <span className={`text-xs font-bold block mt-0.5 ${currentCashBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                          {currencySymbol}{currentCashBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Inflows</span>
+                        <span className="text-xs font-bold text-sky-400 block mt-0.5">
+                          +{currencySymbol}{totalInflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                        <span className="text-[10px] text-[#888] block">Outflows</span>
+                        <span className="text-xs font-bold text-rose-400 block mt-0.5">
+                          -{currencySymbol}{totalOutflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                      {isBankAccount && (b.apr || 0) > 0 && (
+                        <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
+                          <span className="text-[10px] text-[#888] block">APY</span>
+                          <span className="text-xs font-bold text-amber-400 block mt-0.5">{b.apr}%</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 )}
 
                 {/* CREDIT CARD VIEW */}
@@ -624,30 +756,32 @@ export default function BudgetsPage({
                 )}
 
                 {/* Monthly Spending / Quota Progress */}
-                <div className="space-y-1.5">
-                  <div className="flex justify-between text-xs text-[#9b9b9b]">
-                    <span>Current Month Spent: {currencySymbol}{spent.toFixed(2)}</span>
-                    <span className={isOver ? 'text-rose-400 font-bold' : 'text-white'}>
-                      {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{effectiveLimit.toLocaleString()}
-                    </span>
+                {(!isLiquidAccount || effectiveLimit > 0) && (
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-xs text-[#9b9b9b]">
+                      <span>Current Month Spent: {currencySymbol}{spent.toFixed(2)}</span>
+                      <span className={isOver ? 'text-rose-400 font-bold' : 'text-white'}>
+                        {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{effectiveLimit.toLocaleString()}
+                      </span>
+                    </div>
+                    <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
+                      <div
+                        className="h-full rounded-full transition-all duration-500"
+                        style={{
+                          width: `${percent}%`,
+                          backgroundColor: isOver ? '#f43f5e' : (b.color || '#10b981')
+                        }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[11px] text-[#777]">
+                      <span>{percent}% of {isLoan ? 'monthly quota' : 'monthly limit'} used</span>
+                      {isOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
+                    </div>
                   </div>
-                  <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{
-                        width: `${percent}%`,
-                        backgroundColor: isOver ? '#f43f5e' : (b.color || '#10b981')
-                      }}
-                    />
-                  </div>
-                  <div className="flex justify-between text-[11px] text-[#777]">
-                    <span>{percent}% of {isLoan ? 'monthly quota' : 'monthly limit'} used</span>
-                    {isOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
-                  </div>
-                </div>
+                )}
 
                 {/* Items Belonging to This Budget (Standard budgets ONLY) */}
-                {!isCreditOrLoan && items.length > 0 && (
+                {isStandard && items.length > 0 && (
                   <div className="space-y-2 bg-[#171717] p-3 rounded-xl border border-[#262626]">
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-semibold text-white">

@@ -32,6 +32,16 @@ export interface ImportedTransactionDraft {
   notes?: string;
   budgetId?: string;
   isLoanPayment?: boolean;
+  isTransfer?: boolean;
+  transferToBudgetId?: string;
+}
+
+function getAccountTypeLabel(accountType?: Budget['accountType']): string {
+  if (accountType === 'credit_card') return '(Credit Card)';
+  if (accountType === 'loan') return '(Loan)';
+  if (accountType === 'bank_account') return '(Bank Account)';
+  if (accountType === 'debit_account') return '(Debit Account)';
+  return '(Budget)';
 }
 
 function makeTxDedupKey(title: string, amount: number, date: string): string {
@@ -359,7 +369,9 @@ export default function StatementUploadModal({
           date,
           notes: t.notes || '',
           budgetId: activeBudgetId || '',
-          isLoanPayment: Boolean(t.isLoanPayment)
+          isLoanPayment: Boolean(t.isLoanPayment),
+          isTransfer: false,
+          transferToBudgetId: ''
         };
       });
 
@@ -504,17 +516,17 @@ export default function StatementUploadModal({
                     defaultBudgetId ? 'border-emerald-500/50 focus:border-emerald-400' : 'border-amber-500/60 focus:border-amber-400'
                   }`}
                 >
-                  <option value="">-- Select Credit Card / Budget --</option>
+                  <option value="">-- Select Account / Budget --</option>
                   {budgets.map(b => (
                     <option key={b.id} value={b.id}>
-                      {b.name || b.category} {b.accountType === 'credit_card' ? '(Credit Card)' : b.accountType === 'loan' ? '(Loan)' : '(Budget)'}
+                      {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                     </option>
                   ))}
                 </select>
                 <p className="text-[10px] text-[#888]">
                   {selectedBudgetObj
                     ? `All imported transactions will be added to ${selectedBudgetObj.name || selectedBudgetObj.category}.`
-                    : 'Choose the Credit Card or Budget account to receive all extracted transactions.'}
+                    : 'Choose the Bank, Debit, Credit Card, Loan, or Budget account to receive all extracted transactions.'}
                 </p>
               </>
             )}
@@ -643,6 +655,7 @@ export default function StatementUploadModal({
           const missingCats = Array.from(
             new Set(
               selectedDrafts
+                .filter(d => !d.isTransfer)
                 .map(d => (d.category || '').trim())
                 .filter(c => c && !existingSet.has(c.toLowerCase()))
             )
@@ -686,7 +699,8 @@ export default function StatementUploadModal({
                   <th className="p-2.5 font-medium w-32">Date</th>
                   <th className="p-2.5 font-medium">Title / Description</th>
                   <th className="p-2.5 font-medium w-36">Category</th>
-                  <th className="p-2.5 font-medium w-36">Budget / Card</th>
+                  <th className="p-2.5 font-medium w-36">Account / Card</th>
+                  <th className="p-2.5 font-medium w-36">Transfer To</th>
                   <th className="p-2.5 font-medium w-28">Type</th>
                   <th className="p-2.5 font-medium w-28 text-right">Amount ({currencySymbol})</th>
                   <th className="p-2.5 font-medium w-20 text-center">Payment</th>
@@ -743,13 +757,58 @@ export default function StatementUploadModal({
                     <td className="p-2">
                       <select
                         value={row.budgetId || defaultBudgetId}
-                        onChange={e => updateDraft(row.tempId, { budgetId: e.target.value })}
+                        onChange={e => {
+                          const nextSourceId = e.target.value;
+                          const clearTransfer = row.transferToBudgetId === nextSourceId;
+                          updateDraft(row.tempId, {
+                            budgetId: nextSourceId,
+                            ...(clearTransfer ? { isTransfer: false, transferToBudgetId: '' } : {})
+                          });
+                        }}
                         className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-emerald-500"
                       >
                         {!defaultBudgetId && <option value="">Select account...</option>}
                         {budgets.map(b => (
-                          <option key={b.id} value={b.id}>{b.name || b.category}</option>
+                          <option key={b.id} value={b.id}>
+                            {b.name || b.category} {getAccountTypeLabel(b.accountType)}
+                          </option>
                         ))}
+                      </select>
+                    </td>
+                    <td className="p-2">
+                      <select
+                        value={row.transferToBudgetId || ''}
+                        onChange={e => {
+                          const nextToId = e.target.value;
+                          if (!nextToId) {
+                            updateDraft(row.tempId, {
+                              isTransfer: false,
+                              transferToBudgetId: ''
+                            });
+                            return;
+                          }
+                          const dest = budgets.find(b => b.id === nextToId);
+                          const isDebtDest = dest?.accountType === 'credit_card' || dest?.accountType === 'loan';
+                          updateDraft(row.tempId, {
+                            isTransfer: true,
+                            transferToBudgetId: nextToId,
+                            isLoanPayment: isDebtDest
+                          });
+                        }}
+                        className={`w-full bg-[#121212] border rounded px-2 py-1 text-[11px] focus:outline-none ${
+                          row.isTransfer && row.transferToBudgetId
+                            ? 'border-blue-500/60 text-blue-300'
+                            : 'border-[#303030] text-zinc-400'
+                        }`}
+                      >
+                        <option value="">-- None --</option>
+                        {budgets
+                          .filter(b => b.id !== (row.budgetId || defaultBudgetId))
+                          .map(b => (
+                            <option key={b.id} value={b.id}>
+                              {b.name || b.category} {getAccountTypeLabel(b.accountType)}
+                            </option>
+                          ))}
                       </select>
                     </td>
                     <td className="p-2">

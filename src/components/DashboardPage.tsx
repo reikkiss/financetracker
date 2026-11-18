@@ -25,6 +25,7 @@ interface Transaction {
   category: string;
   date: string;
   notes?: string;
+  isTransfer?: boolean;
 }
 
 interface DashboardPageProps {
@@ -233,7 +234,7 @@ export default function DashboardPage({
 
   // Grouped and filtered Expenses
   const groupedExpenses = useMemo(() => {
-    const list = transactions.filter(t => t.type === 'expense');
+    const list = transactions.filter(t => t.type === 'expense' && !t.isTransfer);
     const filtered = list.filter(t => {
       if (!t.date) return true;
       const [y, m] = t.date.split('-');
@@ -265,7 +266,7 @@ export default function DashboardPage({
 
   // Grouped and filtered Incomes
   const groupedIncomes = useMemo(() => {
-    const list = transactions.filter(t => t.type === 'income');
+    const list = transactions.filter(t => t.type === 'income' && !t.isTransfer);
     const filtered = list.filter(t => {
       if (!t.date) return true;
       const [y, m] = t.date.split('-');
@@ -305,6 +306,7 @@ export default function DashboardPage({
   // Transactions filtered by Type, Year, Month for the Category Breakdown
   const periodTransactions = useMemo(() => {
     return transactions.filter(t => {
+      if (t.isTransfer) return false;
       if (t.type !== breakdownType) return false;
       if (!t.date) return true;
       const [y, m] = t.date.split('-');
@@ -342,7 +344,7 @@ export default function DashboardPage({
   const availableBreakdownCategories = useMemo(() => {
     const set = new Set<string>();
     transactions
-      .filter(t => t.type === breakdownType)
+      .filter(t => t.type === breakdownType && !t.isTransfer)
       .forEach(t => {
         if (t.category && t.category.trim()) set.add(t.category.trim());
       });

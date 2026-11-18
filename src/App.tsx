@@ -18,7 +18,9 @@ import {
   Square,
   PlusCircle,
   Percent,
-  Upload
+  Upload,
+  Building2,
+  ArrowRightLeft
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -133,6 +135,16 @@ export interface Transaction {
   notes?: string;
   budgetId?: string;
   isLoanPayment?: boolean;
+  isTransfer?: boolean;
+  transferToBudgetId?: string;
+}
+
+function getAccountTypeLabel(accountType?: Budget['accountType']): string {
+  if (accountType === 'credit_card') return '(Credit Card)';
+  if (accountType === 'loan') return '(Loan)';
+  if (accountType === 'bank_account') return '(Bank Account)';
+  if (accountType === 'debit_account') return '(Debit Account)';
+  return '(Budget)';
 }
 
 const CATEGORIES = [
@@ -190,14 +202,26 @@ export default function App() {
   const [editTxNotes, setEditTxNotes] = useState('');
   const [editTxBudgetId, setEditTxBudgetId] = useState('');
   const [editTxIsLoanPayment, setEditTxIsLoanPayment] = useState(false);
+  const [editTxIsTransfer, setEditTxIsTransfer] = useState(false);
+  const [editTxTransferToBudgetId, setEditTxTransferToBudgetId] = useState('');
+
+  // Transfer Between Accounts Modal
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
+  const [transferFromId, setTransferFromId] = useState('');
+  const [transferToId, setTransferToId] = useState('');
+  const [transferAmount, setTransferAmount] = useState('');
+  const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
+  const [transferTitle, setTransferTitle] = useState('');
+  const [transferNotes, setTransferNotes] = useState('');
 
   // Add Budget Modal
   const [isAddBudgetOpen, setIsAddBudgetOpen] = useState(false);
   const [newBudgetCategory, setNewBudgetCategory] = useState('Groceries');
   const [newBudgetDescription, setNewBudgetDescription] = useState('');
-  const [newBudgetAccountType, setNewBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan'>('standard');
+  const [newBudgetAccountType, setNewBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan' | 'bank_account' | 'debit_account'>('standard');
   const [newBudgetLimit, setNewBudgetLimit] = useState('');
   const [newBudgetCreditLimit, setNewBudgetCreditLimit] = useState('');
+  const [newBudgetAccountBalance, setNewBudgetAccountBalance] = useState('');
   const [newBudgetApr, setNewBudgetApr] = useState('');
   const [newBudgetOverdraftPercentage, setNewBudgetOverdraftPercentage] = useState('');
   const [newBudgetLoanTermMonths, setNewBudgetLoanTermMonths] = useState('12');
@@ -214,9 +238,10 @@ export default function App() {
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
   const [editBudgetCategory, setEditBudgetCategory] = useState('Groceries');
   const [editBudgetDescription, setEditBudgetDescription] = useState('');
-  const [editBudgetAccountType, setEditBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan'>('standard');
+  const [editBudgetAccountType, setEditBudgetAccountType] = useState<'standard' | 'credit_card' | 'loan' | 'bank_account' | 'debit_account'>('standard');
   const [editBudgetLimit, setEditBudgetLimit] = useState('');
   const [editBudgetCreditLimit, setEditBudgetCreditLimit] = useState('');
+  const [editBudgetAccountBalance, setEditBudgetAccountBalance] = useState('');
   const [editBudgetApr, setEditBudgetApr] = useState('');
   const [editBudgetOverdraftPercentage, setEditBudgetOverdraftPercentage] = useState('');
   const [editBudgetLoanTermMonths, setEditBudgetLoanTermMonths] = useState('12');
@@ -323,8 +348,14 @@ export default function App() {
 
   const currencySymbol = currentUserProfile ? (CURRENCIES[currentUserProfile.currency] || '$') : '$';
 
-  const totalIncome = useMemo(() => transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0), [transactions]);
-  const totalExpense = useMemo(() => transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0), [transactions]);
+  const totalIncome = useMemo(
+    () => transactions.filter(t => t.type === 'income' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    [transactions]
+  );
+  const totalExpense = useMemo(
+    () => transactions.filter(t => t.type === 'expense' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    [transactions]
+  );
   const cashflow = totalIncome - totalExpense;
 
   const availableCategories = useMemo(() => {
@@ -342,7 +373,7 @@ export default function App() {
   const breakdownData = useMemo(() => {
     const map: Record<string, number> = {};
     transactions
-      .filter(t => t.type === breakdownMode.toLowerCase())
+      .filter(t => !t.isTransfer && t.type === breakdownMode.toLowerCase())
       .forEach(t => {
         map[t.category] = (map[t.category] || 0) + t.amount;
       });
@@ -359,6 +390,7 @@ export default function App() {
     }
     const map: Record<string, number> = {};
     transactions.forEach(t => {
+      if (t.isTransfer) return;
       const monthKey = t.date ? t.date.slice(0, 7) : '2026-11';
       let val = t.amount;
       if (chartMode === 'Expense' && t.type !== 'expense') return;
@@ -386,7 +418,7 @@ export default function App() {
   }, []);
 
   const currentMonthStats = useMemo(() => {
-    const mTransactions = transactions.filter(t => t.date && t.date.startsWith(currentMonthKey));
+    const mTransactions = transactions.filter(t => !t.isTransfer && t.date && t.date.startsWith(currentMonthKey));
     const income = mTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const expense = mTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     return { income, expense, cashflow: income - expense };
@@ -414,7 +446,7 @@ export default function App() {
 
   const filteredMonthsStats = useMemo(() => {
     const listWithStats = allMonthsList.map(m => {
-      const monthTxs = transactions.filter(t => t.date && t.date.startsWith(m.key));
+      const monthTxs = transactions.filter(t => !t.isTransfer && t.date && t.date.startsWith(m.key));
       const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
       const expense = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
       const cashflowVal = income - expense;
@@ -426,15 +458,54 @@ export default function App() {
     return listWithStats.filter(m => m.q === statsQuarterFilter);
   }, [transactions, allMonthsList, statsQuarterFilter]);
 
-  const getTxBalanceImpact = (tx: { amount: number; type: 'income' | 'expense'; budgetId?: string; isLoanPayment?: boolean }, budgetList: Budget[]) => {
-    if (!tx.budgetId) return 0;
-    const b = budgetList.find(item => item.id === tx.budgetId);
-    if (!b || (b.accountType !== 'credit_card' && b.accountType !== 'loan')) return 0;
-    // Payment / Abono reduces debt balance; Expense increases debt balance; Income/Refund reduces debt balance
-    if (tx.isLoanPayment || tx.type === 'income') {
-      return -Math.abs(tx.amount);
+  const getTxAccountImpacts = (
+    tx: {
+      amount: number;
+      type: 'income' | 'expense';
+      budgetId?: string;
+      isLoanPayment?: boolean;
+      isTransfer?: boolean;
+      transferToBudgetId?: string;
+    },
+    budgetList: Budget[]
+  ): Record<string, number> => {
+    const impacts: Record<string, number> = {};
+    const amt = Math.abs(Number(tx.amount) || 0);
+    if (amt <= 0) return impacts;
+
+    const isDebt = (b?: Budget) => b?.accountType === 'credit_card' || b?.accountType === 'loan';
+    const isLiquid = (b?: Budget) => b?.accountType === 'bank_account' || b?.accountType === 'debit_account';
+
+    if (tx.isTransfer && tx.budgetId && tx.transferToBudgetId && tx.budgetId !== tx.transferToBudgetId) {
+      const src = budgetList.find(b => b.id === tx.budgetId);
+      const dst = budgetList.find(b => b.id === tx.transferToBudgetId);
+      if (src) {
+        if (isLiquid(src)) {
+          impacts[src.id] = (impacts[src.id] || 0) - amt;
+        } else if (isDebt(src)) {
+          impacts[src.id] = (impacts[src.id] || 0) + amt;
+        }
+      }
+      if (dst) {
+        if (isLiquid(dst)) {
+          impacts[dst.id] = (impacts[dst.id] || 0) + amt;
+        } else if (isDebt(dst)) {
+          impacts[dst.id] = (impacts[dst.id] || 0) - amt;
+        }
+      }
+      return impacts;
     }
-    return Math.abs(tx.amount);
+
+    if (!tx.budgetId) return impacts;
+    const b = budgetList.find(item => item.id === tx.budgetId);
+    if (!b) return impacts;
+
+    if (isLiquid(b)) {
+      impacts[b.id] = tx.type === 'income' ? amt : -amt;
+    } else if (isDebt(b)) {
+      impacts[b.id] = tx.isLoanPayment || tx.type === 'income' ? -amt : amt;
+    }
+    return impacts;
   };
 
   const applyBudgetDeltas = async (deltas: Record<string, number>, currentBudgets: Budget[]) => {
@@ -444,9 +515,18 @@ export default function App() {
     const updatedMap: Record<string, Budget> = {};
     for (const [budgetId, delta] of entries) {
       const target = currentBudgets.find(b => b.id === budgetId);
-      if (!target || (target.accountType !== 'credit_card' && target.accountType !== 'loan')) continue;
-      const nextUsed = Math.max(0, Number(((target.actualUsedAmount || 0) + delta).toFixed(2)));
-      const updatedBudget: Budget = { ...target, actualUsedAmount: nextUsed };
+      if (!target) continue;
+
+      let updatedBudget: Budget | null = null;
+      if (target.accountType === 'bank_account' || target.accountType === 'debit_account') {
+        const nextBalance = Number(((target.accountBalance || 0) + delta).toFixed(2));
+        updatedBudget = { ...target, accountBalance: nextBalance };
+      } else if (target.accountType === 'credit_card' || target.accountType === 'loan') {
+        const nextUsed = Math.max(0, Number(((target.actualUsedAmount || 0) + delta).toFixed(2)));
+        updatedBudget = { ...target, actualUsedAmount: nextUsed };
+      }
+
+      if (!updatedBudget) continue;
       try {
         await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
         updatedMap[budgetId] = updatedBudget;
@@ -542,9 +622,9 @@ export default function App() {
       budgets
     );
 
-    const impact = getTxBalanceImpact(newTx, latestBudgets);
-    if (impact !== 0 && newTx.budgetId) {
-      await applyBudgetDeltas({ [newTx.budgetId]: impact }, latestBudgets);
+    const impacts = getTxAccountImpacts(newTx, latestBudgets);
+    if (Object.keys(impacts).length > 0) {
+      await applyBudgetDeltas(impacts, latestBudgets);
     }
 
     setTransactions(prev => [newTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
@@ -565,10 +645,14 @@ export default function App() {
       return;
     }
 
-    if (targetTx && targetTx.budgetId) {
-      const reverseImpact = -getTxBalanceImpact(targetTx, budgets);
-      if (reverseImpact !== 0) {
-        await applyBudgetDeltas({ [targetTx.budgetId]: reverseImpact }, budgets);
+    if (targetTx) {
+      const forwardImpacts = getTxAccountImpacts(targetTx, budgets);
+      const reverseDeltas: Record<string, number> = {};
+      for (const [bId, val] of Object.entries(forwardImpacts)) {
+        reverseDeltas[bId] = -val;
+      }
+      if (Object.keys(reverseDeltas).length > 0) {
+        await applyBudgetDeltas(reverseDeltas, budgets);
       }
     }
     setTransactions(prev => prev.filter(t => t.id !== id));
@@ -584,6 +668,8 @@ export default function App() {
     setEditTxNotes(t.notes || '');
     setEditTxBudgetId(t.budgetId || '');
     setEditTxIsLoanPayment(Boolean(t.isLoanPayment));
+    setEditTxIsTransfer(Boolean(t.isTransfer));
+    setEditTxTransferToBudgetId(t.transferToBudgetId || '');
   };
 
   const handleSaveEditTransaction = async (e: React.FormEvent) => {
@@ -592,17 +678,20 @@ export default function App() {
     const parsedAmount = Math.abs(parseFloat(editTxAmount) || 0);
     if (parsedAmount <= 0) return;
 
+    const isTransferTx = Boolean(editTxIsTransfer && editTxBudgetId && editTxTransferToBudgetId && editTxBudgetId !== editTxTransferToBudgetId);
     const updatedTx: Transaction = {
       id: editingTx.id,
       userId: editingTx.userId,
       title: editTxTitle.trim().slice(0, 200),
       amount: parsedAmount,
-      type: editTxType,
-      category: (editTxCategory || 'Other').trim().slice(0, 50),
+      type: isTransferTx ? 'expense' : editTxType,
+      category: (editTxCategory || (isTransferTx ? 'Transfer' : 'Other')).trim().slice(0, 50),
       date: (editTxDate || new Date().toISOString().split('T')[0]).slice(0, 20),
       notes: (editTxNotes || '').trim().slice(0, 500),
       ...(editTxBudgetId ? { budgetId: editTxBudgetId.slice(0, 50) } : {}),
-      isLoanPayment: Boolean(editTxIsLoanPayment)
+      isLoanPayment: Boolean(editTxIsLoanPayment),
+      isTransfer: isTransferTx,
+      ...(isTransferTx ? { transferToBudgetId: editTxTransferToBudgetId.slice(0, 50) } : {})
     };
 
     try {
@@ -612,17 +701,21 @@ export default function App() {
       return;
     }
 
-    const latestBudgets = await ensureBudgetsForCategories(
-      { [updatedTx.category]: updatedTx.type === 'expense' ? updatedTx.amount : 0 },
-      budgets
-    );
+    const latestBudgets = isTransferTx
+      ? budgets
+      : await ensureBudgetsForCategories(
+          { [updatedTx.category]: updatedTx.type === 'expense' ? updatedTx.amount : 0 },
+          budgets
+        );
 
     const deltas: Record<string, number> = {};
-    if (editingTx.budgetId) {
-      deltas[editingTx.budgetId] = (deltas[editingTx.budgetId] || 0) - getTxBalanceImpact(editingTx, latestBudgets);
+    const oldImpacts = getTxAccountImpacts(editingTx, latestBudgets);
+    for (const [bId, val] of Object.entries(oldImpacts)) {
+      deltas[bId] = (deltas[bId] || 0) - val;
     }
-    if (updatedTx.budgetId) {
-      deltas[updatedTx.budgetId] = (deltas[updatedTx.budgetId] || 0) + getTxBalanceImpact(updatedTx, latestBudgets);
+    const newImpacts = getTxAccountImpacts(updatedTx, latestBudgets);
+    for (const [bId, val] of Object.entries(newImpacts)) {
+      deltas[bId] = (deltas[bId] || 0) + val;
     }
     await applyBudgetDeltas(deltas, latestBudgets);
 
@@ -630,6 +723,66 @@ export default function App() {
       prev.map(t => (t.id === editingTx.id ? updatedTx : t)).sort((a, b) => (b.date || '').localeCompare(a.date || ''))
     );
     setEditingTx(null);
+  };
+
+  const handleOpenTransfer = (fromBudget?: Budget) => {
+    if (budgets.length < 2) return;
+    const defaultFrom =
+      fromBudget?.id ||
+      budgets.find(b => b.accountType === 'bank_account' || b.accountType === 'debit_account')?.id ||
+      budgets[0].id;
+    const defaultTo = budgets.find(b => b.id !== defaultFrom)?.id || '';
+    setTransferFromId(defaultFrom);
+    setTransferToId(defaultTo);
+    setTransferAmount('');
+    setTransferDate(new Date().toISOString().split('T')[0]);
+    setTransferTitle('');
+    setTransferNotes('');
+    setIsTransferOpen(true);
+  };
+
+  const handleSaveTransfer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!firebaseUser || !transferFromId || !transferToId || transferFromId === transferToId) return;
+    const parsedAmount = Math.abs(parseFloat(transferAmount) || 0);
+    if (parsedAmount <= 0) return;
+
+    const fromAcc = budgets.find(b => b.id === transferFromId);
+    const toAcc = budgets.find(b => b.id === transferToId);
+    const fromName = fromAcc?.name || fromAcc?.category || 'Account';
+    const toName = toAcc?.name || toAcc?.category || 'Account';
+    const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+
+    const id = `tx_tr_${Date.now()}`;
+    const newTx: Transaction = {
+      id,
+      userId: firebaseUser.uid,
+      title: (transferTitle.trim() || `Transfer: ${fromName} → ${toName}`).slice(0, 200),
+      amount: parsedAmount,
+      type: 'expense',
+      category: 'Transfer',
+      date: (transferDate || new Date().toISOString().split('T')[0]).slice(0, 20),
+      notes: (transferNotes.trim() || `Internal transfer from ${fromName} to ${toName}`).slice(0, 500),
+      budgetId: transferFromId.slice(0, 50),
+      transferToBudgetId: transferToId.slice(0, 50),
+      isTransfer: true,
+      isLoanPayment: isPayingDebt
+    };
+
+    try {
+      await setDoc(doc(db, 'transactions', id), newTx);
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+      return;
+    }
+
+    const impacts = getTxAccountImpacts(newTx, budgets);
+    if (Object.keys(impacts).length > 0) {
+      await applyBudgetDeltas(impacts, budgets);
+    }
+
+    setTransactions(prev => [newTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    setIsTransferOpen(false);
   };
 
   const handleImportStatementTransactions = async (rows: ImportedTransactionDraft[]) => {
@@ -668,6 +821,7 @@ export default function App() {
 
     for (let i = 0; i < missingRows.length; i++) {
       const r = missingRows[i];
+      if (r.isTransfer) continue;
       const cat = (r.category || 'Other').trim().slice(0, 50);
       const amt = Math.abs(Number(r.amount) || 0);
       categoryTotals[cat] = (categoryTotals[cat] || 0) + (r.type === 'expense' ? amt : 0);
@@ -678,24 +832,28 @@ export default function App() {
     for (let i = 0; i < missingRows.length; i++) {
       const r = missingRows[i];
       const id = `tx_${baseTs}_${i}`;
+      const isTransferTx = Boolean(r.isTransfer && r.budgetId && r.transferToBudgetId && r.budgetId !== r.transferToBudgetId);
       const newTx: Transaction = {
         id,
         userId: firebaseUser.uid,
         title: (r.title || 'Transaction').trim().slice(0, 200),
         amount: Math.abs(Number(r.amount) || 0),
-        type: r.type === 'income' ? 'income' : 'expense',
-        category: (r.category || 'Other').trim().slice(0, 50),
+        type: isTransferTx ? 'expense' : r.type === 'income' ? 'income' : 'expense',
+        category: (isTransferTx ? (r.category || 'Transfer') : r.category || 'Other').trim().slice(0, 50),
         date: (r.date || new Date().toISOString().split('T')[0]).slice(0, 20),
         notes: (r.notes || '').trim().slice(0, 500),
         ...(r.budgetId ? { budgetId: r.budgetId.slice(0, 50) } : {}),
-        isLoanPayment: Boolean(r.isLoanPayment)
+        isLoanPayment: Boolean(r.isLoanPayment),
+        isTransfer: isTransferTx,
+        ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {})
       };
 
       try {
         await setDoc(doc(db, 'transactions', id), newTx);
         createdTxs.push(newTx);
-        if (newTx.budgetId) {
-          deltas[newTx.budgetId] = (deltas[newTx.budgetId] || 0) + getTxBalanceImpact(newTx, latestBudgets);
+        const impacts = getTxAccountImpacts(newTx, latestBudgets);
+        for (const [bId, val] of Object.entries(impacts)) {
+          deltas[bId] = (deltas[bId] || 0) + val;
         }
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
@@ -711,7 +869,7 @@ export default function App() {
 
   const handleToggleBudgetItemPaid = async (budgetId: string, itemId: string) => {
     const target = budgets.find(b => b.id === budgetId);
-    if (!target || !target.items || target.accountType === 'credit_card' || target.accountType === 'loan') return;
+    if (!target || !target.items || (target.accountType || 'standard') !== 'standard') return;
     const updatedItems = target.items.map(item =>
       item.id === itemId ? { ...item, isPaid: !item.isPaid } : item
     );
@@ -915,6 +1073,7 @@ export default function App() {
     setNewBudgetAccountType('standard');
     setNewBudgetLimit('');
     setNewBudgetCreditLimit('');
+    setNewBudgetAccountBalance('');
     setNewBudgetApr('');
     setNewBudgetOverdraftPercentage('');
     setNewBudgetLoanTermMonths('12');
@@ -965,10 +1124,14 @@ export default function App() {
     const isStandard = newBudgetAccountType === 'standard';
     const isCreditCard = newBudgetAccountType === 'credit_card';
     const isLoan = newBudgetAccountType === 'loan';
+    const isBankAccount = newBudgetAccountType === 'bank_account';
+    const isDebitAccount = newBudgetAccountType === 'debit_account';
+    const isLiquidAccount = isBankAccount || isDebitAccount;
 
     const creditLimitVal = Math.max(0, parseFloat(newBudgetCreditLimit) || 0);
     const aprVal = Math.max(0, parseFloat(newBudgetApr) || 0);
     const overdraftVal = Math.max(0, parseFloat(newBudgetOverdraftPercentage) || 0);
+    const openingBalanceVal = Number((parseFloat(newBudgetAccountBalance) || 0).toFixed(2));
 
     let computedLimit = 0;
     let loanFields: Partial<Budget> = {};
@@ -979,6 +1142,8 @@ export default function App() {
       const hasChecklist = newBudgetItems.length > 0 || extraExp > 0;
       computedLimit = hasChecklist ? itemsSum + extraExp : Math.max(0, parseFloat(newBudgetLimit) || 0);
       if (computedLimit <= 0) return;
+    } else if (isLiquidAccount) {
+      computedLimit = Math.max(0, parseFloat(newBudgetLimit) || 0);
     } else if (isCreditCard) {
       if (creditLimitVal <= 0) return;
       computedLimit = calculateCreditCardMonthlyLimit(creditLimitVal, overdraftVal).monthlyLimit;
@@ -1023,6 +1188,12 @@ export default function App() {
       accountType: newBudgetAccountType,
       extraExpenses: extraExpStandard,
       items: isStandard ? newBudgetItems : [],
+      ...(isLiquidAccount
+        ? {
+            accountBalance: openingBalanceVal,
+            ...(isBankAccount ? { apr: aprVal } : {})
+          }
+        : {}),
       ...(isCreditCard
         ? {
             apr: aprVal,
@@ -1061,8 +1232,9 @@ export default function App() {
     setEditBudgetCategory(b.name || b.category);
     setEditBudgetDescription(b.description || '');
     setEditBudgetAccountType(b.accountType || 'standard');
-    setEditBudgetLimit(b.limit.toString());
+    setEditBudgetLimit(b.limit > 0 ? b.limit.toString() : '');
     setEditBudgetCreditLimit(b.creditLimit !== undefined ? b.creditLimit.toString() : '');
+    setEditBudgetAccountBalance(b.accountBalance !== undefined ? b.accountBalance.toString() : '0');
     setEditBudgetApr(b.apr !== undefined ? b.apr.toString() : '');
     setEditBudgetOverdraftPercentage(b.overdraftPercentage !== undefined ? b.overdraftPercentage.toString() : '');
     setEditBudgetLoanTermMonths(b.loanTermMonths !== undefined ? b.loanTermMonths.toString() : '12');
@@ -1083,10 +1255,14 @@ export default function App() {
     const isStandard = editBudgetAccountType === 'standard';
     const isCreditCard = editBudgetAccountType === 'credit_card';
     const isLoan = editBudgetAccountType === 'loan';
+    const isBankAccount = editBudgetAccountType === 'bank_account';
+    const isDebitAccount = editBudgetAccountType === 'debit_account';
+    const isLiquidAccount = isBankAccount || isDebitAccount;
 
     const creditLimitVal = Math.max(0, parseFloat(editBudgetCreditLimit) || 0);
     const aprVal = Math.max(0, parseFloat(editBudgetApr) || 0);
     const overdraftVal = Math.max(0, parseFloat(editBudgetOverdraftPercentage) || 0);
+    const accountBalanceVal = Number((parseFloat(editBudgetAccountBalance) || 0).toFixed(2));
 
     let computedLimit = 0;
     let loanFields: Partial<Budget> = {};
@@ -1096,6 +1272,8 @@ export default function App() {
       const extraExp = parseFloat(editBudgetExtraExpenses) || 0;
       const hasChecklist = editBudgetItems.length > 0 || extraExp > 0;
       computedLimit = hasChecklist ? itemsSum + extraExp : Math.max(0, parseFloat(editBudgetLimit) || 0);
+    } else if (isLiquidAccount) {
+      computedLimit = Math.max(0, parseFloat(editBudgetLimit) || 0);
     } else if (isCreditCard) {
       computedLimit = calculateCreditCardMonthlyLimit(creditLimitVal, overdraftVal).monthlyLimit;
     } else if (isLoan) {
@@ -1138,6 +1316,12 @@ export default function App() {
       accountType: editBudgetAccountType,
       extraExpenses: extraExpStandard,
       items: isStandard ? editBudgetItems : [],
+      ...(isLiquidAccount
+        ? {
+            accountBalance: accountBalanceVal,
+            ...(isBankAccount ? { apr: aprVal } : {})
+          }
+        : {}),
       ...(isCreditCard
         ? {
             apr: aprVal,
@@ -1327,6 +1511,14 @@ export default function App() {
           >
             <Plus className="w-3.5 h-3.5 text-emerald-400" /> New Income
           </button>
+          {budgets.length >= 2 && (
+            <button
+              onClick={() => handleOpenTransfer()}
+              className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-blue-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
+            >
+              <ArrowRightLeft className="w-3.5 h-3.5 text-blue-400" /> Transfer Money
+            </button>
+          )}
           <button
             onClick={() => setIsUploadStatementOpen(true)}
             className="w-full flex items-center gap-2 bg-[#222] hover:bg-[#282828] text-emerald-300 hover:text-white px-3 py-2 rounded-md text-xs font-medium border border-[#2f2f2f] transition shadow-sm"
@@ -1429,6 +1621,7 @@ export default function App() {
             onDeleteBudget={handleDeleteBudget}
             onToggleItemPaid={handleToggleBudgetItemPaid}
             onOpenRecordPayment={handleOpenRecordPayment}
+            onOpenTransfer={handleOpenTransfer}
             onToggleLoanQuotaPaid={handleToggleLoanQuotaPaid}
             onAddLoanQuota={handleAddLoanQuota}
             onDeleteLoanQuota={handleDeleteLoanQuota}
@@ -1448,6 +1641,7 @@ export default function App() {
               setIsAddTxOpen(true);
             }}
             onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
+            onOpenTransfer={() => handleOpenTransfer()}
             onOpenEditTx={handleOpenEditTx}
             onDeleteTx={handleDeleteTx}
           />
@@ -1517,7 +1711,7 @@ export default function App() {
 
               {budgets.length > 0 && (
                 <div className="space-y-2 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
-                  <label className="text-[11px] text-[#9b9b9b] block">Link to Credit Card / Loan / Budget Account (Optional)</label>
+                  <label className="text-[11px] text-[#9b9b9b] block">Link to Bank / Debit / Credit Card / Loan / Budget Account (Optional)</label>
                   <select
                     value={newTxBudgetId}
                     onChange={e => {
@@ -1533,7 +1727,7 @@ export default function App() {
                     <option value="">None (Match by Category only)</option>
                     {budgets.map(b => (
                       <option key={b.id} value={b.id}>
-                        {b.name || b.category} {b.accountType === 'credit_card' ? '(Credit Card)' : b.accountType === 'loan' ? '(Loan)' : '(Budget)'}
+                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                       </option>
                     ))}
                   </select>
@@ -1656,16 +1850,21 @@ export default function App() {
               </div>
 
               {budgets.length > 0 && (
-                <div className="space-y-2 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
-                  <label className="text-[11px] text-[#9b9b9b] block">Link to Credit Card / Loan / Budget Account (Optional)</label>
+                <div className="space-y-2.5 bg-[#1a1a1a] border border-[#2d2d2d] p-3 rounded-xl">
+                  <label className="text-[11px] text-[#9b9b9b] block">
+                    {editTxIsTransfer ? 'Source Account (Money Leaves)' : 'Link to Bank / Debit / Credit Card / Loan / Budget Account (Optional)'}
+                  </label>
                   <select
                     value={editTxBudgetId}
                     onChange={e => {
                       const nextId = e.target.value;
                       setEditTxBudgetId(nextId);
+                      if (nextId === editTxTransferToBudgetId) {
+                        setEditTxTransferToBudgetId('');
+                      }
                       const matched = budgets.find(b => b.id === nextId);
                       if (!matched || (matched.accountType !== 'credit_card' && matched.accountType !== 'loan')) {
-                        setEditTxIsLoanPayment(false);
+                        if (!editTxIsTransfer) setEditTxIsLoanPayment(false);
                       }
                     }}
                     className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
@@ -1673,14 +1872,64 @@ export default function App() {
                     <option value="">None (Match by Category only)</option>
                     {budgets.map(b => (
                       <option key={b.id} value={b.id}>
-                        {b.name || b.category} {b.accountType === 'credit_card' ? '(Credit Card)' : b.accountType === 'loan' ? '(Loan)' : '(Budget)'}
+                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                       </option>
                     ))}
                   </select>
 
+                  {budgets.length >= 2 && editTxBudgetId && (
+                    <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={editTxIsTransfer}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setEditTxIsTransfer(checked);
+                          if (!checked) {
+                            setEditTxTransferToBudgetId('');
+                          } else {
+                            const fallbackDest = budgets.find(b => b.id !== editTxBudgetId)?.id || '';
+                            setEditTxTransferToBudgetId(fallbackDest);
+                            const dest = budgets.find(b => b.id === fallbackDest);
+                            setEditTxIsLoanPayment(dest?.accountType === 'credit_card' || dest?.accountType === 'loan');
+                          }
+                        }}
+                        className="accent-blue-500 w-3.5 h-3.5"
+                      />
+                      <span className="text-[11px] text-blue-300 font-medium">
+                        Transfer to another account (Excluded from Income/Expense totals)
+                      </span>
+                    </label>
+                  )}
+
+                  {editTxIsTransfer && editTxBudgetId && (
+                    <div>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Destination Account (Money Enters)</label>
+                      <select
+                        value={editTxTransferToBudgetId}
+                        onChange={e => {
+                          const nextDestId = e.target.value;
+                          setEditTxTransferToBudgetId(nextDestId);
+                          const dest = budgets.find(b => b.id === nextDestId);
+                          setEditTxIsLoanPayment(dest?.accountType === 'credit_card' || dest?.accountType === 'loan');
+                        }}
+                        className="w-full bg-[#121212] border border-blue-500/40 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-400"
+                      >
+                        <option value="">-- Select Destination Account --</option>
+                        {budgets
+                          .filter(b => b.id !== editTxBudgetId)
+                          .map(b => (
+                            <option key={b.id} value={b.id}>
+                              {b.name || b.category} {getAccountTypeLabel(b.accountType)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
+                  )}
+
                   {(() => {
                     const linked = budgets.find(b => b.id === editTxBudgetId);
-                    if (linked && (linked.accountType === 'credit_card' || linked.accountType === 'loan')) {
+                    if (!editTxIsTransfer && linked && (linked.accountType === 'credit_card' || linked.accountType === 'loan')) {
                       return (
                         <label className="flex items-center gap-2 pt-1 cursor-pointer select-none">
                           <input
@@ -1736,46 +1985,68 @@ export default function App() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Create Budget / Debt Account</h3>
+              <h3 className="text-base font-bold text-white">Create Budget / Account</h3>
               <button onClick={() => setIsAddBudgetOpen(false)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <form onSubmit={handleSaveBudget} className="space-y-3.5">
               {/* Account Type Switcher */}
               <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Budget Type</label>
-                <div className="grid grid-cols-3 gap-2">
+                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Account / Budget Type</label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setNewBudgetAccountType('standard')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                       newBudgetAccountType === 'standard'
                         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <Wallet className="w-3.5 h-3.5" /> Standard
+                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Standard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewBudgetAccountType('bank_account')}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
+                      newBudgetAccountType === 'bank_account'
+                        ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5 shrink-0" /> Bank
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewBudgetAccountType('debit_account')}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
+                      newBudgetAccountType === 'debit_account'
+                        ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
+                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
+                    }`}
+                  >
+                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Debit
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewBudgetAccountType('credit_card')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                       newBudgetAccountType === 'credit_card'
                         ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <CreditCard className="w-3.5 h-3.5" /> Credit Card
+                    <CreditCard className="w-3.5 h-3.5 shrink-0" /> Credit
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewBudgetAccountType('loan')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
                       newBudgetAccountType === 'loan'
                         ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <Landmark className="w-3.5 h-3.5" /> Loan
+                    <Landmark className="w-3.5 h-3.5 shrink-0" /> Loan
                   </button>
                 </div>
               </div>
@@ -2048,6 +2319,58 @@ export default function App() {
                 );
               })()}
 
+              {/* Bank / Debit Account Details */}
+              {(newBudgetAccountType === 'bank_account' || newBudgetAccountType === 'debit_account') && (
+                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
+                  <div className={`text-xs font-semibold flex items-center gap-1.5 ${newBudgetAccountType === 'bank_account' ? 'text-sky-400' : 'text-teal-400'}`}>
+                    {newBudgetAccountType === 'bank_account' ? <Building2 className="w-3.5 h-3.5" /> : <Wallet className="w-3.5 h-3.5" />}
+                    {newBudgetAccountType === 'bank_account' ? 'Bank Account Details' : 'Debit Account Details'}
+                  </div>
+                  <div className={`grid grid-cols-1 ${newBudgetAccountType === 'bank_account' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
+                    <div>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Opening Balance ({currencySymbol})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={newBudgetAccountBalance}
+                        onChange={e => setNewBudgetAccountBalance(e.target.value)}
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0 (No limit)"
+                        value={newBudgetLimit}
+                        onChange={e => setNewBudgetLimit(e.target.value)}
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                    {newBudgetAccountType === 'bank_account' && (
+                      <div>
+                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest APY (%, opt.)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="e.g. 3.5"
+                          value={newBudgetApr}
+                          onChange={e => setNewBudgetApr(e.target.value)}
+                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-[#777]">
+                    Balance automatically increases on incomes or incoming transfers and decreases on expenses, payments, or outgoing transfers.
+                  </p>
+                </div>
+              )}
+
               {/* Belonging Items Checklist + Extra Expenses Builder (Standard budgets only) */}
               {newBudgetAccountType === 'standard' && (
                 <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
@@ -2197,46 +2520,68 @@ export default function App() {
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center">
-              <h3 className="text-base font-bold text-white">Edit Budget / Debt Account</h3>
+              <h3 className="text-base font-bold text-white">Edit Budget / Account</h3>
               <button onClick={() => setEditingBudget(null)} className="text-[#888] hover:text-white"><X className="w-4 h-4" /></button>
             </div>
             <form onSubmit={handleSaveEditBudget} className="space-y-3.5">
               {/* Account Type Switcher */}
               <div>
-                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Budget Type</label>
-                <div className="grid grid-cols-3 gap-2">
+                <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Account / Budget Type</label>
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
                   <button
                     type="button"
                     onClick={() => setEditBudgetAccountType('standard')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                       editBudgetAccountType === 'standard'
                         ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <Wallet className="w-3.5 h-3.5" /> Standard
+                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Standard
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditBudgetAccountType('bank_account')}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
+                      editBudgetAccountType === 'bank_account'
+                        ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
+                    }`}
+                  >
+                    <Building2 className="w-3.5 h-3.5 shrink-0" /> Bank
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditBudgetAccountType('debit_account')}
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
+                      editBudgetAccountType === 'debit_account'
+                        ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
+                        : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
+                    }`}
+                  >
+                    <Wallet className="w-3.5 h-3.5 shrink-0" /> Debit
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditBudgetAccountType('credit_card')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                       editBudgetAccountType === 'credit_card'
                         ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <CreditCard className="w-3.5 h-3.5" /> Credit Card
+                    <CreditCard className="w-3.5 h-3.5 shrink-0" /> Credit
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditBudgetAccountType('loan')}
-                    className={`flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition ${
+                    className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
                       editBudgetAccountType === 'loan'
                         ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
                         : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                     }`}
                   >
-                    <Landmark className="w-3.5 h-3.5" /> Loan
+                    <Landmark className="w-3.5 h-3.5 shrink-0" /> Loan
                   </button>
                 </div>
               </div>
@@ -2497,6 +2842,58 @@ export default function App() {
                 );
               })()}
 
+              {/* Edit Bank / Debit Account Details */}
+              {(editBudgetAccountType === 'bank_account' || editBudgetAccountType === 'debit_account') && (
+                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
+                  <div className={`text-xs font-semibold flex items-center gap-1.5 ${editBudgetAccountType === 'bank_account' ? 'text-sky-400' : 'text-teal-400'}`}>
+                    {editBudgetAccountType === 'bank_account' ? <Building2 className="w-3.5 h-3.5" /> : <Wallet className="w-3.5 h-3.5" />}
+                    {editBudgetAccountType === 'bank_account' ? 'Bank Account Details' : 'Debit Account Details'}
+                  </div>
+                  <div className={`grid grid-cols-1 ${editBudgetAccountType === 'bank_account' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
+                    <div>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Current Balance ({currencySymbol})</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        placeholder="0.00"
+                        value={editBudgetAccountBalance}
+                        onChange={e => setEditBudgetAccountBalance(e.target.value)}
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0 (No limit)"
+                        value={editBudgetLimit}
+                        onChange={e => setEditBudgetLimit(e.target.value)}
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                      />
+                    </div>
+                    {editBudgetAccountType === 'bank_account' && (
+                      <div>
+                        <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest APY (%, opt.)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="e.g. 3.5"
+                          value={editBudgetApr}
+                          onChange={e => setEditBudgetApr(e.target.value)}
+                          className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+                  <p className="text-[10px] text-[#777]">
+                    Updates automatically with linked transactions and transfers, or adjust manually here to reconcile.
+                  </p>
+                </div>
+              )}
+
               {/* Belonging Items Checklist + Extra Expenses Builder (Standard budgets only) */}
               {editBudgetAccountType === 'standard' && (
                 <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
@@ -2652,6 +3049,157 @@ export default function App() {
               <div className="flex gap-2 pt-2">
                 <button type="button" onClick={() => setEditingBudget(null)} className="flex-1 bg-[#333] hover:bg-[#3a3a3a] text-white py-2 rounded-lg text-xs transition">Cancel</button>
                 <button type="submit" className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 rounded-lg text-xs font-medium transition">Update Budget</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* TRANSFER BETWEEN ACCOUNTS MODAL */}
+      {isTransferOpen && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#222] border border-[#333] rounded-2xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center">
+              <h3 className="text-base font-bold text-white flex items-center gap-2">
+                <ArrowRightLeft className="w-4 h-4 text-blue-400" />
+                Transfer Between Accounts
+              </h3>
+              <button onClick={() => setIsTransferOpen(false)} className="text-[#888] hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-[11px] text-[#9b9b9b]">
+              Move funds between your accounts (or pay a credit card / loan from a bank or debit account) without inflating your expense or income totals.
+            </p>
+            <form onSubmit={handleSaveTransfer} className="space-y-3">
+              <div>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">From Account *</label>
+                <select
+                  required
+                  value={transferFromId}
+                  onChange={e => {
+                    const nextFrom = e.target.value;
+                    setTransferFromId(nextFrom);
+                    if (nextFrom === transferToId) {
+                      const nextTo = budgets.find(b => b.id !== nextFrom)?.id || '';
+                      setTransferToId(nextTo);
+                    }
+                  }}
+                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  {budgets.map(b => (
+                    <option key={b.id} value={b.id}>
+                      {b.name || b.category} {getAccountTypeLabel(b.accountType)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">To Account *</label>
+                <select
+                  required
+                  value={transferToId}
+                  onChange={e => setTransferToId(e.target.value)}
+                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">-- Select Destination Account --</option>
+                  {budgets
+                    .filter(b => b.id !== transferFromId)
+                    .map(b => (
+                      <option key={b.id} value={b.id}>
+                        {b.name || b.category} {getAccountTypeLabel(b.accountType)}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Amount ({currencySymbol}) *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    required
+                    placeholder="0.00"
+                    value={transferAmount}
+                    onChange={e => setTransferAmount(e.target.value)}
+                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Date</label>
+                  <input
+                    type="date"
+                    value={transferDate}
+                    onChange={e => setTransferDate(e.target.value)}
+                    className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">Title (Optional)</label>
+                <input
+                  type="text"
+                  maxLength={200}
+                  placeholder="Auto-generated if left blank"
+                  value={transferTitle}
+                  onChange={e => setTransferTitle(e.target.value)}
+                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">Notes (Optional)</label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  placeholder="Reference or transfer details..."
+                  value={transferNotes}
+                  onChange={e => setTransferNotes(e.target.value)}
+                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {(() => {
+                const amt = Math.abs(parseFloat(transferAmount) || 0);
+                const fromAcc = budgets.find(b => b.id === transferFromId);
+                const toAcc = budgets.find(b => b.id === transferToId);
+                if (!fromAcc || !toAcc || amt <= 0) return null;
+                const toIsDebt = toAcc.accountType === 'credit_card' || toAcc.accountType === 'loan';
+                const fromIsLiquid = fromAcc.accountType === 'bank_account' || fromAcc.accountType === 'debit_account';
+                const toIsLiquid = toAcc.accountType === 'bank_account' || toAcc.accountType === 'debit_account';
+                return (
+                  <div className="bg-blue-500/10 border border-blue-500/25 rounded-xl p-3 text-[11px] space-y-1 text-blue-200">
+                    {fromIsLiquid && (
+                      <div>• {fromAcc.name}: balance decreases by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                    )}
+                    {toIsLiquid && (
+                      <div>• {toAcc.name}: balance increases by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                    )}
+                    {toIsDebt && (
+                      <div>• {toAcc.name}: debt/used balance reduced by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                    )}
+                    <div className="text-[10px] text-blue-300/80 pt-0.5">
+                      Excluded from monthly Expenses, Income, and Budget spending limits.
+                    </div>
+                  </div>
+                );
+              })()}
+
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setIsTransferOpen(false)} className="flex-1 bg-[#333] text-white py-2 rounded-lg text-xs">
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!transferFromId || !transferToId || transferFromId === transferToId || !(parseFloat(transferAmount) > 0)}
+                  className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white py-2 rounded-lg text-xs font-medium"
+                >
+                  Save Transfer
+                </button>
               </div>
             </form>
           </div>

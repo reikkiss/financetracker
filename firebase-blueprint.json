@@ -22,7 +22,9 @@
         "date": { "type": "string", "maxLength": 20 },
         "notes": { "type": "string", "maxLength": 500 },
         "budgetId": { "type": "string", "maxLength": 50 },
-        "isLoanPayment": { "type": "boolean" }
+        "isLoanPayment": { "type": "boolean" },
+        "isTransfer": { "type": "boolean" },
+        "transferToBudgetId": { "type": "string", "maxLength": 50 }
       }
     },
     "Budget": {
@@ -44,7 +46,8 @@
         "loanTermMonths": { "type": "number" },
         "loanStartDate": { "type": "string", "maxLength": 20 },
         "monthlyQuota": { "type": "number" },
-        "loanQuotas": { "type": "array" }
+        "loanQuotas": { "type": "array" },
+        "accountBalance": { "type": "number" }
       }
     },
     "Goal": {
