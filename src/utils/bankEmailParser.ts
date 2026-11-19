@@ -10,6 +10,7 @@ export interface ParsedEmailTransaction {
   cardNumber?: string;
   bankName: string;
   notes: string;
+  contextSnippet: string;
   status: 'pending';
   emailOutcome: EmailTransactionOutcome;
   outcomeLabel: 'Went Through' | 'Declined' | 'Reversed';
@@ -227,66 +228,370 @@ export function cleanEmailContent(raw: string): string {
   return cleanHtmlToStructuredText(text);
 }
 
-const KNOWN_BANKS = [
-  { keywords: ['popular', 'bpd.com.do', 'popularenlinea'], name: 'Banco Popular' },
-  { keywords: ['banreservas', 'reservas', 'banreservas.com'], name: 'Banreservas' },
-  { keywords: ['bhd', 'bhdleon', 'bhd.com.do'], name: 'Banco BHD' },
-  { keywords: ['qik', 'qik.do', 'qik.com.do'], name: 'Qik Banco Digital' },
-  { keywords: ['santa cruz', 'bsc.com.do'], name: 'Banco Santa Cruz' },
-  { keywords: ['scotiabank', 'scotia'], name: 'Scotiabank' },
-  { keywords: ['promerica'], name: 'Banco Promerica' },
-  { keywords: ['apap', 'asociacion popular', 'asociación popular'], name: 'APAP' },
-  { keywords: ['banesco'], name: 'Banesco' },
-  { keywords: ['lafise'], name: 'Banco Lafise' },
-  { keywords: ['vimenca'], name: 'Banco Vimenca' }
+interface BankRule {
+  name: string;
+  senderPatterns: RegExp[];
+  subjectPatterns: RegExp[];
+  bodyPatterns: RegExp[];
+}
+
+const BANK_RULES: BankRule[] = [
+  {
+    name: 'Banreservas',
+    senderPatterns: [/banreservas\.com/i, /notificacionestubancoapp@banreservas\.com/i, /\bbanreservas\b/i, /\breservas\b/i],
+    subjectPatterns: [/\bbanreservas\b/i],
+    bodyPatterns: [/\bbanreservas\b/i, /banreservas\.com/i, /\bbanco de reservas\b/i]
+  },
+  {
+    name: 'Banco Popular',
+    senderPatterns: [/bpd\.com\.do/i, /popularenlinea/i, /notificaciones@popularenlinea\.com/i, /\bbanco\s+popular\b/i, /\bpopular\b/i],
+    subjectPatterns: [/\bbanco\s+popular\b/i, /\bpopularenlinea\b/i, /\bbpd\b/i],
+    bodyPatterns: [/\bbanco\s+popular(?:\s+dominicano)?\b/i, /\bpopularenlinea(?:\.com)?\b/i, /\bbpd\.com\.do\b/i]
+  },
+  {
+    name: 'Banco BHD',
+    senderPatterns: [/bhd\.com\.do/i, /alertas@bhd\.com\.do/i, /bhdleon/i, /\bbhd\b/i],
+    subjectPatterns: [/\bbanco\s+bhd\b/i, /\bbhd\s*le[oó]n\b/i, /\bbhd\b/i],
+    bodyPatterns: [/\bbanco\s+bhd(?:\s*le[oó]n)?\b/i, /\bbhd\.com\.do\b/i, /\bbhdleon\b/i]
+  },
+  {
+    name: 'Qik Banco Digital',
+    senderPatterns: [/qik\.do/i, /notificaciones@qik\.do/i, /qik\.com\.do/i, /\bqik\b/i],
+    subjectPatterns: [/\bqik\b/i],
+    bodyPatterns: [/\bqik\s+banco\s+digital\b/i, /\bqik\.(?:com\.)?do\b/i, /\bapp\s+qik\b/i]
+  },
+  {
+    name: 'Azul',
+    senderPatterns: [/azul\.com\.do/i, /notificaciones@azul\.com\.do/i, /\bazul\b/i],
+    subjectPatterns: [/\bazul\b/i],
+    bodyPatterns: [/\bazul\b/i, /azul\.com\.do/i]
+  },
+  {
+    name: 'Banco Santa Cruz',
+    senderPatterns: [/bsc\.com\.do/i, /santa\s+cruz/i],
+    subjectPatterns: [/\bbanco\s+santa\s+cruz\b/i, /\bsanta\s+cruz\b/i, /\bbsc\b/i],
+    bodyPatterns: [/\bbanco\s+santa\s+cruz\b/i, /\bbsc\.com\.do\b/i]
+  },
+  {
+    name: 'Scotiabank',
+    senderPatterns: [/scotiabank/i, /\bscotia\b/i],
+    subjectPatterns: [/\bscotiabank\b/i],
+    bodyPatterns: [/\bscotiabank\b/i]
+  },
+  {
+    name: 'Banco Promerica',
+    senderPatterns: [/promerica/i],
+    subjectPatterns: [/\bpromerica\b/i],
+    bodyPatterns: [/\bbanco\s+promerica\b/i, /\bpromerica\.com\.do\b/i]
+  },
+  {
+    name: 'APAP',
+    senderPatterns: [/apap\.com\.do/i, /\bapap\b/i, /asociaci[oó]n\s+popular/i],
+    subjectPatterns: [/\bapap\b/i, /asociaci[oó]n\s+popular/i],
+    bodyPatterns: [/\bapap\b/i, /apap\.com\.do/i, /asociaci[oó]n\s+popular\s+de\s+ahorros/i]
+  },
+  {
+    name: 'Banesco',
+    senderPatterns: [/banesco/i],
+    subjectPatterns: [/\bbanesco\b/i],
+    bodyPatterns: [/\bbanesco\b/i]
+  },
+  {
+    name: 'Banco Lafise',
+    senderPatterns: [/lafise/i],
+    subjectPatterns: [/\blafise\b/i],
+    bodyPatterns: [/\bbanco\s+lafise\b/i, /\blafise\.com\b/i]
+  },
+  {
+    name: 'Banco Vimenca',
+    senderPatterns: [/vimenca/i],
+    subjectPatterns: [/\bvimenca\b/i],
+    bodyPatterns: [/\bbanco\s+vimenca\b/i, /\bvimenca\.com\b/i]
+  },
+  {
+    name: 'Banco Caribe',
+    senderPatterns: [/bancocaribe/i, /banco\s+caribe/i],
+    subjectPatterns: [/\bbanco\s+caribe\b/i],
+    bodyPatterns: [/\bbanco\s+caribe\b/i, /bancocaribe\.com\.do/i]
+  },
+  {
+    name: 'Banco BDI',
+    senderPatterns: [/bdi\.com\.do/i, /banco\s+bdi/i],
+    subjectPatterns: [/\bbanco\s+bdi\b/i],
+    bodyPatterns: [/\bbanco\s+bdi\b/i, /bdi\.com\.do/i]
+  },
+  {
+    name: 'Banco López de Haro',
+    senderPatterns: [/blh\.com\.do/i, /l[oó]pez\s+de\s+haro/i],
+    subjectPatterns: [/\bl[oó]pez\s+de\s+haro\b/i],
+    bodyPatterns: [/\bbanco\s+l[oó]pez\s+de\s+haro\b/i, /blh\.com\.do/i]
+  },
+  {
+    name: 'Banco Adopem',
+    senderPatterns: [/adopem/i],
+    subjectPatterns: [/\badopem\b/i],
+    bodyPatterns: [/\bbanco\s+adopem\b/i, /adopem\.com\.do/i]
+  },
+  {
+    name: 'PayPal',
+    senderPatterns: [/paypal\.com/i, /\bpaypal\b/i],
+    subjectPatterns: [/\bpaypal\b/i],
+    bodyPatterns: [/\bpaypal\b/i]
+  },
+  {
+    name: 'Apple Card',
+    senderPatterns: [/applecard/i, /goldmansachs.*apple/i],
+    subjectPatterns: [/\bapple\s+card\b/i],
+    bodyPatterns: [/\bapple\s+card\b/i]
+  },
+  {
+    name: 'American Express',
+    senderPatterns: [/americanexpress\.com/i, /\bamex\b/i],
+    subjectPatterns: [/\bamerican\s+express\b/i, /\bamex\b/i],
+    bodyPatterns: [/\bamerican\s+express\b/i]
+  },
+  {
+    name: 'Chase',
+    senderPatterns: [/chase\.com/i],
+    subjectPatterns: [/\bchase\b/i],
+    bodyPatterns: [/\bjpmorgan\s+chase\b/i, /\bchase\s+card\b/i]
+  },
+  {
+    name: 'Capital One',
+    senderPatterns: [/capitalone\.com/i],
+    subjectPatterns: [/\bcapital\s+one\b/i],
+    bodyPatterns: [/\bcapital\s+one\b/i]
+  },
+  {
+    name: 'Citibank',
+    senderPatterns: [/citi\.com/i, /citibank/i],
+    subjectPatterns: [/\bcitibank\b/i],
+    bodyPatterns: [/\bcitibank\b/i]
+  },
+  {
+    name: 'Bank of America',
+    senderPatterns: [/bankofamerica\.com/i],
+    subjectPatterns: [/\bbank\s+of\s+america\b/i],
+    bodyPatterns: [/\bbank\s+of\s+america\b/i]
+  },
+  {
+    name: 'Wise',
+    senderPatterns: [/wise\.com/i, /transferwise\.com/i],
+    subjectPatterns: [/\bwise\b/i],
+    bodyPatterns: [/\bwise\s+(?:card|transfer|account)\b/i]
+  }
 ];
 
-const TRANSACTION_ALERT_KEYWORDS = [
-  'consumo',
-  'transacción',
-  'transaccion',
+function detectBankName(rawSender: string, rawSubject: string, cleanedBody: string): string {
+  // Tier 1: Sender address & display name (most authoritative — avoids body cross-mentions)
+  if (rawSender) {
+    for (const rule of BANK_RULES) {
+      if (rule.senderPatterns.some(p => p.test(rawSender))) {
+        return rule.name;
+      }
+    }
+  }
+
+  // Tier 2: Subject line
+  if (rawSubject) {
+    for (const rule of BANK_RULES) {
+      if (rule.subjectPatterns.some(p => p.test(rawSubject))) {
+        return rule.name;
+      }
+    }
+  }
+
+  // Tier 3: Top of body first (header/branding), then full body with strict unambiguous patterns
+  const topBody = cleanedBody.slice(0, 1200);
+  for (const rule of BANK_RULES) {
+    if (rule.bodyPatterns.some(p => p.test(topBody))) {
+      return rule.name;
+    }
+  }
+  for (const rule of BANK_RULES) {
+    if (rule.bodyPatterns.some(p => p.test(cleanedBody))) {
+      return rule.name;
+    }
+  }
+
+  return '';
+}
+
+// Explicit executed/attempted transaction confirmation phrases (no generic "tarjeta de crédito" or "notificación" alone)
+const EXECUTED_TRANSACTION_PHRASES = [
+  'consumo realizado',
+  'consumo aprobado',
+  'consumo efectuado',
+  'consumo declinado',
+  'consumo rechazado',
+  'consumo con tarjeta',
+  'consumo en',
+  'notificación de consumo',
+  'notificacion de consumo',
+  'notificación de transacción',
+  'notificacion de transaccion',
+  'alerta de consumo',
+  'alerta de transacción',
+  'alerta de transaccion',
+  'aviso de consumo',
+  'aviso de transacción',
+  'aviso de transaccion',
   'compra aprobada',
   'compra realizada',
+  'compra efectuada',
+  'compra declinada',
+  'compra rechazada',
   'compraste',
-  'alerta de',
-  'notificación',
-  'notificacion',
+  'gastaste',
+  'pagaste',
   'pago realizado',
   'pago recibido',
   'pago al instante',
-  'transferencia',
-  'retiro',
-  'depósito',
-  'deposito',
-  'abono',
-  'tarjeta de crédito',
-  'tarjeta de credito',
-  'tarjeta de débito',
-  'tarjeta de debito',
-  'cargo',
-  'authorization',
+  'pago procesado',
+  'pago aprobado',
+  'pago declinado',
+  'pago rechazado',
+  'comprobante de pago',
+  'comprobante de transferencia',
+  'transferencia realizada',
+  'transferencia enviada',
+  'transferencia recibida',
+  'transferencia aprobada',
+  'transferencia exitosa',
+  'transferencia completada',
+  'transferencia ach',
+  'transferencia lbtr',
+  'retiro realizado',
+  'retiro en cajero',
+  'retiro de efectivo',
+  'depósito realizado',
+  'deposito realizado',
+  'depósito recibido',
+  'deposito recibido',
+  'crédito recibido',
+  'credito recibido',
+  'abono recibido',
+  'cargo realizado',
+  'cargo a su tarjeta',
+  'cargo a tu tarjeta',
+  'cargo a su cuenta',
+  'débito realizado',
+  'debito realizado',
+  'transacción aprobada',
+  'transaccion aprobada',
+  'transacción realizada',
+  'transaccion realizada',
+  'transacción declinada',
+  'transaccion declinada',
+  'transacción rechazada',
+  'transaccion rechazada',
+  'transacción reversada',
+  'transaccion reversada',
+  'reverso de consumo',
+  'reverso de transacción',
+  'reembolso procesado',
   'purchase alert',
   'transaction alert',
-  'declinada',
-  'declinado',
-  'declined',
-  'rechazada',
-  'rechazado',
-  'denegada',
-  'denegado',
-  'reversada',
-  'reversado',
-  'reverso',
-  'reversed',
-  'reembolso',
-  'refund',
-  'anulada',
-  'anulado',
-  'monto:',
-  'importe:',
-  'comercio:',
-  'establecimiento:'
+  'card purchase',
+  'payment sent',
+  'payment received',
+  'you spent',
+  'you paid',
+  'charge was declined',
+  'transaction was declined'
 ];
+
+const PROMO_SUBJECT_REGEX =
+  /\b(?:aprovecha|descuento|cashback|rebaja|ahorra\s+hasta|gana\s+(?:hasta|doble|triple)|sorteo|concurso|premio|feria|black\s+friday|cyber\s+monday|cyberweek|promoci[oó]n|promo\b|oferta\s+(?:especial|exclusiva|de)|preaprobado|pre-aprobado|solicita\s+(?:tu|la|hoy)|aumenta\s+tu\s+l[ií]mite|cuotas?\s+sin\s+inter[eé]s|meses\s+sin\s+inter[eé]s|millas?\s+(?:extra|dobles|popular)|puntos?\s+(?:extra|dobles|triples)|nuevo\s+producto|invierte\s+en|abre\s+tu\s+cuenta|beneficios?\s+exclusivos?|disfruta\s+de\s+(?:un|hasta)|fin\s+de\s+semana\s+de|temporada\s+de|tasas?\s+especiales?|tasa\s+fija)\b/i;
+
+const PROMO_PERCENT_REGEX =
+  /(?:\bhasta\s+(?:un\s+)?\d{1,2}\s*%|\b\d{1,2}\s*%\s*(?:de\s+)?(?:descuento|cashback|devoluci[oó]n|bonificaci[oó]n|off|menos)\b)/i;
+
+const OTP_OR_SECURITY_REGEX =
+  /\b(?:c[oó]digo\s+de\s+(?:verificaci[oó]n|seguridad|acceso|confirmaci[oó]n)|c[oó]digo\s+otp|\botp\b|clave\s+din[aá]mica|token\s+digital|verification\s+code|security\s+code|one[- ]time\s+password|inicio\s+de\s+sesi[oó]n\s+exitoso|nuevo\s+inicio\s+de\s+sesi[oó]n|cambio\s+de\s+(?:clave|contrase[nñ]a)|recuperaci[oó]n\s+de\s+clave|actualizaci[oó]n\s+de\s+datos)\b/i;
+
+const STATEMENT_OR_REMINDER_REGEX =
+  /\b(?:tu\s+estado\s+de\s+cuenta\s+(?:est[aá]\s+disponible|ya\s+(?:est[aá]|lleg[oó]))|estado\s+de\s+cuenta\s+(?:disponible|mensual)|resumen\s+de\s+(?:tu\s+)?estado\s+de\s+cuenta|recordatorio\s+de\s+pago|pr[oó]ximo\s+vencimiento|fecha\s+l[ií]mite\s+de\s+pago|pago\s+m[ií]nimo\s+requerido|evita\s+recargos\s+pagando)\b/i;
+
+const PROMO_BODY_REGEX =
+  /\b(?:aprovecha(?:\s+esta|\s+el|\s+los|\s+hoy)?|cashback\s+de|devoluci[oó]n\s+de\s+hasta|descuento\s+(?:en|del|de\s+hasta)|preaprobado|pre-aprobado|solicita\s+(?:tu|la)\s+(?:tarjeta|pr[eé]stamo)|aumenta\s+tu\s+l[ií]mite|sorteo|concurso|feria\s+de|black\s+friday|cyber\s+monday|cuotas?\s+sin\s+inter[eé]s|meses\s+sin\s+inter[eé]s|beneficios?\s+exclusivos?|ver\s+t[eé]rminos\s+y\s+condiciones|aplican\s+restricciones|desuscr[ií]bete|darse\s+de\s+baja|cancelar\s+suscripci[oó]n|\bunsubscribe\b|ver\s+en\s+(?:tu\s+)?navegador)\b/i;
+
+function hasStructuredReceiptFields(text: string): boolean {
+  const hasAmountField = /\b(?:monto|importe|valor\s+de\s+transacci[oó]n|amount)\s*:/i.test(text);
+  const hasContextField =
+    /\b(?:comercio|establecimiento|localidad|beneficiario|autorizaci[oó]n|referencia|no\.?\s*referencia|tarjeta|producto)\s*:/i.test(
+      text
+    );
+  return hasAmountField && hasContextField;
+}
+
+function hasExecutedTransactionSignal(rawSubject: string, cleanedBody: string): boolean {
+  const combinedLower = `${rawSubject}\n${cleanedBody}`.toLowerCase();
+  if (EXECUTED_TRANSACTION_PHRASES.some(phrase => combinedLower.includes(phrase))) {
+    return true;
+  }
+  // Narrative verbs like "se ha realizado un consumo/compra/pago/transferencia/cargo/retiro/depósito"
+  if (
+    /\b(?:se\s+(?:ha\s+)?(?:realizado|efectuado|registrado|procesado|aprobado|debitado|acreditado|declinado|rechazado|reversado|anulado)|acabamos\s+de\s+procesar|realizaste)\b[^\n]{0,60}\b(?:consumo|compra|pago|transacci[oó]n|cargo|transferencia|retiro|dep[oó]sito|abono|reverso)\b/i.test(
+      combinedLower
+    )
+  ) {
+    return true;
+  }
+  if (hasStructuredReceiptFields(cleanedBody)) {
+    return true;
+  }
+  return false;
+}
+
+function isPromotionalOrNonTransactionEmail(rawSubject: string, cleanedBody: string, rawSender: string = ''): boolean {
+  const subject = (rawSubject || '').trim();
+  const topBody = (cleanedBody || '').slice(0, 1200);
+  const structured = hasStructuredReceiptFields(cleanedBody);
+  const hasExecSignal = hasExecutedTransactionSignal(subject, cleanedBody);
+  const isKnownBankSender = /qik\.do|bhd\.com\.do|popularenlinea\.com|azul\.com\.do|banreservas\.com|bpd\.com\.do|scotiabank|promerica|apap|banesco|lafise|bancocaribe|vimenca|bdi\.com\.do|blh\.com\.do|paypal\.com/i.test(rawSender);
+
+  // 1. Subject explicitly reveals promo / OTP / statement reminder
+  if (PROMO_SUBJECT_REGEX.test(subject) || PROMO_PERCENT_REGEX.test(subject)) {
+    if (!isKnownBankSender) return true;
+  }
+  if (OTP_OR_SECURITY_REGEX.test(subject)) {
+    return true;
+  }
+  if (STATEMENT_OR_REMINDER_REGEX.test(subject) && !structured) {
+    if (!isKnownBankSender) return true;
+  }
+
+  // 2. OTP or statement-only email in body without executed transaction confirmation
+  if (OTP_OR_SECURITY_REGEX.test(topBody.slice(0, 600)) && !structured) {
+    return true;
+  }
+  if (STATEMENT_OR_REMINDER_REGEX.test(topBody) && !hasExecSignal) {
+    if (!isKnownBankSender) return true;
+  }
+
+  // If it's a known bank sender and has a monetary amount, treat as valid transaction alert
+  if (isKnownBankSender && (/(?:rd\$|us\$|\$|dop|usd)\s*[0-9]/i.test(cleanedBody) || hasExecSignal)) {
+    return false;
+  }
+
+  // 3. Marketing / promo campaigns in top body unless clearly overridden by a real structured transaction alert
+  if ((PROMO_BODY_REGEX.test(topBody) || PROMO_PERCENT_REGEX.test(topBody)) && !structured) {
+    const top400 = topBody.slice(0, 400).toLowerCase();
+    const strongHeaderTx =
+      EXECUTED_TRANSACTION_PHRASES.some(p => subject.toLowerCase().includes(p) || top400.includes(p));
+    if (!strongHeaderTx && !isKnownBankSender) {
+      return true;
+    }
+  }
+
+  // 4. Final requirement: must prove a real transaction occurred or be from a known bank sender with an amount
+  if (isKnownBankSender && /(?:rd\$|us\$|\$|dop|usd)\s*[0-9]/i.test(cleanedBody)) {
+    return false;
+  }
+
+  return !hasExecSignal;
+}
 
 const NEXT_FIELD_LABEL_STOP =
   /^(?:monto|importe|valor|total|fecha|hora|tarjeta|cuenta|moneda|referencia|autorizaci[oó]n|no\.?\s*autorizaci[oó]n|c[oó]digo|estado|estatus|saldo|balance|disponible|banco|estimad[oa]|hola|saludos|atentamente|si\s+no\s+reconoce|para\s+m[aá]s\s+informaci[oó]n|http|www\.)\b/i;
@@ -311,7 +616,8 @@ function isNoiseMerchant(rawCandidate: string, rawSubject: string): boolean {
     'su', 'tu', 'mi', 'la', 'el', 'lo', 'los', 'las', 'un', 'una', 'unos', 'unas',
     'este', 'esta', 'ese', 'esa', 'de', 'del', 'en', 'por', 'con', 'para', 'al', 'a',
     'y', 'o', 'your', 'the', 'this', 'that', 'with', 'from', 'for', 'card', 'account',
-    'tarjeta', 'cuenta', 'consumo', 'compra', 'pago', 'transaccion', 'transacción', 'autorizacion', 'autorización'
+    'tarjeta', 'cuenta', 'consumo', 'compra', 'pago', 'transaccion', 'transacción', 'autorizacion', 'autorización',
+    'aprobada', 'aprobado', 'declinada', 'declinado', 'rechazada', 'rechazado', 'notificacion', 'notificación'
   ]);
   if (stopWords.has(lowerC)) return true;
 
@@ -355,14 +661,18 @@ function isNoiseMerchant(rawCandidate: string, rawSubject: string): boolean {
     'república dominicana',
     'republica dominicana'
   ];
-  if (noisePhrases.some(np => lowerC === np || lowerC.startsWith(`${np} `) || lowerC.includes('su tarjeta') || lowerC.includes('tu tarjeta'))) {
+  if (
+    noisePhrases.some(
+      np => lowerC === np || lowerC.startsWith(`${np} `) || lowerC.includes('su tarjeta') || lowerC.includes('tu tarjeta')
+    )
+  ) {
     return true;
   }
 
   // Reject if candidate simply repeats the email notification subject (e.g. "Notificación de Consumo")
   const normSubj = rawSubject.trim().toLowerCase();
-  if (normSubj && (lowerC === normSubj || (lowerC.length > 12 && normSubj.startsWith(lowerC)))) {
-    if (/(?:notificaci[oó]n|alerta|aviso|comprobante|informaci[oó]n)/i.test(lowerC)) {
+  if (normSubj && (lowerC === normSubj || (lowerC.length > 10 && normSubj.startsWith(lowerC)))) {
+    if (/(?:notificaci[oó]n|alerta|aviso|comprobante|informaci[oó]n|alerta\s+de|aviso\s+de)/i.test(lowerC)) {
       return true;
     }
   }
@@ -372,8 +682,10 @@ function isNoiseMerchant(rawCandidate: string, rawSubject: string): boolean {
 
 function cleanMerchantCandidate(raw: string): string {
   let s = raw
-    // Trim trailing clause connectors
-    .split(/\s+(?:por(?:\s+(?:un|el)\s+monto|\s+valor|\s+rd\$|\s+us\$|\s+\$|\s+dop|\s+usd)?|el\s+d[ií]a|en\s+fecha|fecha\b|hora\b|monto\b|importe\b|valor\b|con\s+(?:su|tu|la)\s+tarjeta|con\s+tarjeta|tarjeta\b|terminad[ao]\b|rd\$|us\$|dop\b|usd\b|\$[0-9])/i)[0]
+    // Trim trailing clause connectors (Spanish & English)
+    .split(
+      /\s+(?:por(?:\s+(?:un|el)\s+monto|\s+valor|\s+rd\$|\s+us\$|\s+\$|\s+dop|\s+usd)?|for(?:\s+(?:the\s+amount\s+of|rd\$|us\$|\$|dop|usd|[0-9]))|el\s+d[ií]a|en\s+fecha|on\s+\d{2,4}|fecha\b|hora\b|monto\b|importe\b|valor\b|con\s+(?:su|tu|la)\s+tarjeta|with\s+(?:your\s+)?card|con\s+tarjeta|tarjeta\b|terminad[ao]\b|rd\$|us\$|dop\b|usd\b|\$[0-9])/i
+    )[0]
     .trim();
 
   // Strip leading article/noun wrappers like "el establecimiento " or "el comercio "
@@ -388,12 +700,148 @@ function cleanMerchantCandidate(raw: string): string {
   return s;
 }
 
+const UPPERCASE_ACRONYMS = new Set([
+  'BHD', 'APAP', 'ATM', 'KFC', 'VIP', 'SRL', 'EIRL', 'SA', 'RD', 'DR', 'US', 'USA',
+  'TV', 'HD', 'LBTR', 'ACH', 'POS', 'BPD', 'BSC', 'BDI', 'BLH', 'DHL', 'UPS', 'IKEA', 'BBQ'
+]);
+
+const LOWERCASE_CONNECTORS = new Set([
+  'de', 'del', 'la', 'las', 'el', 'los', 'y', 'e', 'en', 'a', 'al', 'por', 'con', 'para',
+  'of', 'the', 'and', 'at', 'by', 'for', 'in', 'on', 'to'
+]);
+
+const CANONICAL_BRAND_CASING: Record<string, string> = {
+  pedidosya: 'PedidosYa',
+  pricesmart: 'PriceSmart',
+  mcdonald: "McDonald's",
+  "mcdonald's": "McDonald's",
+  mcdonalds: "McDonald's",
+  chatgpt: 'ChatGPT',
+  openai: 'OpenAI',
+  youtube: 'YouTube',
+  icloud: 'iCloud',
+  paypal: 'PayPal',
+  iphone: 'iPhone',
+  itunes: 'iTunes',
+  ebay: 'eBay',
+  airbnb: 'Airbnb',
+  banreservas: 'Banreservas',
+  scotiabank: 'Scotiabank',
+  promerica: 'Promerica',
+  banesco: 'Banesco',
+  popularenlinea: 'Popular en Línea'
+};
+
+function toCleanTitleCase(input: string): string {
+  const tokens = input.trim().split(/\s+/).filter(Boolean);
+  return tokens
+    .map((token, idx) => {
+      const stripped = token.replace(/^[^A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü]+|[^A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü]+$/g, '');
+      const upper = stripped.toUpperCase();
+      const lower = stripped.toLowerCase();
+
+      if (CANONICAL_BRAND_CASING[lower]) {
+        return CANONICAL_BRAND_CASING[lower];
+      }
+      if (UPPERCASE_ACRONYMS.has(upper)) {
+        return upper;
+      }
+      if (idx > 0 && LOWERCASE_CONNECTORS.has(lower)) {
+        return lower;
+      }
+      // Preserve intentional camelCase / mixed case if input wasn't all-caps or all-lowercase
+      const isAllUpper = token === token.toUpperCase();
+      const isAllLower = token === token.toLowerCase();
+      if (!isAllUpper && !isAllLower) {
+        return token;
+      }
+      return token.charAt(0).toUpperCase() + token.slice(1).toLowerCase();
+    })
+    .join(' ');
+}
+
+export function refineMerchantName(rawTitle: string): string {
+  let s = (rawTitle || '').replace(/\s+/g, ' ').trim();
+  if (!s) return '';
+
+  // 1. Canonicalize common payment processor / marketplace descriptors first
+  if (/^(?:uber\s*\*?\s*(?:uber\s+)?eats|ubereats)\b/i.test(s)) {
+    return 'Uber Eats';
+  }
+  if (/^uber\s*\*?\s*(?:trip|viaje)?\b/i.test(s)) {
+    return /\btrip\b|\bviaje\b/i.test(s) ? 'Uber Trip' : 'Uber';
+  }
+  if (/^(?:amzn\s*mktp|amazon(?:\.com)?)\b/i.test(s)) {
+    return 'Amazon';
+  }
+  if (/^apple\.com\/bill\b/i.test(s)) {
+    return 'Apple';
+  }
+  if (/^google\s*\*\s*(.+)/i.test(s)) {
+    const rest = s.replace(/^google\s*\*\s*/i, '').trim();
+    if (/youtube/i.test(rest)) return 'YouTube';
+    if (/one|drive|storage/i.test(rest)) return 'Google One';
+    if (/play/i.test(rest)) return 'Google Play';
+    return rest ? `Google ${toCleanTitleCase(rest.split(/\s+\d/)[0])}` : 'Google';
+  }
+  if (/^netflix(?:\.com)?\b/i.test(s)) {
+    return 'Netflix';
+  }
+  if (/^spotify\b/i.test(s)) {
+    return 'Spotify';
+  }
+
+  const pyMatch = s.match(/^(?:py\s*\*|pedidos\s*ya\s*\*|dlo\s*\*pedidos\s*ya)\s*(.*)$/i);
+  if (pyMatch) {
+    const tail = (pyMatch[1] || '')
+      .replace(/^pedidos\s*ya\b[\*\-\s]*/i, '')
+      .replace(/(?:^|\s+)(?:santo\s+domingo(?:\s+(?:este|oeste|norte|dn))?|distrito\s+nacional|dist\.?\s*nacional|rep\.?\s*dom\.?|do|rd)\b.*$/i, '')
+      .trim();
+    if (!tail || /^(?:propina|delivery|envio|envío)$/i.test(tail)) {
+      return tail ? `PedidosYa ${toCleanTitleCase(tail)}` : 'PedidosYa';
+    }
+    return `PedidosYa - ${toCleanTitleCase(tail)}`;
+  }
+
+  const paypalMatch = s.match(/^paypal\s*\*\s*(.+)$/i);
+  if (paypalMatch && paypalMatch[1]) {
+    s = paypalMatch[1].trim();
+  }
+
+  // Strip raw gateway / card-acquirer prefixes (Cardnet, Azul, Square, Toast, dLocal, etc.)
+  s = s.replace(/^(?:sq\s*\*|tst\s*\*|sp\s+|dlo\s*\*|pag\s*\*|cardnet\s*\*|azul\s*\*|visanet\s*\*|mp\s*\*|merpago\s*\*)\s*/i, '').trim();
+
+  // 2. Strip trailing store/terminal IDs, URLs, and Dominican/US city/country tags iteratively from end
+  s = s.replace(/\s+(?:help\.uber\.com|amzn\.com\/bill|g\.co\/helppay#?)\b.*$/i, '').trim();
+  s = s.replace(/\s*\*+[A-Z0-9]{4,}$/i, '').trim();
+  s = s.replace(/\s+#?\d{4,}$/, '').trim();
+
+  let prev = '';
+  while (s !== prev) {
+    prev = s;
+    s = s
+      .replace(
+        /,?\s+(?:santo\s+domingo(?:\s+(?:este|oeste|norte|dn))?|distrito\s+nacional|dist\.?\s*nacional|d\.n\.|rep\.?\s*dom\.?|rep[uú]blica\s+dominicana|santiago(?:\s+de\s+los\s+caballeros)?|punta\s+cana|b[aá]varo|la\s+romana|san\s+crist[oó]bal|puerto\s+plata|la\s+vega|hig[uü]ey|do|rd|usa?|ca)\.?$/i,
+        ''
+      )
+      .replace(/,?\s+\b(?:s\.?r\.?l\.?|e\.?i\.?r\.?l\.?|s\.?a\.?|inc\.?|llc\.?)\.?$/i, '')
+      .replace(/[\*\-\/,;:\s]+$/, '')
+      .trim();
+  }
+
+  // Collapse leftover asterisks inside names into clean spaces
+  s = s.replace(/\s*\*+\s*/g, ' ').replace(/\s{2,}/g, ' ').trim();
+
+  if (!s) return rawTitle.trim();
+  return toCleanTitleCase(s);
+}
+
 function extractMerchantFromText(text: string, rawSubject: string): string {
   if (!text) return '';
 
   // Priority 1: Explicit Field / Table Labels (same line, ": ", "  ", OR next line)
   const labelNames =
-    '(?:nombre\\s+del\\s+comercio|localidad\\s*\\/\\s*comercio|comercio\\s*\\/\\s*descripci[oó]n|lugar\\s+de\\s+consumo|comercio|establecimiento|localidad|negocio|afiliado|merchant|store|tienda|beneficiario|descripci[oó]n|descripcion|concepto)';
+    '(?:nombre\\s+del\\s+comercio|localidad\\s*\\/\\s*comercio|comercio\\s*\\/\\s*descripci[oó]n|lugar\\s+de\\s+consumo|comercio|establecimiento|localidad|negocio|afiliado|merchant|store|tienda|beneficiario|nombre\\s+del\\s+beneficiario|destinatario|remitente|descripci[oó]n|descripcion|concepto)';
 
   const sameLineLabelRegex = new RegExp(
     `(?:^|\\n)\\s*${labelNames}(?:\\s*:\\s*|\\s{2,})([^\\n\\r]{2,65})`,
@@ -421,11 +869,12 @@ function extractMerchantFromText(text: string, rawSubject: string): string {
     }
   }
 
-  // Priority 2: Sentence Patterns (supports "...consumo en su tarjeta *1234 en MERCHANT por RD$...")
+  // Priority 2: Sentence Patterns (Spanish & English: "...en MERCHANT por..." or "...at MERCHANT for...")
   const sentencePatterns = [
     /(?:compraste|gastaste|pagaste|consumiste|consumo|compra|transacci[oó]n|transaccion|pago|cargo|autorizaci[oó]n|autorizacion)[^\n\r]{0,140}?\ben\s+(?:el\s+(?:comercio|establecimiento)\s+)?(?!su\s+tarjeta|tu\s+tarjeta|la\s+tarjeta|su\s+cuenta|tu\s+cuenta|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
-    /(?:consumo\s+en|compra\s+en|pago\s+en|pago\s+a|realizado\s+en|realizada\s+en|aprobado\s+en|aprobada\s+en|efectuado\s+en|efectuada\s+en|transacci[oó]n\s+en|transaccion\s+en)\s+(?!su\s+tarjeta|tu\s+tarjeta|la\s+tarjeta|su\s+cuenta|tu\s+cuenta|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
-    /(?<!terminad[ao]\s)(?<!finaliza\s)\ben\s+([A-Z0-9][A-Z0-9\*\.\-\&\'\/\s]{2,45})(?=\s+(?:por|el\s+d[ií]a|el\s+\d|con\s+(?:su|tu)|rd\$|us\$|dop|usd|\$)|[,\r\n])/g
+    /(?:purchase(?:\s+alert)?|transaction(?:\s+alert)?|spent|paid|charged?|authorization|payment)[^\n\r]{0,140}?\bat\s+(?!your\s+card|card\s+\*|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
+    /(?:consumo\s+en|compra\s+en|pago\s+en|pago\s+a|realizado\s+en|realizada\s+en|aprobado\s+en|aprobada\s+en|efectuado\s+en|efectuada\s+en|transacci[oó]n\s+en|transaccion\s+en|transferencia\s+(?:a|hacia|para)|enviado\s+a|recibido\s+de)\s+(?!su\s+tarjeta|tu\s+tarjeta|la\s+tarjeta|su\s+cuenta|tu\s+cuenta|\d{4}\b)([A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/][A-Za-z0-9ÁÉÍÓÚáéíóúÑñÜü\*\.\-\&\'\/\s]{1,55})/gi,
+    /(?<!terminad[ao]\s)(?<!finaliza\s)\b(?:en|at)\s+([A-Z0-9][A-Z0-9\*\.\-\&\'\/\s]{2,45})(?=\s+(?:por|for|el\s+d[ií]a|el\s+\d|on\s+\d|con\s+(?:su|tu)|rd\$|us\$|dop|usd|\$)|[,\r\n])/g
   ];
 
   for (const pattern of sentencePatterns) {
@@ -440,6 +889,79 @@ function extractMerchantFromText(text: string, rawSubject: string): string {
   }
 
   return '';
+}
+
+function buildContextSnippet(
+  cleanedBody: string,
+  rawSubject: string,
+  meta: {
+    bankName: string;
+    cardNumber?: string;
+    outcomeLabel: string;
+  }
+): string {
+  const boilerplateLine =
+    /^(?:estimad[oa]|apreciad[oa]|hola\b|buenos\s+d[ií]as|buenas\s+tardes|buenas\s+noches|recib[ae]\s+un\s+cordial|atentamente|saludos|si\s+no\s+reconoces|si\s+desconoces|comun[ií]cate|centro\s+de\s+contacto|nunca\s+(?:te\s+)?(?:pediremos|compartas)|este\s+correo\s+(?:es\s+informativo|fue\s+generado)|aviso\s+legal|confidencial|todos\s+los\s+derechos|copyright|©|http|www\.|desuscribir|unsubscribe|ver\s+en\s+navegador)/i;
+
+  const lines = cleanedBody
+    .split('\n')
+    .map(l => l.replace(/\s{2,}/g, ' • ').trim())
+    .filter(l => l.length >= 12 && !boilerplateLine.test(l) && !/https?:\/\/|www\./i.test(l));
+
+  // Extract structured fields if present (Concepto / Descripción / Referencia / Autorización)
+  const conceptMatch = cleanedBody.match(/(?:^|\n)\s*(?:concepto|descripci[oó]n|descripcion|motivo|detalle)(?:\s*:\s*|\s{2,})([^\n\r]{3,75})/i);
+  const authMatch = cleanedBody.match(/(?:autorizaci[oó]n|referencia|no\.?\s*referencia)(?:\s*:\s*|\s{2,}|#\s*)([A-Z0-9\-]{4,20})/i);
+
+  // Look for a rich single narrative sentence describing the transaction
+  const txSentenceRegex =
+    /(?:consumo|compra|compraste|transacci[oó]n|transferencia|pago|retiro|dep[oó]sito|cargo|reverso|reembolso|declinad|rechazad|aprobada|purchase|charged|declined|reversed)/i;
+
+  const bestNarrativeLine = lines.find(
+    l =>
+      l.length >= 25 &&
+      l.length <= 220 &&
+      txSentenceRegex.test(l) &&
+      (/(?:rd\$|us\$|dop|usd|\$\s*\d)/i.test(l) || /\*{1,4}\d{4}/.test(l) || /terminad[ao]\s+en\s+\d{4}/i.test(l))
+  );
+
+  const parts: string[] = [];
+  if (conceptMatch && conceptMatch[1]) {
+    const cleanConcept = conceptMatch[1].trim();
+    if (!isNoiseMerchant(cleanConcept, rawSubject)) {
+      parts.push(cleanConcept);
+    }
+  }
+
+  let baseSnippet = '';
+  if (bestNarrativeLine) {
+    baseSnippet = bestNarrativeLine.replace(/^[\-\•\*:\s]+/, '').trim();
+    if (parts.length > 0 && !baseSnippet.toLowerCase().includes(parts[0].toLowerCase())) {
+      baseSnippet = `${baseSnippet} (${parts[0]})`;
+    }
+  } else {
+    const fallbackParts: string[] = [];
+    if (rawSubject && !/^(?:notificaci[oó]n|alerta|aviso)$/i.test(rawSubject.trim())) {
+      fallbackParts.push(rawSubject.trim());
+    }
+    if (parts[0]) fallbackParts.push(`Concepto: ${parts[0]}`);
+    if (meta.cardNumber) fallbackParts.push(`Card *${meta.cardNumber}`);
+    if (authMatch?.[1]) fallbackParts.push(`Ref ${authMatch[1].trim()}`);
+    if (fallbackParts.length === 0 && lines.length > 0) {
+      fallbackParts.push(lines.slice(0, 2).join(' • '));
+    }
+    baseSnippet = fallbackParts.join(' • ');
+  }
+
+  if (!baseSnippet) {
+    baseSnippet = `${meta.bankName} ${meta.outcomeLabel}${meta.cardNumber ? ` • Card *${meta.cardNumber}` : ''}`;
+  }
+
+  if (baseSnippet.length > 155) {
+    const sliced = baseSnippet.slice(0, 152);
+    const lastSpace = sliced.lastIndexOf(' ');
+    return `${(lastSpace > 90 ? sliced.slice(0, lastSpace) : sliced).trim()}…`;
+  }
+  return baseSnippet;
 }
 
 function classifyMerchantCategory(merchantName: string): string {
@@ -458,7 +980,8 @@ function classifyMerchantCategory(merchantName: string): string {
     return 'Groceries';
   }
   if (
-    lowerM.includes('uber') ||
+    lowerM.includes('uber trip') ||
+    lowerM === 'uber' ||
     lowerM.includes('didi') ||
     lowerM.includes('indriver') ||
     lowerM.includes('gasolina') ||
@@ -476,6 +999,7 @@ function classifyMerchantCategory(merchantName: string): string {
   if (
     lowerM.includes('restaurante') ||
     lowerM.includes('pedidosya') ||
+    lowerM.includes('uber eats') ||
     lowerM.includes('ubereats') ||
     lowerM.includes('cafe') ||
     lowerM.includes('mcdonald') ||
@@ -495,6 +1019,7 @@ function classifyMerchantCategory(merchantName: string): string {
     lowerM.includes('spotify') ||
     lowerM.includes('apple') ||
     lowerM.includes('google') ||
+    lowerM.includes('youtube') ||
     lowerM.includes('prime') ||
     lowerM.includes('icloud') ||
     lowerM.includes('disney') ||
@@ -524,6 +1049,7 @@ function classifyMerchantCategory(merchantName: string): string {
 /**
  * Robust parser for Dominican bank alert emails (Banco Popular, Banreservas, BHD, Qik, Santa Cruz, etc.)
  * Works with raw MIME/HTML email bodies, Gmail full messages, and plain text alerts.
+ * Strictly filters out marketing promotions, OTP verification codes, and statement-only reminders.
  */
 export function parseBankEmailAlert(
   rawText: string,
@@ -535,32 +1061,25 @@ export function parseBankEmailAlert(
   const combined = `${rawSender}\n${rawSubject}\n${cleanedBody}`.trim();
   if (!combined || combined.length < 10) return null;
 
-  const lower = combined.toLowerCase();
-
-  // 1. Detect Bank Name & validate that this email is genuinely a bank/financial transaction alert
-  let bankName = '';
-  for (const bank of KNOWN_BANKS) {
-    if (bank.keywords.some(kw => lower.includes(kw))) {
-      bankName = bank.name;
-      break;
-    }
-  }
-
-  const hasTxKeyword = TRANSACTION_ALERT_KEYWORDS.some(kw => lower.includes(kw));
-  const hasExplicitCurrency = /(?:rd\$|us\$|dop|usd)/i.test(combined);
-
-  // Reject non-bank / marketing / unrelated inbox messages
-  if (!bankName && !(hasTxKeyword && hasExplicitCurrency)) {
+  // 1. Strict gate: Reject promotional offers, marketing newsletters, OTPs & statement reminders
+  if (isPromotionalOrNonTransactionEmail(rawSubject, cleanedBody, rawSender)) {
     return null;
   }
-  if (!hasTxKeyword && !hasExplicitCurrency) {
+
+  const lower = combined.toLowerCase();
+
+  // 2. Detect Bank Name prioritizing Sender -> Subject -> Strict Body Matches
+  let bankName = detectBankName(rawSender, rawSubject, cleanedBody);
+  const hasExplicitCurrency = /(?:rd\$|us\$|dop|usd)/i.test(combined);
+
+  if (!bankName && !hasExplicitCurrency) {
     return null;
   }
   if (!bankName) {
-    bankName = 'Dominican Bank';
+    bankName = 'Bank Alert';
   }
 
-  // 2. Detect Currency
+  // 3. Detect Currency
   let currency: 'RD$' | 'USD' | '$' = 'RD$';
   if (
     lower.includes('us$') ||
@@ -579,7 +1098,7 @@ export function parseBankEmailAlert(
     currency = 'RD$';
   }
 
-  // 3. Extract Amount (prioritize explicitly currency-tagged or keyword-tagged amounts)
+  // 4. Extract Amount (prioritize explicitly currency-tagged or keyword-tagged amounts)
   const currencyRegex = /(?:rd\$|us\$|\$|dop|usd)\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2})?)/gi;
   const labelRegex =
     /(?:monto|valor|importe|consumo\s+por|compra\s+por|compraste|pago\s+por|total|cantidad)(?:\s*(?:de|por|:|\s))\s*(?:rd\$|us\$|\$|dop|usd)?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2})?)/gi;
@@ -612,7 +1131,7 @@ export function parseBankEmailAlert(
 
   if (amount <= 0) return null;
 
-  // 4. Detect Card / Account Last 4 Digits
+  // 5. Detect Card / Account Last 4 Digits
   const cardPatterns = [
     /(?:tarjeta|cuenta|tc|td|terminad[ao]\s+en|finaliza\s+en|ending\s+in|#)\s*(?:no\.?|num\.?|número|:|\s)*[\*xX]*\s*([0-9]{4})\b/i,
     /\*{1,4}\s*([0-9]{4})\b/,
@@ -627,7 +1146,7 @@ export function parseBankEmailAlert(
     }
   }
 
-  // 5. Detect Date (DD/MM/YYYY, YYYY-MM-DD, DD-MMM-YYYY)
+  // 6. Detect Date (DD/MM/YYYY, YYYY-MM-DD, DD-MMM-YYYY)
   let dateStr = '';
   const isoMatch = combined.match(/\b(20[0-9]{2})[\/\-](0[1-9]|1[0-2])[\/\-](0[1-9]|[12][0-9]|3[01])\b/);
   if (isoMatch) {
@@ -669,19 +1188,17 @@ export function parseBankEmailAlert(
     dateStr = new Date().toISOString().split('T')[0];
   }
 
-  // 6. Detect Email Transaction Outcome (Declined / Reversed / Went Through)
+  // 7. Detect Email Transaction Outcome (Declined / Reversed / Went Through)
   function detectOutcome(textToCheck: string): {
     emailOutcome: EmailTransactionOutcome;
     outcomeLabel: 'Went Through' | 'Declined' | 'Reversed';
   } {
-    // Check negated approvals & explicit decline terms FIRST so "no fue aprobada" doesn't match "aprobada"
     const declinedPattern =
       /(?:\bno\s+(?:fue\s+|ha\s+sido\s+|pudo\s+ser\s+)?(?:aprobada|aprobado|procesada|procesado|completada|completado|autorizada|autorizado)|declinad[ao]|rechazad[ao]|denegad[ao]|fallid[ao]|fondos\s+insuficientes|saldo\s+insuficiente|l[ií]mite\s+excedido|tarjeta\s+bloqueada|pin\s+incorrecto|\bdeclined\b|\brejected\b|\bdenied\b|\bunsuccessful\b|\bfailed\s+(?:transaction|payment|charge)|insufficient\s+funds)/i;
     if (declinedPattern.test(textToCheck)) {
       return { emailOutcome: 'declined', outcomeLabel: 'Declined' };
     }
 
-    // Check reversal / refund / void terms
     const reversedPattern =
       /(?:reversad[ao]|\breverso\b|reembols[ao]|reembolsad[ao]|devoluci[oó]n|anulad[ao]|anulaci[oó]n|\bextorno\b|(?:transacci[oó]n|compra|consumo|cargo|pago)\s+cancelad[ao]|\breversed\b|\breversal\b|\brefunded\b|\brefund\b|\bvoided\b|\bchargeback\b)/i;
     if (reversedPattern.test(textToCheck)) {
@@ -693,30 +1210,26 @@ export function parseBankEmailAlert(
 
   const { emailOutcome, outcomeLabel } = detectOutcome(`${rawSubject}\n${cleanedBody}`);
 
-  // 7. Detect Type & Merchant / Title
-  let title = `${bankName} Alert`;
+  // 8. Detect Type, Refined Merchant Title & Category
+  let title = `${bankName} Purchase`;
   let category = 'Shopping';
   let type: 'expense' | 'income' | 'transfer' = 'expense';
 
-  const detectedMerchant =
+  const rawDetectedMerchant =
     extractMerchantFromText(cleanedBody, rawSubject) ||
     extractMerchantFromText(rawSubject, rawSubject);
+  const refinedMerchant = rawDetectedMerchant ? refineMerchantName(rawDetectedMerchant) : '';
 
-  if (emailOutcome === 'reversed') {
-    type = 'income';
-    category = 'Refund / Reversal';
-    title = detectedMerchant ? `Reversal - ${detectedMerchant}` : `Reversal (${bankName})`;
-  } else if (
+  const isAtmWithdrawal = /\b(?:retiro\s+(?:en\s+)?(?:cajero|atm|efectivo)|cash\s+withdrawal|atm\s+withdrawal)\b/i.test(lower);
+  const isOutgoingTransfer =
     lower.includes('transferencia enviada') ||
     lower.includes('transferencia saliente') ||
+    lower.includes('transferencia realizada') ||
     lower.includes('pago al instante') ||
     lower.includes('transferencia entre cuentas') ||
-    lower.includes('transferencia ach')
-  ) {
-    type = 'transfer';
-    category = 'Transfer';
-    title = detectedMerchant ? `Transfer - ${detectedMerchant}` : `Transfer (${bankName})`;
-  } else if (
+    lower.includes('transferencia ach') ||
+    lower.includes('transferencia lbtr');
+  const isIncomingDeposit =
     lower.includes('deposito') ||
     lower.includes('depósito') ||
     lower.includes('credito recibido') ||
@@ -724,17 +1237,38 @@ export function parseBankEmailAlert(
     lower.includes('transferencia recibida') ||
     lower.includes('abono recibido') ||
     lower.includes('nómina') ||
-    lower.includes('nomina')
-  ) {
+    lower.includes('nomina') ||
+    lower.includes('payment received');
+
+  if (emailOutcome === 'reversed') {
+    type = 'income';
+    category = 'Refund / Reversal';
+    title = refinedMerchant ? `Reversal - ${refinedMerchant}` : `Reversal (${bankName})`;
+  } else if (isOutgoingTransfer) {
+    type = 'transfer';
+    category = 'Transfer';
+    title = refinedMerchant ? `Transfer - ${refinedMerchant}` : `Transfer (${bankName})`;
+  } else if (isIncomingDeposit) {
     type = 'income';
     category = 'Income';
-    title = detectedMerchant ? `Deposit - ${detectedMerchant}` : `Deposit (${bankName})`;
-  } else if (detectedMerchant) {
-    title = detectedMerchant;
-    category = classifyMerchantCategory(detectedMerchant);
+    title = refinedMerchant ? `Deposit - ${refinedMerchant}` : `Deposit (${bankName})`;
+  } else if (isAtmWithdrawal && !refinedMerchant) {
+    type = 'expense';
+    category = 'Cash & ATM';
+    title = `ATM Withdrawal (${bankName})`;
+  } else if (refinedMerchant) {
+    title = refinedMerchant;
+    category = classifyMerchantCategory(refinedMerchant);
   } else {
-    title = rawSubject ? rawSubject.slice(0, 80) : `${bankName} Consumption`;
+    // Never fall back to raw email notification title (e.g. "Notificación de Consumo")
+    title = `${bankName} Purchase`;
   }
+
+  const contextSnippet = buildContextSnippet(cleanedBody, rawSubject, {
+    bankName,
+    cardNumber,
+    outcomeLabel
+  });
 
   const statusNote =
     emailOutcome === 'declined'
@@ -752,7 +1286,8 @@ export function parseBankEmailAlert(
     date: dateStr,
     cardNumber,
     bankName,
-    notes: `Email alert from ${bankName}${cardNumber ? ` (Card *${cardNumber})` : ''}${statusNote}`,
+    notes: `${bankName}${cardNumber ? ` • Card *${cardNumber}` : ''}${statusNote}`,
+    contextSnippet,
     status: 'pending',
     emailOutcome,
     outcomeLabel,

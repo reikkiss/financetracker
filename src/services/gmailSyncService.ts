@@ -4,19 +4,12 @@ import {
   reauthenticateWithPopup,
   signInWithPopup
 } from 'firebase/auth';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { parseBankEmailAlert, ParsedEmailTransaction } from '../utils/bankEmailParser';
 
 export const GMAIL_READONLY_SCOPE = 'https://www.googleapis.com/auth/gmail.readonly';
 
-// Dedicated OAuth Client ID on project gen-lang-client-0740809000 where Gmail API is enabled,
-// keeping Firebase Auth & Firestore DB cleanly on seashore-be233 (seashore).
-const GMAIL_OAUTH_CLIENT_ID =
-  (import.meta as any).env?.VITE_GMAIL_OAUTH_CLIENT_ID ||
-  '951922406642-uhdin2qhvmo0oono0f4796elils4j37h.apps.googleusercontent.com';
-
 export const BANK_GMAIL_SEARCH_QUERY =
-  'from:(banreservas.com OR bpd.com.do OR popularenlinea.com OR bhd.com.do OR qik.do OR qik.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono)';
+  'from:(banreservas.com OR notificacionestubancoapp@banreservas.com OR bpd.com.do OR popularenlinea.com OR notificaciones@popularenlinea.com OR bhd.com.do OR alertas@bhd.com.do OR qik.do OR notificaciones@qik.do OR azul.com.do OR notificaciones@azul.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR bancocaribe OR vimenca OR bdi.com.do OR blh.com.do OR paypal.com OR popular OR reservas OR bhd OR qik OR azul OR bpd) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono OR pago OR debito OR débito)';
 
 // Strictly in-memory OAuth token cache (per Google Workspace integration policy — never stored in localStorage/sessionStorage)
 let cachedGmailAccessToken: string | null = null;
@@ -92,7 +85,7 @@ async function safeParseJsonResponse(res: Response): Promise<any> {
   }
 
   if (!res.ok) {
-    const apiMsg = data?.error?.message || data?.error || `Gmail API error (HTTP ${res.status})`;
+    const apiMsg = String(data?.error?.message || data?.error || `Gmail API error (HTTP ${res.status})`);
     if (res.status === 401) {
       cachedGmailAccessToken = null;
       cachedGmailTokenExpiresAt = 0;
@@ -101,7 +94,13 @@ async function safeParseJsonResponse(res: Response): Promise<any> {
         'GMAIL_TOKEN_EXPIRED'
       );
     }
-    throw new GmailAuthError(String(apiMsg), 'GMAIL_API_ERROR');
+    if (res.status === 403 && /gmail api has not been used|is disabled/i.test(apiMsg)) {
+      throw new GmailAuthError(
+        'Gmail API is not enabled on Firebase project 965612621346 (seashore-be233). Enable Gmail API in Google Cloud Console for project 965612621346, wait 1–2 minutes, and click "Reconnect Gmail".',
+        'GMAIL_API_ERROR'
+      );
+    }
+    throw new GmailAuthError(apiMsg, 'GMAIL_API_ERROR');
   }
 
   return data;
@@ -128,70 +127,10 @@ export async function fetchGmailProfile(accessToken: string): Promise<GmailProfi
   };
 }
 
-async function ensureGsiLoaded(timeoutMs = 5000): Promise<any> {
-  const win = window as any;
-  if (win.google?.accounts?.oauth2) return win.google.accounts.oauth2;
-
-  // Inject script dynamically if not already present
-  if (!document.querySelector('script[src="https://accounts.google.com/gsi/client"]')) {
-    const s = document.createElement('script');
-    s.src = 'https://accounts.google.com/gsi/client';
-    s.async = true;
-    s.defer = true;
-    document.head.appendChild(s);
-  }
-
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (win.google?.accounts?.oauth2) return win.google.accounts.oauth2;
-    await new Promise(r => setTimeout(r, 100));
-  }
-  return null;
-}
-
-async function requestGisToken(
-  clientId: string,
-  options: { prompt?: string; hint?: string } = {}
-): Promise<{ accessToken: string; expiresIn: number }> {
-  const oauth2 = await ensureGsiLoaded();
-  if (!oauth2) {
-    throw new Error('Google Identity Services could not be loaded.');
-  }
-
-  return new Promise((resolve, reject) => {
-    try {
-      const client = oauth2.initTokenClient({
-        client_id: clientId,
-        scope: GMAIL_READONLY_SCOPE,
-        ...(options.hint ? { hint: options.hint } : {}),
-        callback: (resp: any) => {
-          if (resp?.error) {
-            reject(new Error(resp.error_description || resp.error));
-            return;
-          }
-          if (!resp?.access_token) {
-            reject(new Error('Google did not return a Gmail access token.'));
-            return;
-          }
-          resolve({
-            accessToken: resp.access_token,
-            expiresIn: Number(resp.expires_in) || 3500
-          });
-        },
-        error_callback: (err: any) => {
-          reject(new Error(err?.message || err?.type || 'Google authorization popup was closed or blocked.'));
-        }
-      });
-
-      client.requestAccessToken({
-        prompt: options.prompt ?? 'consent'
-      });
-    } catch (err: any) {
-      reject(err);
-    }
-  });
-}
-
+/**
+ * Authorizes read-only Gmail access using Firebase Auth's GoogleAuthProvider popup flow
+ * (bound to seashore-be233 / 965612621346 Authorized Domains — no standalone GIS origin_mismatch).
+ */
 export async function authorizeGmailAccess(hintEmail?: string): Promise<{
   accessToken: string;
   emailAddress: string;
@@ -199,70 +138,65 @@ export async function authorizeGmailAccess(hintEmail?: string): Promise<{
 }> {
   const auth = getAuth();
   const hint = hintEmail || cachedGmailEmail || auth.currentUser?.email || undefined;
-  const targetClientId = GMAIL_OAUTH_CLIENT_ID || (firebaseConfig as any).oAuthClientId;
+
+  const provider = new GoogleAuthProvider();
+  provider.addScope(GMAIL_READONLY_SCOPE);
+  provider.setCustomParameters({
+    prompt: 'consent',
+    ...(hint ? { login_hint: hint } : {})
+  });
 
   let token = '';
-  let expiresIn = 3500;
+  let signedInEmail = '';
 
-  if (targetClientId) {
-    try {
-      const gisRes = await requestGisToken(targetClientId, {
-        prompt: hint ? '' : 'select_account',
-        hint
-      });
-      token = gisRes.accessToken;
-      expiresIn = gisRes.expiresIn;
-    } catch {
-      // Retry explicitly with select_account if silent/hinted prompt needed consent
-      const gisRes = await requestGisToken(targetClientId, {
-        prompt: 'select_account',
-        hint
-      });
-      token = gisRes.accessToken;
-      expiresIn = gisRes.expiresIn;
-    }
-  } else {
-    // Fallback to Firebase Auth popup if no dedicated OAuth client ID is present
-    const provider = new GoogleAuthProvider();
-    provider.addScope(GMAIL_READONLY_SCOPE);
-    provider.setCustomParameters({
-      prompt: 'consent',
-      ...(hint ? { login_hint: hint } : {})
-    });
+  try {
     const result = auth.currentUser
       ? await reauthenticateWithPopup(auth.currentUser, provider)
       : await signInWithPopup(auth, provider);
+
     const credential = GoogleAuthProvider.credentialFromResult(result);
     if (!credential?.accessToken) {
       throw new Error('Google did not return a Gmail read-only OAuth token.');
     }
     token = credential.accessToken;
+    signedInEmail = result.user?.email || '';
+  } catch (err: any) {
+    const code = err?.code || '';
+    if (code === 'auth/unauthorized-domain') {
+      const host = typeof window !== 'undefined' ? window.location.hostname : 'this domain';
+      throw new Error(
+        `Domain "${host}" is not authorized in Firebase Auth. Add "${host}" in Firebase Console → Authentication → Settings → Authorized domains (project seashore-be233).`
+      );
+    }
+    if (code === 'auth/user-mismatch') {
+      throw new Error(
+        `Please select your signed-in Google account (${auth.currentUser?.email || 'current account'}) in the popup to grant Gmail read-only access.`
+      );
+    }
+    if (code === 'auth/popup-blocked') {
+      throw new Error('The Google sign-in popup was blocked by your browser. Please allow popups for this site and try again.');
+    }
+    if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+      throw new Error('Google authorization popup was closed before completing.');
+    }
+    throw err;
   }
 
-  setMemoryGmailToken(token, hint || null, expiresIn);
+  setMemoryGmailToken(token, signedInEmail || hint || null, 3500);
   const profile = await fetchGmailProfile(token);
-  setMemoryGmailToken(token, profile.emailAddress || hint || null, expiresIn);
+  setMemoryGmailToken(token, profile.emailAddress || signedInEmail || hint || null, 3500);
 
   return {
     accessToken: token,
-    emailAddress: profile.emailAddress || hint || '',
+    emailAddress: profile.emailAddress || signedInEmail || hint || '',
     historyId: profile.historyId
   };
 }
 
-export async function trySilentRefreshGmailToken(hintEmail?: string): Promise<string | null> {
-  const targetClientId = GMAIL_OAUTH_CLIENT_ID || (firebaseConfig as any).oAuthClientId;
-  if (!targetClientId) return null;
-  try {
-    const gisRes = await requestGisToken(targetClientId, {
-      prompt: '',
-      hint: hintEmail || cachedGmailEmail || getAuth().currentUser?.email || undefined
-    });
-    setMemoryGmailToken(gisRes.accessToken, hintEmail || cachedGmailEmail || null, gisRes.expiresIn);
-    return gisRes.accessToken;
-  } catch {
-    return null;
-  }
+export async function trySilentRefreshGmailToken(_hintEmail?: string): Promise<string | null> {
+  // Firebase Auth popup tokens cannot be refreshed silently in background without a popup click.
+  // Return any still-valid in-memory token cleanly so the UI prompts Reconnect Gmail on 1h expiry.
+  return getMemoryGmailToken();
 }
 
 function decodeBase64UrlToText(base64Url: string, charset = 'utf-8'): string {

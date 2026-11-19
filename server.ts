@@ -37,13 +37,22 @@ async function startServer() {
   const app = express();
   app.use(express.json({ limit: '25mb' }));
   app.use('/api', (req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
-    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    const origin = req.headers.origin || '*';
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    if (req.headers['access-control-request-private-network']) {
+      res.header('Access-Control-Allow-Private-Network', 'true');
+    }
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
     }
     next();
+  });
+
+  app.get('/api/health', (_req, res) => {
+    res.json({ ok: true, service: 'finance-tracker-api', imapSupported: true });
   });
 
   // API Endpoints backed by Firebase Firestore (seashore)
@@ -260,30 +269,49 @@ Instructions:
     }
   });
 
+  // Helper to format friendly iCloud IMAP diagnostics
+  const formatICloudImapError = (err: any): string => {
+    const raw = String(err?.responseText || err?.message || '');
+    if (/AUTHENTICATIONFAILED|Invalid credentials|Command failed/i.test(raw)) {
+      return 'iCloud login rejected. Use your full @icloud.com/@me.com email and a 16-character App-Specific Password from account.apple.com (not your normal Apple ID password).';
+    }
+    if (/ETIMEDOUT|ECONNREFUSED|ENOTFOUND|timeout/i.test(raw)) {
+      return 'Timed out connecting to imap.mail.me.com:993. Verify outbound IMAP port 993 is allowed and retry.';
+    }
+    return raw || 'Could not connect to iCloud IMAP. Verify your Apple ID and App-Specific Password (generate at appleid.apple.com).';
+  };
+
   // Test iCloud IMAP Connection
   app.post('/api/email/test-icloud', async (req, res) => {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
+    }
+
+    const client = new ImapFlow({
+      host: 'imap.mail.me.com',
+      port: 993,
+      secure: true,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 30000,
+      auth: {
+        user: String(email).trim(),
+        pass: String(password).trim()
+      },
+      logger: false
+    });
+
     try {
-      const { email, password } = req.body;
-      if (!email || !password) {
-        return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
-      }
-
-      const client = new ImapFlow({
-        host: 'imap.mail.me.com',
-        port: 993,
-        secure: true,
-        auth: {
-          user: email.trim(),
-          pass: password.trim()
-        },
-        logger: false
-      });
-
       await client.connect();
       const lock = await client.getMailboxLock('INBOX');
-      const status = await client.status('INBOX', { messages: true });
-      lock.release();
-      await client.logout();
+      let status: any = null;
+      try {
+        status = await client.status('INBOX', { messages: true });
+      } finally {
+        lock.release();
+      }
+      await client.logout().catch(() => client.close());
 
       res.json({
         success: true,
@@ -291,32 +319,36 @@ Instructions:
         totalInboxMessages: typeof status === 'object' && status ? (status.messages || 0) : 0
       });
     } catch (err: any) {
+      try { client.close(); } catch {}
       console.error('iCloud test error:', err);
       res.status(400).json({
-        error: err.message || 'Could not connect to iCloud IMAP. Verify your Apple ID and App-Specific Password (generate at appleid.apple.com).'
+        error: formatICloudImapError(err)
       });
     }
   });
 
   // Real iCloud IMAP Bank Alert Sync
   app.post('/api/email/sync-icloud', async (req, res) => {
+    const { email, password, limit = 40 } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
+    }
+
+    const client = new ImapFlow({
+      host: 'imap.mail.me.com',
+      port: 993,
+      secure: true,
+      connectionTimeout: 15000,
+      greetingTimeout: 10000,
+      socketTimeout: 45000,
+      auth: {
+        user: String(email).trim(),
+        pass: String(password).trim()
+      },
+      logger: false
+    });
+
     try {
-      const { email, password, limit = 40 } = req.body;
-      if (!email || !password) {
-        return res.status(400).json({ error: 'iCloud email and App-Specific Password are required.' });
-      }
-
-      const client = new ImapFlow({
-        host: 'imap.mail.me.com',
-        port: 993,
-        secure: true,
-        auth: {
-          user: email.trim(),
-          pass: password.trim()
-        },
-        logger: false
-      });
-
       await client.connect();
       const lock = await client.getMailboxLock('INBOX');
       const alerts: any[] = [];
@@ -359,7 +391,7 @@ Instructions:
         lock.release();
       }
 
-      await client.logout();
+      await client.logout().catch(() => client.close());
 
       res.json({
         success: true,
@@ -369,9 +401,10 @@ Instructions:
         alerts: alerts.reverse()
       });
     } catch (err: any) {
+      try { client.close(); } catch {}
       console.error('iCloud sync error:', err);
       res.status(500).json({
-        error: err.message || 'Failed to sync from iCloud IMAP. Please ensure you generated an App-Specific Password at appleid.apple.com.'
+        error: formatICloudImapError(err)
       });
     }
   });
@@ -389,7 +422,7 @@ Instructions:
       }
 
       const queryStr = encodeURIComponent(
-        'from:(banreservas.com OR bpd.com.do OR popularenlinea.com OR bhd.com.do OR qik.do OR qik.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono)'
+        'from:(banreservas.com OR notificacionestubancoapp@banreservas.com OR bpd.com.do OR popularenlinea.com OR notificaciones@popularenlinea.com OR bhd.com.do OR alertas@bhd.com.do OR qik.do OR notificaciones@qik.do OR azul.com.do OR notificaciones@azul.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR bancocaribe OR vimenca OR bdi.com.do OR blh.com.do OR paypal.com OR popular OR reservas OR bhd OR qik OR azul OR bpd) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono OR pago OR debito OR débito)'
       );
       const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${queryStr}&maxResults=${maxResults}`;
       const listRes = await fetch(listUrl, {

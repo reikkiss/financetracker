@@ -180,7 +180,7 @@ export default function BudgetsPage({
           <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
             ACCOUNTS & OBLIGATIONS
           </span>
-          <h2 className="text-2xl font-bold text-white tracking-tight">Budgets, Bank & Debt Accounts</h2>
+          <h2 className="text-2xl font-bold text-[#1D1D1F] dark:text-white tracking-[-0.03em]">Budgets, Bank & Debt Accounts</h2>
           <p className="text-xs text-[#86868B] mt-0.5">
             Manage bank & debit accounts, standard budgets, credit cards with overdraft limits, loans, and transfers.
           </p>
@@ -189,7 +189,7 @@ export default function BudgetsPage({
           {onOpenTransfer && budgets.length >= 2 && (
             <button
               onClick={() => onOpenTransfer()}
-              className="bg-[#0071E3]/15 hover:bg-[#0071E3]/25 text-[#5AC8FA] border border-[#0071E3]/30 px-4 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+              className="bg-[#0071E3]/10 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-4 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
             >
               <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer
             </button>
@@ -206,23 +206,23 @@ export default function BudgetsPage({
       {/* Liquid Accounts Overview Cards */}
       {liquidAccounts.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Total Bank & Debit Balance</span>
-            <span className={`text-xl font-bold tabular-nums block mt-1 ${totalLiquidBalance >= 0 ? 'text-[#34C759]' : 'text-[#FF3B30]'}`}>
+            <span className={`text-xl font-bold tabular-nums block mt-1 ${totalLiquidBalance >= 0 ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#D70015] dark:text-[#FF3B30]'}`}>
               {currencySymbol}{totalLiquidBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B]">Across {liquidAccounts.length} cash & checking accounts</span>
           </div>
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Bank Accounts ({bankAccounts.length})</span>
-            <span className="text-xl font-bold tabular-nums text-[#5AC8FA] block mt-1">
+            <span className="text-xl font-bold tabular-nums text-[#0071E3] dark:text-[#5AC8FA] block mt-1">
               {currencySymbol}{totalBankBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B]">Checking & savings balances</span>
           </div>
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Debit Accounts ({debitAccounts.length})</span>
-            <span className="text-xl font-bold tabular-nums text-[#34C759] block mt-1">
+            <span className="text-xl font-bold tabular-nums text-[#248A3D] dark:text-[#34C759] block mt-1">
               {currencySymbol}{totalDebitBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B]">Debit cards & everyday cash</span>
@@ -233,23 +233,23 @@ export default function BudgetsPage({
       {/* Debt & Credit Overview Cards */}
       {debtAccounts.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Total Debt / Loan Balance</span>
-            <span className="text-xl font-bold tabular-nums text-[#FF3B30] block mt-1">
+            <span className="text-xl font-bold tabular-nums text-[#D70015] dark:text-[#FF3B30] block mt-1">
               {currencySymbol}{totalDebtBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B]">Across {debtAccounts.length} credit lines & loans</span>
           </div>
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Total Authorized Capacity</span>
-            <span className="text-xl font-bold tabular-nums text-white block mt-1">
+            <span className="text-xl font-bold tabular-nums text-[#1D1D1F] dark:text-white block mt-1">
               {currencySymbol}{totalDebtLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B]">Credit limits (incl. overdraft) + loan principals</span>
           </div>
-          <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[20px] shadow-xl">
+          <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[20px] shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
             <span className="text-[11px] uppercase tracking-wider text-[#86868B] font-semibold block">Available Credit / Paid Principal</span>
-            <span className="text-xl font-bold tabular-nums text-[#34C759] block mt-1">
+            <span className="text-xl font-bold tabular-nums text-[#248A3D] dark:text-[#34C759] block mt-1">
               {currencySymbol}{Math.max(0, totalDebtLimit - totalDebtBalance).toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
             <span className="text-[11px] text-[#86868B] tabular-nums">
@@ -261,7 +261,7 @@ export default function BudgetsPage({
 
       {/* Empty State */}
       {budgets.length === 0 ? (
-        <div className="bg-[#1C1C1E] border border-white/10 rounded-[22px] p-12 text-center text-xs text-[#86868B] space-y-3 shadow-xl">
+        <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-[22px] p-12 text-center text-xs text-[#86868B] space-y-3 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
           <p>No budgets, bank accounts, or debt accounts configured in database yet.</p>
           <button onClick={onOpenAddBudget} className="bg-[#0071E3] hover:bg-[#0077ED] text-white px-5 py-2.5 rounded-full font-semibold transition">
             Create First Budget / Account
@@ -302,16 +302,6 @@ export default function BudgetsPage({
               ? (ccCalc.monthlyLimit > 0 ? ccCalc.monthlyLimit : b.limit)
               : b.limit;
 
-            const percent = effectiveLimit > 0 ? Math.min(Math.round((spent / effectiveLimit) * 100), 100) : 0;
-            const isOver = effectiveLimit > 0 && spent > effectiveLimit;
-
-            const usedBalance = Number(b.actualUsedAmount) || 0;
-            const availableCredit = isCreditCard
-              ? Math.max(0, ccCalc.monthlyLimit - usedBalance)
-              : Math.max(0, baseCreditLimit - usedBalance);
-            const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
-            const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
-
             // Liquid Account (Bank / Debit) metrics
             const currentCashBalance = Number(b.accountBalance) || 0;
             const directInflows = transactions
@@ -328,6 +318,13 @@ export default function BudgetsPage({
               .reduce((s, t) => s + t.amount, 0);
             const totalInflows = directInflows + transfersIn;
             const totalOutflows = directOutflows + transfersOut;
+
+            const usedBalance = Number(b.actualUsedAmount) || 0;
+            const availableCredit = isCreditCard
+              ? Math.max(0, ccCalc.monthlyLimit - usedBalance)
+              : Math.max(0, baseCreditLimit - usedBalance);
+            const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
+            const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
 
             // Loan calculations & Quotas
             const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
@@ -412,37 +409,37 @@ export default function BudgetsPage({
             return (
               <div
                 key={b.id}
-                className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[22px] space-y-4 shadow-xl hover:border-white/20 transition"
+                className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[22px] space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl hover:border-black/[0.1] dark:hover:border-white/20 transition"
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 truncate">
-                    <div className="w-9 h-9 rounded-xl bg-[#191919] border border-[#2c2c2c] flex items-center justify-center shrink-0 mt-0.5">
+                    <div className="w-9 h-9 rounded-xl bg-[#F2F2F7] dark:bg-[#191919] border border-black/[0.05] dark:border-[#2c2c2c] flex items-center justify-center shrink-0 mt-0.5">
                       {isCreditCard ? (
-                        <CreditCard className="w-4 h-4 text-amber-400" />
+                        <CreditCard className="w-4 h-4 text-[#FF9F0A]" />
                       ) : isLoan ? (
-                        <Landmark className="w-4 h-4 text-purple-400" />
+                        <Landmark className="w-4 h-4 text-[#AF52DE]" />
                       ) : isBankAccount ? (
-                        <Building2 className="w-4 h-4 text-sky-400" />
+                        <Building2 className="w-4 h-4 text-[#0071E3]" />
                       ) : isDebitAccount ? (
-                        <Wallet className="w-4 h-4 text-teal-400" />
+                        <Wallet className="w-4 h-4 text-[#248A3D] dark:text-teal-400" />
                       ) : (
-                        <Wallet className="w-4 h-4 text-emerald-400" />
+                        <Wallet className="w-4 h-4 text-[#248A3D] dark:text-[#34C759]" />
                       )}
                     </div>
                     <div className="truncate">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white text-sm truncate">{budgetCatName}</span>
-                        <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                        <span className="font-semibold text-[#1D1D1F] dark:text-white text-sm truncate">{budgetCatName}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
                           isCreditCard
-                            ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                            ? 'bg-[#FF9F0A]/12 text-[#B25000] dark:text-amber-400 border border-[#FF9F0A]/25'
                             : isLoan
-                            ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20'
+                            ? 'bg-[#AF52DE]/12 text-[#8944AB] dark:text-purple-400 border border-[#AF52DE]/25'
                             : isBankAccount
-                            ? 'bg-sky-500/10 text-sky-400 border border-sky-500/20'
+                            ? 'bg-[#0071E3]/10 text-[#0071E3] dark:text-sky-400 border border-[#0071E3]/25'
                             : isDebitAccount
-                            ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20'
-                            : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                            ? 'bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/25'
+                            : 'bg-[#34C759]/12 text-[#248A3D] dark:text-emerald-400 border border-[#34C759]/25'
                         }`}>
                           {isCreditCard
                             ? 'Credit Card'
@@ -455,7 +452,7 @@ export default function BudgetsPage({
                             : 'Standard'}
                         </span>
                       </div>
-                      <span className="text-[11px] text-[#777] block mt-0.5">Category: {b.category || budgetCatName}</span>
+                      <span className="text-[11px] text-[#86868B] block mt-0.5">Category: {b.category || budgetCatName}</span>
                     </div>
                   </div>
 
@@ -463,7 +460,7 @@ export default function BudgetsPage({
                     {onOpenTransfer && (isLiquidAccount || isCreditOrLoan) && budgets.length >= 2 && (
                       <button
                         onClick={() => onOpenTransfer(b)}
-                        className="px-2.5 py-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-medium transition flex items-center gap-1"
+                        className="px-2.5 py-1 bg-[#0071E3]/10 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-blue-300 border border-[#0071E3]/25 rounded-full text-xs font-semibold transition flex items-center gap-1"
                         title="Transfer funds between accounts"
                       >
                         <ArrowRightLeft className="w-3 h-3" />
@@ -473,7 +470,7 @@ export default function BudgetsPage({
                     {isCreditOrLoan && onOpenRecordPayment && (
                       <button
                         onClick={() => onOpenRecordPayment(b)}
-                        className="px-2.5 py-1 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-medium transition"
+                        className="px-2.5 py-1 bg-[#34C759]/12 hover:bg-[#34C759]/20 text-[#248A3D] dark:text-emerald-400 border border-[#34C759]/25 rounded-full text-xs font-semibold transition"
                         title="Make a Payment or Abono to this account"
                       >
                         Payment
@@ -481,15 +478,15 @@ export default function BudgetsPage({
                     )}
                     <button
                       onClick={() => onOpenEditBudget(b)}
-                      className="px-2 py-1 bg-[#282828] hover:bg-[#333] rounded-lg text-xs text-zinc-300 hover:text-white transition flex items-center gap-1"
+                      className="px-2.5 py-1 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#282828] dark:hover:bg-[#333] rounded-full text-xs font-medium text-[#1D1D1F] dark:text-zinc-300 dark:hover:text-white transition flex items-center gap-1"
                       title="Edit Budget / Account"
                     >
-                      <Pencil className="w-3.5 h-3.5 text-blue-400" />
+                      <Pencil className="w-3.5 h-3.5 text-[#0071E3]" />
                       <span>Edit</span>
                     </button>
                     <button
                       onClick={() => onDeleteBudget(b.id)}
-                      className="p-1.5 hover:bg-[#333] rounded-lg text-[#888] hover:text-rose-400 transition"
+                      className="p-1.5 hover:bg-[#F2F2F7] dark:hover:bg-[#333] rounded-full text-[#86868B] hover:text-[#D70015] dark:hover:text-rose-400 transition"
                       title="Delete Budget"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -499,37 +496,37 @@ export default function BudgetsPage({
 
                 {/* Description */}
                 {b.description && (
-                  <p className="text-xs text-zinc-300 bg-[#191919] p-2.5 rounded-lg border border-[#2a2a2a] leading-relaxed">
+                  <p className="text-xs text-[#6E6E73] dark:text-zinc-300 bg-[#F5F5F7] dark:bg-[#191919] p-2.5 rounded-xl border border-black/[0.04] dark:border-[#2a2a2a] leading-relaxed">
                     {b.description}
                   </p>
                 )}
 
                 {/* BANK / DEBIT ACCOUNT VIEW */}
                 {isLiquidAccount && (
-                  <div className="space-y-2.5 bg-[#171717] p-3 rounded-xl border border-[#262626]">
+                  <div className="space-y-2.5 bg-[#F5F5F7] dark:bg-[#171717] p-3 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
                     <div className={`grid grid-cols-3 ${isBankAccount && (b.apr || 0) > 0 ? 'sm:grid-cols-4' : ''} gap-2`}>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Current Balance</span>
-                        <span className={`text-xs font-bold block mt-0.5 ${currentCashBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Current Balance</span>
+                        <span className={`text-xs font-bold tabular-nums block mt-0.5 ${currentCashBalance >= 0 ? 'text-[#248A3D] dark:text-emerald-400' : 'text-[#D70015] dark:text-rose-400'}`}>
                           {currencySymbol}{currentCashBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Inflows</span>
-                        <span className="text-xs font-bold text-sky-400 block mt-0.5">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Inflows</span>
+                        <span className="text-xs font-bold tabular-nums text-[#0071E3] dark:text-sky-400 block mt-0.5">
                           +{currencySymbol}{totalInflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Outflows</span>
-                        <span className="text-xs font-bold text-rose-400 block mt-0.5">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Outflows</span>
+                        <span className="text-xs font-bold tabular-nums text-[#D70015] dark:text-rose-400 block mt-0.5">
                           -{currencySymbol}{totalOutflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       {isBankAccount && (b.apr || 0) > 0 && (
-                        <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                          <span className="text-[10px] text-[#888] block">APY</span>
-                          <span className="text-xs font-bold text-amber-400 block mt-0.5">{b.apr}%</span>
+                        <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
+                          <span className="text-[10px] text-[#86868B] block">APY</span>
+                          <span className="text-xs font-bold tabular-nums text-[#B25000] dark:text-amber-400 block mt-0.5">{b.apr}%</span>
                         </div>
                       )}
                     </div>
@@ -538,59 +535,59 @@ export default function BudgetsPage({
 
                 {/* CREDIT CARD VIEW */}
                 {isCreditCard && (
-                  <div className="space-y-2.5 bg-[#171717] p-3 rounded-xl border border-[#262626]">
+                  <div className="space-y-2.5 bg-[#F5F5F7] dark:bg-[#171717] p-3 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">APR</span>
-                        <span className="text-xs font-bold text-amber-400 block mt-0.5">{b.apr || 0}%</span>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">APR</span>
+                        <span className="text-xs font-bold tabular-nums text-[#B25000] dark:text-amber-400 block mt-0.5">{b.apr || 0}%</span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Credit Limit</span>
-                        <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{ccCalc.baseCreditLimit.toLocaleString()}</span>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Credit Limit</span>
+                        <span className="text-xs font-bold tabular-nums text-[#1D1D1F] dark:text-white block mt-0.5">{currencySymbol}{ccCalc.baseCreditLimit.toLocaleString()}</span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Overdraft Allowed</span>
-                        <span className="text-xs font-bold text-blue-400 block mt-0.5">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Overdraft Allowed</span>
+                        <span className="text-xs font-bold tabular-nums text-[#0071E3] dark:text-blue-400 block mt-0.5">
                           {ccCalc.overdraftPct}% {ccCalc.overdraftBuffer > 0 ? `(+${currencySymbol}${ccCalc.overdraftBuffer.toLocaleString()})` : ''}
                         </span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Used Balance</span>
-                        <span className="text-xs font-bold text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Used Balance</span>
+                        <span className="text-xs font-bold tabular-nums text-[#D70015] dark:text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
                       </div>
                     </div>
 
-                    <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-3 py-2 flex items-center justify-between text-xs">
-                      <span className="text-amber-300 font-medium">Calculated Monthly Limit (Credit + Overdraft)</span>
-                      <span className="text-white font-bold">
+                    <div className="bg-[#FF9F0A]/10 border border-[#FF9F0A]/25 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
+                      <span className="text-[#B25000] dark:text-amber-300 font-medium">Calculated Monthly Limit (Credit + Overdraft)</span>
+                      <span className="text-[#1D1D1F] dark:text-white font-bold tabular-nums">
                         {currencySymbol}{effectiveLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
 
                     {/* Credit Utilization Bar */}
                     <div className="space-y-1 pt-1">
-                      <div className="flex justify-between text-[11px] text-[#888]">
+                      <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
                         <span>Total Capacity Used: {utilizationPct}%</span>
-                        <span className="text-emerald-400 font-medium">Available: {currencySymbol}{availableCredit.toLocaleString()}</span>
+                        <span className="text-[#248A3D] dark:text-emerald-400 font-semibold">Available: {currencySymbol}{availableCredit.toLocaleString()}</span>
                       </div>
-                      <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#292929]">
+                      <div className="w-full bg-[#E5E5EA] dark:bg-[#121212] h-2 rounded-full overflow-hidden border border-black/[0.04] dark:border-[#292929]">
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${utilizationPct}%`,
-                            backgroundColor: usedBalance > ccCalc.baseCreditLimit ? '#f43f5e' : (b.color || '#f59e0b')
+                            backgroundColor: usedBalance > ccCalc.baseCreditLimit ? '#FF3B30' : (b.color || '#FF9F0A')
                           }}
                         />
                       </div>
                       {usedBalance > ccCalc.baseCreditLimit && (
-                        <span className="text-[10px] text-amber-400 block">
+                        <span className="text-[10px] text-[#B25000] dark:text-amber-400 block tabular-nums">
                           Using overdraft allowance ({currencySymbol}{(usedBalance - ccCalc.baseCreditLimit).toLocaleString()} over base limit)
                         </span>
                       )}
                     </div>
 
                     {totalPaymentsMade > 0 && (
-                      <div className="text-[11px] text-emerald-400 pt-1 flex items-center justify-between">
+                      <div className="text-[11px] text-[#248A3D] dark:text-emerald-400 pt-1 flex items-center justify-between tabular-nums">
                         <span>Total Payments / Abonos recorded:</span>
                         <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                       </div>
@@ -600,43 +597,43 @@ export default function BudgetsPage({
 
                 {/* LOAN ACCOUNT VIEW + MONTHLY QUOTAS */}
                 {isLoan && (
-                  <div className="space-y-3 bg-[#171717] p-3.5 rounded-xl border border-[#262626]">
+                  <div className="space-y-3 bg-[#F5F5F7] dark:bg-[#171717] p-3.5 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">
                           {loanRatePeriod === 'monthly' ? 'Monthly Rate' : 'Interest (APR)'}
                         </span>
-                        <span className="text-xs font-bold text-purple-400 block mt-0.5">
+                        <span className="text-xs font-bold tabular-nums text-[#8944AB] dark:text-purple-400 block mt-0.5">
                           {b.apr || 0}%
                         </span>
-                        <span className="text-[9px] text-[#777] block">
+                        <span className="text-[9px] text-[#86868B] block tabular-nums">
                           {monthlyRatePct.toFixed(2)}%/mo • {loanCalcMethod === 'flat' ? 'Flat' : 'Amort.'}
                         </span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Loan Principal</span>
-                        <span className="text-xs font-bold text-white block mt-0.5">{currencySymbol}{loanPrincipal.toLocaleString()}</span>
-                        <span className="text-[9px] text-[#777] block">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Loan Principal</span>
+                        <span className="text-xs font-bold tabular-nums text-[#1D1D1F] dark:text-white block mt-0.5">{currencySymbol}{loanPrincipal.toLocaleString()}</span>
+                        <span className="text-[9px] text-[#86868B] block tabular-nums">
                           Total Int: {currencySymbol}{totalLoanInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Rem. Principal</span>
-                        <span className="text-xs font-bold text-rose-400 block mt-0.5">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Rem. Principal</span>
+                        <span className="text-xs font-bold tabular-nums text-[#D70015] dark:text-rose-400 block mt-0.5">
                           {currencySymbol}{usedBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                         {loanQuotas.length > 0 && (
-                          <span className="text-[9px] text-[#777] block">
+                          <span className="text-[9px] text-[#86868B] block tabular-nums">
                             +Int: {currencySymbol}{remainingLoanInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </span>
                         )}
                       </div>
-                      <div className="bg-[#1f1f1f] p-2 rounded-lg text-center">
-                        <span className="text-[10px] text-[#888] block">Monthly Quota</span>
-                        <span className="text-xs font-bold text-emerald-400 block mt-0.5">
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Monthly Quota</span>
+                        <span className="text-xs font-bold tabular-nums text-[#248A3D] dark:text-emerald-400 block mt-0.5">
                           {currencySymbol}{computedQuota.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
-                        <span className="text-[9px] text-[#777] block">
+                        <span className="text-[9px] text-[#86868B] block tabular-nums">
                           {loanQuotas.length > 0
                             ? `Payoff Left: ${currencySymbol}${totalLoanPayoffLeft.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
                             : `Repay: ${currencySymbol}${(loanPrincipal + totalLoanInterest).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
@@ -646,19 +643,19 @@ export default function BudgetsPage({
 
                     {/* Loan Payoff Progress */}
                     <div className="space-y-1">
-                      <div className="flex justify-between text-[11px] text-[#888]">
+                      <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
                         <span>Principal Paid Off: {loanPaidOffPct}%</span>
-                        <span className="text-zinc-300">
+                        <span className="text-[#1D1D1F] dark:text-zinc-300 font-medium">
                           {b.loanTermMonths ? `${b.loanTermMonths} Months Term • ` : ''}
                           {loanQuotas.length > 0 ? `${paidQuotasCount}/${loanQuotas.length} Quotas Paid` : 'No schedule yet'}
                         </span>
                       </div>
-                      <div className="w-full bg-[#121212] h-2 rounded-full overflow-hidden border border-[#292929]">
+                      <div className="w-full bg-[#E5E5EA] dark:bg-[#121212] h-2 rounded-full overflow-hidden border border-black/[0.04] dark:border-[#292929]">
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${loanPaidOffPct}%`,
-                            backgroundColor: b.color || '#8b5cf6'
+                            backgroundColor: b.color || '#AF52DE'
                           }}
                         />
                       </div>
@@ -666,12 +663,12 @@ export default function BudgetsPage({
 
                     {/* Existing unlinked transfer/payment notice */}
                     {unlinkedLoanTotal > 0 && loanQuotas.length > 0 && nextDueQuota && (
-                      <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                      <div className="bg-[#0071E3]/10 border border-[#0071E3]/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
                         <div className="min-w-0">
-                          <span className="text-blue-300 font-semibold block">
+                          <span className="text-[#0071E3] dark:text-blue-300 font-semibold block tabular-nums">
                             Unlinked transfer / payment: {currencySymbol}{unlinkedLoanTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </span>
-                          <span className="text-[10px] text-zinc-400 block mt-0.5">
+                          <span className="text-[10px] text-[#6E6E73] dark:text-zinc-400 block mt-0.5 tabular-nums">
                             {unlinkedLoanTotal >= nextDueQuota.amount - 1.0
                               ? `Covers Quota #${nextDueQuota.quotaNumber} without creating a duplicate payment.`
                               : `Remaining to finish Quota #${nextDueQuota.quotaNumber}: ${currencySymbol}${Math.max(0, nextDueQuota.amount - unlinkedLoanTotal).toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
@@ -681,7 +678,7 @@ export default function BudgetsPage({
                           <button
                             type="button"
                             onClick={() => onReconcileLoanPayments(b.id)}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition"
+                            className="bg-[#0071E3] hover:bg-[#0077ED] text-white px-2.5 py-1.5 rounded-full text-[11px] font-semibold shrink-0 transition"
                           >
                             Apply to Quotas
                           </button>
@@ -694,13 +691,13 @@ export default function BudgetsPage({
                       const coveredByTransfer = unlinkedLoanTotal >= nextDueQuota.amount - 1.0;
                       const partialRemDue = Math.max(0, Number((nextDueQuota.amount - unlinkedLoanTotal).toFixed(2)));
                       return (
-                        <div className="bg-purple-500/10 border border-purple-500/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
+                        <div className="bg-[#AF52DE]/10 border border-[#AF52DE]/25 rounded-xl p-2.5 flex items-center justify-between gap-2 text-xs">
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5 text-purple-300 font-semibold">
+                            <div className="flex items-center gap-1.5 text-[#8944AB] dark:text-purple-300 font-semibold tabular-nums">
                               <Calendar className="w-3.5 h-3.5 shrink-0" />
                               <span>Next Quota #{nextDueQuota.quotaNumber} • Due {nextDueQuota.dueDate}</span>
                             </div>
-                            <span className="text-[10px] text-zinc-400 block mt-0.5">
+                            <span className="text-[10px] text-[#6E6E73] dark:text-zinc-400 block mt-0.5 tabular-nums">
                               Principal: {currencySymbol}{nextDueQuota.principalAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Interest: {currencySymbol}{nextDueQuota.interestAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </span>
                           </div>
@@ -710,9 +707,9 @@ export default function BudgetsPage({
                               onClick={() => onToggleLoanQuotaPaid(b.id, nextDueQuota.id)}
                               className={`${
                                 coveredByTransfer
-                                  ? 'bg-blue-600 hover:bg-blue-500'
-                                  : 'bg-purple-600 hover:bg-purple-500'
-                              } text-white px-2.5 py-1.5 rounded-lg text-[11px] font-semibold shrink-0 transition`}
+                                  ? 'bg-[#0071E3] hover:bg-[#0077ED]'
+                                  : 'bg-[#AF52DE] hover:bg-purple-600'
+                              } text-white px-3 py-1.5 rounded-full text-[11px] font-semibold shrink-0 transition tabular-nums`}
                             >
                               {coveredByTransfer
                                 ? 'Apply Transfer'
@@ -726,13 +723,13 @@ export default function BudgetsPage({
                     })()}
 
                     {/* Quotas Controls Bar */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#262626]">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-black/[0.06] dark:border-[#262626]">
                       <div className="flex items-center gap-2">
                         {loanQuotas.length > 0 && (
                           <button
                             type="button"
                             onClick={() => setExpandedLoans(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
-                            className="text-[11px] text-zinc-300 hover:text-white flex items-center gap-1 bg-[#222] px-2.5 py-1 rounded-lg transition"
+                            className="text-[11px] text-[#1D1D1F] dark:text-zinc-300 dark:hover:text-white flex items-center gap-1 bg-white dark:bg-[#222] border border-black/[0.06] dark:border-transparent px-2.5 py-1 rounded-full transition font-medium"
                           >
                             {isScheduleExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                             <span>{isScheduleExpanded ? 'Hide' : 'Follow'} Monthly Quotas ({paidQuotasCount}/{loanQuotas.length})</span>
@@ -742,7 +739,7 @@ export default function BudgetsPage({
                           <button
                             type="button"
                             onClick={() => onGenerateLoanQuotas(b.id)}
-                            className="text-[11px] text-purple-300 hover:text-white flex items-center gap-1 bg-purple-500/15 hover:bg-purple-500/25 border border-purple-500/30 px-2.5 py-1 rounded-lg transition"
+                            className="text-[11px] text-[#8944AB] dark:text-purple-300 flex items-center gap-1 bg-[#AF52DE]/12 hover:bg-[#AF52DE]/20 border border-[#AF52DE]/25 px-2.5 py-1 rounded-full transition font-medium"
                           >
                             <Sparkles className="w-3.5 h-3.5" />
                             <span>Auto-Generate Quotas</span>
@@ -754,7 +751,7 @@ export default function BudgetsPage({
                         <button
                           type="button"
                           onClick={() => (addingQuotaLoanId === b.id ? setAddingQuotaLoanId(null) : openInlineAddQuota(b))}
-                          className="text-[11px] text-emerald-400 hover:text-emerald-300 flex items-center gap-1 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/25 px-2.5 py-1 rounded-lg transition"
+                          className="text-[11px] text-[#248A3D] dark:text-emerald-400 flex items-center gap-1 bg-[#34C759]/12 hover:bg-[#34C759]/20 border border-[#34C759]/25 px-2.5 py-1 rounded-full transition font-medium"
                         >
                           <Plus className="w-3 h-3" />
                           <span>{addingQuotaLoanId === b.id ? 'Cancel' : 'Create Quota'}</span>
@@ -764,21 +761,21 @@ export default function BudgetsPage({
 
                     {/* Inline Create Quota Form */}
                     {addingQuotaLoanId === b.id && (
-                      <form onSubmit={e => handleSaveInlineQuota(e, b.id)} className="bg-[#121212] border border-[#2d2d2d] rounded-xl p-3 space-y-2.5">
-                        <span className="text-[11px] font-semibold text-white block">Add Monthly Quota</span>
+                      <form onSubmit={e => handleSaveInlineQuota(e, b.id)} className="bg-white dark:bg-[#121212] border border-black/[0.06] dark:border-[#2d2d2d] rounded-xl p-3 space-y-2.5">
+                        <span className="text-[11px] font-semibold text-[#1D1D1F] dark:text-white block">Add Monthly Quota</span>
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                           <div>
-                            <label className="text-[10px] text-[#888] block mb-0.5">Due Date</label>
+                            <label className="text-[10px] text-[#86868B] block mb-0.5">Due Date</label>
                             <input
                               type="date"
                               required
                               value={newQuotaDueDate}
                               onChange={e => setNewQuotaDueDate(e.target.value)}
-                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                              className="w-full bg-[#F5F5F7] dark:bg-[#1b1b1b] border border-black/[0.08] dark:border-[#333] rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-[#888] block mb-0.5">Principal ({currencySymbol})</label>
+                            <label className="text-[10px] text-[#86868B] block mb-0.5">Principal ({currencySymbol})</label>
                             <input
                               type="number"
                               step="0.01"
@@ -791,11 +788,11 @@ export default function BudgetsPage({
                                 const sum = (parseFloat(p) || 0) + (parseFloat(newQuotaInterest) || 0);
                                 if (sum > 0) setNewQuotaAmount(sum.toFixed(2));
                               }}
-                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                              className="w-full bg-[#F5F5F7] dark:bg-[#1b1b1b] border border-black/[0.08] dark:border-[#333] rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-[#888] block mb-0.5">Interest ({currencySymbol})</label>
+                            <label className="text-[10px] text-[#86868B] block mb-0.5">Interest ({currencySymbol})</label>
                             <input
                               type="number"
                               step="0.01"
@@ -808,11 +805,11 @@ export default function BudgetsPage({
                                 const sum = (parseFloat(newQuotaPrincipal) || 0) + (parseFloat(intr) || 0);
                                 if (sum > 0) setNewQuotaAmount(sum.toFixed(2));
                               }}
-                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white"
+                              className="w-full bg-[#F5F5F7] dark:bg-[#1b1b1b] border border-black/[0.08] dark:border-[#333] rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums"
                             />
                           </div>
                           <div>
-                            <label className="text-[10px] text-[#888] block mb-0.5">Quota Total ({currencySymbol})</label>
+                            <label className="text-[10px] text-[#86868B] block mb-0.5">Quota Total ({currencySymbol})</label>
                             <input
                               type="number"
                               step="0.01"
@@ -821,14 +818,14 @@ export default function BudgetsPage({
                               placeholder="0.00"
                               value={newQuotaAmount}
                               onChange={e => setNewQuotaAmount(e.target.value)}
-                              className="w-full bg-[#1b1b1b] border border-[#333] rounded px-2 py-1 text-[11px] text-white font-semibold"
+                              className="w-full bg-[#F5F5F7] dark:bg-[#1b1b1b] border border-black/[0.08] dark:border-[#333] rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white font-semibold tabular-nums"
                             />
                           </div>
                         </div>
                         <div className="flex justify-end gap-2">
                           <button
                             type="submit"
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1 rounded-lg text-[11px] font-medium"
+                            className="bg-[#34C759] hover:bg-emerald-500 text-black px-3 py-1 rounded-full text-[11px] font-semibold"
                           >
                             Save Quota
                           </button>
@@ -842,7 +839,7 @@ export default function BudgetsPage({
                         {loanQuotas.map(q => (
                           <div
                             key={q.id}
-                            className="flex items-center justify-between gap-2 py-1.5 px-2 rounded-lg bg-[#1d1d1d] hover:bg-[#242424] transition text-xs"
+                            className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-xl bg-white dark:bg-[#1d1d1d] hover:bg-[#F2F2F7] dark:hover:bg-[#242424] border border-black/[0.03] dark:border-transparent transition text-xs"
                           >
                             <button
                               type="button"
@@ -850,28 +847,28 @@ export default function BudgetsPage({
                               className="flex items-center gap-2 min-w-0 flex-1 text-left"
                             >
                               {q.isPaid ? (
-                                <CheckSquare className="w-4 h-4 text-purple-400 shrink-0" />
+                                <CheckSquare className="w-4 h-4 text-[#AF52DE] shrink-0" />
                               ) : (
-                                <Square className="w-4 h-4 text-[#666] hover:text-zinc-300 shrink-0" />
+                                <Square className="w-4 h-4 text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-zinc-300 shrink-0" />
                               )}
                               <div className="min-w-0">
-                                <span className={`font-medium block truncate ${q.isPaid ? 'line-through text-zinc-500' : 'text-zinc-200'}`}>
+                                <span className={`font-medium block truncate tabular-nums ${q.isPaid ? 'line-through text-[#86868B]' : 'text-[#1D1D1F] dark:text-zinc-200'}`}>
                                   Quota #{q.quotaNumber} • {q.dueDate}
                                 </span>
-                                <span className="text-[10px] text-[#777] block">
+                                <span className="text-[10px] text-[#86868B] block tabular-nums">
                                   Prin: {currencySymbol}{q.principalAmount.toFixed(2)} | Int: {currencySymbol}{q.interestAmount.toFixed(2)} | Bal: {currencySymbol}{q.remainingBalance.toFixed(2)}
                                 </span>
                               </div>
                             </button>
                             <div className="flex items-center gap-2 shrink-0">
-                              <span className={`font-semibold ${q.isPaid ? 'line-through text-zinc-500' : 'text-white'}`}>
+                              <span className={`font-semibold tabular-nums ${q.isPaid ? 'line-through text-[#86868B]' : 'text-[#1D1D1F] dark:text-white'}`}>
                                 {currencySymbol}{q.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                               </span>
                               {onDeleteLoanQuota && (
                                 <button
                                   type="button"
                                   onClick={() => onDeleteLoanQuota(b.id, q.id)}
-                                  className="text-[#666] hover:text-rose-400 p-0.5"
+                                  className="text-[#86868B] hover:text-[#D70015] dark:hover:text-rose-400 p-0.5"
                                   title="Delete Quota"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
@@ -884,19 +881,19 @@ export default function BudgetsPage({
                     )}
 
                     {totalPaymentsMade > 0 && (
-                      <div className="text-[11px] text-emerald-400 pt-1 space-y-0.5">
+                      <div className="text-[11px] text-[#248A3D] dark:text-emerald-400 pt-1 space-y-0.5 tabular-nums">
                         <div className="flex items-center justify-between">
                           <span>Total Payments / Abonos recorded:</span>
                           <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                         </div>
-                        <div className="flex items-center justify-between text-[10px] text-zinc-400">
+                        <div className="flex items-center justify-between text-[10px] text-[#6E6E73] dark:text-zinc-400">
                           <span>Applied Split (Principal / Interest):</span>
                           <span>
-                            <span className="text-purple-300 font-medium">
+                            <span className="text-[#8944AB] dark:text-purple-300 font-medium">
                               Prin: {currencySymbol}{totalLoanPrincipalPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </span>
                             {' • '}
-                            <span className="text-amber-300 font-medium">
+                            <span className="text-[#B25000] dark:text-amber-300 font-medium">
                               Int: {currencySymbol}{totalLoanInterestPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                             </span>
                           </span>
@@ -914,28 +911,28 @@ export default function BudgetsPage({
                   const isBarOver = !isLoan && progressTarget > 0 && progressCurrent > progressTarget;
                   return (
                     <div className="space-y-1.5">
-                      <div className="flex justify-between text-xs text-[#9b9b9b]">
+                      <div className="flex justify-between text-xs text-[#6E6E73] dark:text-[#9b9b9b] tabular-nums">
                         <span>
                           {isLoan ? 'This Month Paid' : 'Current Month Spent'}: {currencySymbol}{progressCurrent.toFixed(2)}
                         </span>
-                        <span className={isBarOver ? 'text-rose-400 font-bold' : 'text-white'}>
+                        <span className={isBarOver ? 'text-[#D70015] dark:text-rose-400 font-bold' : 'text-[#1D1D1F] dark:text-white font-semibold'}>
                           {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{progressTarget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                      <div className="w-full bg-[#191919] h-2 rounded-full overflow-hidden border border-[#2d2d2d]">
+                      <div className="w-full bg-[#E5E5EA] dark:bg-[#191919] h-2 rounded-full overflow-hidden border border-black/[0.04] dark:border-[#2d2d2d]">
                         <div
                           className="h-full rounded-full transition-all duration-500"
                           style={{
                             width: `${progressPct}%`,
-                            backgroundColor: isBarOver ? '#f43f5e' : isLoan ? '#a855f7' : (b.color || '#10b981')
+                            backgroundColor: isBarOver ? '#FF3B30' : isLoan ? '#AF52DE' : (b.color || '#34C759')
                           }}
                         />
                       </div>
-                      <div className="flex justify-between text-[11px] text-[#777]">
+                      <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
                         <span>
                           {progressPct}% of {isLoan ? 'monthly quota paid' : 'monthly limit used'}
                         </span>
-                        {isBarOver && <span className="text-rose-400 font-semibold">Over limit!</span>}
+                        {isBarOver && <span className="text-[#D70015] dark:text-rose-400 font-semibold">Over limit!</span>}
                       </div>
                     </div>
                   );
@@ -943,12 +940,12 @@ export default function BudgetsPage({
 
                 {/* Items Belonging to This Budget (Standard budgets ONLY) */}
                 {isStandard && items.length > 0 && (
-                  <div className="space-y-2 bg-[#171717] p-3 rounded-xl border border-[#262626]">
+                  <div className="space-y-2 bg-[#F5F5F7] dark:bg-[#171717] p-3 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
                     <div className="flex justify-between items-center text-xs">
-                      <span className="font-semibold text-white">
+                      <span className="font-semibold text-[#1D1D1F] dark:text-white">
                         Belonging Items ({paidItemsCount}/{items.length} Paid)
                       </span>
-                      <span className="text-[10px] text-[#888]">
+                      <span className="text-[10px] text-[#86868B] tabular-nums">
                         Items Sum: {currencySymbol}{itemsSum.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
@@ -958,17 +955,17 @@ export default function BudgetsPage({
                         <div
                           key={item.id}
                           onClick={() => onToggleItemPaid(b.id, item.id)}
-                          className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-[#222] cursor-pointer group transition select-none"
+                          className="flex items-center gap-2.5 py-1.5 px-2 rounded-xl hover:bg-white dark:hover:bg-[#222] cursor-pointer group transition select-none"
                         >
                           {item.isPaid ? (
-                            <CheckSquare className="w-4 h-4 text-blue-500 shrink-0" />
+                            <CheckSquare className="w-4 h-4 text-[#0071E3] shrink-0" />
                           ) : (
-                            <Square className="w-4 h-4 text-[#666] group-hover:text-zinc-300 shrink-0" />
+                            <Square className="w-4 h-4 text-[#86868B] group-hover:text-[#1D1D1F] dark:group-hover:text-zinc-300 shrink-0" />
                           )}
-                          <span className={`text-xs flex-1 transition ${item.isPaid ? 'line-through text-zinc-500' : 'text-zinc-200'}`}>
+                          <span className={`text-xs flex-1 transition ${item.isPaid ? 'line-through text-[#86868B]' : 'text-[#1D1D1F] dark:text-zinc-200'}`}>
                             {item.name}
                           </span>
-                          <span className={`text-xs font-semibold shrink-0 transition ${item.isPaid ? 'line-through text-zinc-500' : 'text-white'}`}>
+                          <span className={`text-xs font-semibold shrink-0 transition tabular-nums ${item.isPaid ? 'line-through text-[#86868B]' : 'text-[#1D1D1F] dark:text-white'}`}>
                             {currencySymbol}{Number(item.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           </span>
                         </div>
@@ -976,17 +973,17 @@ export default function BudgetsPage({
                     </div>
 
                     {extraExpenses > 0 && (
-                      <div className="flex justify-between items-center text-[11px] text-[#888] pt-2 border-t border-[#262626] px-1">
+                      <div className="flex justify-between items-center text-[11px] text-[#86868B] pt-2 border-t border-black/[0.06] dark:border-[#262626] px-1 tabular-nums">
                         <span>+ Other Extra Expenses Buffer:</span>
-                        <span className="font-semibold text-zinc-300">
+                        <span className="font-semibold text-[#1D1D1F] dark:text-zinc-300">
                           {currencySymbol}{extraExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                     )}
 
-                    <div className="flex justify-between items-center text-[11px] text-[#aaa] pt-1.5 border-t border-[#242424] px-1 font-medium">
+                    <div className="flex justify-between items-center text-[11px] text-[#6E6E73] dark:text-[#aaa] pt-1.5 border-t border-black/[0.06] dark:border-[#242424] px-1 font-medium tabular-nums">
                       <span>Total of all (Calculated Limit):</span>
-                      <span className="font-bold text-white">
+                      <span className="font-bold text-[#1D1D1F] dark:text-white">
                         {currencySymbol}{(itemsSum + extraExpenses).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
