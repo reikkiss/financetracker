@@ -238,27 +238,33 @@ interface BankRule {
 const BANK_RULES: BankRule[] = [
   {
     name: 'Banreservas',
-    senderPatterns: [/banreservas\.com/i, /\bbanreservas\b/i, /\breservas\b/i],
+    senderPatterns: [/banreservas\.com/i, /notificacionestubancoapp@banreservas\.com/i, /\bbanreservas\b/i, /\breservas\b/i],
     subjectPatterns: [/\bbanreservas\b/i],
     bodyPatterns: [/\bbanreservas\b/i, /banreservas\.com/i, /\bbanco de reservas\b/i]
   },
   {
     name: 'Banco Popular',
-    senderPatterns: [/bpd\.com\.do/i, /popularenlinea/i, /\bbanco\s+popular\b/i, /\bpopular\b/i],
+    senderPatterns: [/bpd\.com\.do/i, /popularenlinea/i, /notificaciones@popularenlinea\.com/i, /\bbanco\s+popular\b/i, /\bpopular\b/i],
     subjectPatterns: [/\bbanco\s+popular\b/i, /\bpopularenlinea\b/i, /\bbpd\b/i],
     bodyPatterns: [/\bbanco\s+popular(?:\s+dominicano)?\b/i, /\bpopularenlinea(?:\.com)?\b/i, /\bbpd\.com\.do\b/i]
   },
   {
     name: 'Banco BHD',
-    senderPatterns: [/bhd\.com\.do/i, /bhdleon/i, /\bbhd\b/i],
+    senderPatterns: [/bhd\.com\.do/i, /alertas@bhd\.com\.do/i, /bhdleon/i, /\bbhd\b/i],
     subjectPatterns: [/\bbanco\s+bhd\b/i, /\bbhd\s*le[oó]n\b/i, /\bbhd\b/i],
     bodyPatterns: [/\bbanco\s+bhd(?:\s*le[oó]n)?\b/i, /\bbhd\.com\.do\b/i, /\bbhdleon\b/i]
   },
   {
     name: 'Qik Banco Digital',
-    senderPatterns: [/qik\.do/i, /qik\.com\.do/i, /\bqik\b/i],
+    senderPatterns: [/qik\.do/i, /notificaciones@qik\.do/i, /qik\.com\.do/i, /\bqik\b/i],
     subjectPatterns: [/\bqik\b/i],
     bodyPatterns: [/\bqik\s+banco\s+digital\b/i, /\bqik\.(?:com\.)?do\b/i, /\bapp\s+qik\b/i]
+  },
+  {
+    name: 'Azul',
+    senderPatterns: [/azul\.com\.do/i, /notificaciones@azul\.com\.do/i, /\bazul\b/i],
+    subjectPatterns: [/\bazul\b/i],
+    bodyPatterns: [/\bazul\b/i, /azul\.com\.do/i]
   },
   {
     name: 'Banco Santa Cruz',
@@ -538,21 +544,22 @@ function hasExecutedTransactionSignal(rawSubject: string, cleanedBody: string): 
   return false;
 }
 
-function isPromotionalOrNonTransactionEmail(rawSubject: string, cleanedBody: string): boolean {
+function isPromotionalOrNonTransactionEmail(rawSubject: string, cleanedBody: string, rawSender: string = ''): boolean {
   const subject = (rawSubject || '').trim();
   const topBody = (cleanedBody || '').slice(0, 1200);
   const structured = hasStructuredReceiptFields(cleanedBody);
   const hasExecSignal = hasExecutedTransactionSignal(subject, cleanedBody);
+  const isKnownBankSender = /qik\.do|bhd\.com\.do|popularenlinea\.com|azul\.com\.do|banreservas\.com|bpd\.com\.do|scotiabank|promerica|apap|banesco|lafise|bancocaribe|vimenca|bdi\.com\.do|blh\.com\.do|paypal\.com/i.test(rawSender);
 
   // 1. Subject explicitly reveals promo / OTP / statement reminder
   if (PROMO_SUBJECT_REGEX.test(subject) || PROMO_PERCENT_REGEX.test(subject)) {
-    return true;
+    if (!isKnownBankSender) return true;
   }
   if (OTP_OR_SECURITY_REGEX.test(subject)) {
     return true;
   }
   if (STATEMENT_OR_REMINDER_REGEX.test(subject) && !structured) {
-    return true;
+    if (!isKnownBankSender) return true;
   }
 
   // 2. OTP or statement-only email in body without executed transaction confirmation
@@ -560,25 +567,29 @@ function isPromotionalOrNonTransactionEmail(rawSubject: string, cleanedBody: str
     return true;
   }
   if (STATEMENT_OR_REMINDER_REGEX.test(topBody) && !hasExecSignal) {
-    return true;
+    if (!isKnownBankSender) return true;
+  }
+
+  // If it's a known bank sender and has a monetary amount, treat as valid transaction alert
+  if (isKnownBankSender && (/(?:rd\$|us\$|\$|dop|usd)\s*[0-9]/i.test(cleanedBody) || hasExecSignal)) {
+    return false;
   }
 
   // 3. Marketing / promo campaigns in top body unless clearly overridden by a real structured transaction alert
   if ((PROMO_BODY_REGEX.test(topBody) || PROMO_PERCENT_REGEX.test(topBody)) && !structured) {
-    // Allow footer-only "términos y condiciones" or "unsubscribe" ONLY if subject or top 400 chars has explicit tx confirmation
     const top400 = topBody.slice(0, 400).toLowerCase();
     const strongHeaderTx =
       EXECUTED_TRANSACTION_PHRASES.some(p => subject.toLowerCase().includes(p) || top400.includes(p));
-    if (!strongHeaderTx) {
-      return true;
-    }
-    // Even if header looks transactional, reject if promo keywords appear right inside top 450 chars
-    if (PROMO_PERCENT_REGEX.test(top400) || /\b(?:aprovecha|preaprobado|solicita\s+tu|sorteo|feria|cashback|cuotas?\s+sin\s+inter[eé]s)\b/i.test(top400)) {
+    if (!strongHeaderTx && !isKnownBankSender) {
       return true;
     }
   }
 
-  // 4. Final requirement: must actually prove a real transaction occurred or was attempted
+  // 4. Final requirement: must prove a real transaction occurred or be from a known bank sender with an amount
+  if (isKnownBankSender && /(?:rd\$|us\$|\$|dop|usd)\s*[0-9]/i.test(cleanedBody)) {
+    return false;
+  }
+
   return !hasExecSignal;
 }
 
@@ -1051,7 +1062,7 @@ export function parseBankEmailAlert(
   if (!combined || combined.length < 10) return null;
 
   // 1. Strict gate: Reject promotional offers, marketing newsletters, OTPs & statement reminders
-  if (isPromotionalOrNonTransactionEmail(rawSubject, cleanedBody)) {
+  if (isPromotionalOrNonTransactionEmail(rawSubject, cleanedBody, rawSender)) {
     return null;
   }
 

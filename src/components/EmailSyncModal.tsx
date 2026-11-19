@@ -246,7 +246,12 @@ export default function EmailSyncModal({
   };
 
   const handleSaveBackendUrl = async () => {
-    const normalized = setSavedApiBaseUrl(backendUrlInput);
+    let targetUrl = backendUrlInput.trim();
+    if (/mail\.me\.com|gmail\.com|smtp|imap|outlook|yahoo/i.test(targetUrl)) {
+      targetUrl = 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app';
+      setBackendUrlInput(targetUrl);
+    }
+    const normalized = setSavedApiBaseUrl(targetUrl);
     setBackendUrlInput(normalized);
     setBackendStatus('checking');
     setICloudStatus(null);
@@ -256,15 +261,13 @@ export default function EmailSyncModal({
       setShowBackendConfig(false);
       setICloudStatus({
         ok: true,
-        msg: normalized
-          ? `Connected to iCloud IMAP backend (${normalized}).`
-          : 'Connected to local iCloud IMAP backend.'
+        msg: 'Connected directly to Cloud Run backend server! You can now test or scan your iCloud IMAP mail.'
       });
     } else {
       setBackendStatus('unavailable');
       setICloudStatus({
         ok: false,
-        msg: res.reason || 'Could not reach /api/health on that server URL.'
+        msg: res.reason || 'Could not reach backend server.'
       });
     }
   };

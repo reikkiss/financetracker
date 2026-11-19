@@ -420,7 +420,7 @@ Instructions:
       }
 
       const queryStr = encodeURIComponent(
-        'from:(banreservas.com OR bpd.com.do OR popularenlinea.com OR bhd.com.do OR qik.do OR qik.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR popular OR reservas OR bhd OR qik) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono)'
+        'from:(banreservas.com OR notificacionestubancoapp@banreservas.com OR bpd.com.do OR popularenlinea.com OR notificaciones@popularenlinea.com OR bhd.com.do OR alertas@bhd.com.do OR qik.do OR notificaciones@qik.do OR azul.com.do OR notificaciones@azul.com.do OR bsc.com.do OR scotiabank OR promerica OR apap OR banesco OR lafise OR bancocaribe OR vimenca OR bdi.com.do OR blh.com.do OR paypal.com OR popular OR reservas OR bhd OR qik OR azul OR bpd) OR subject:(consumo OR transaccion OR transacción OR notificacion OR notificación OR alerta OR compra OR compraste OR "pago realizado" OR retiro OR transferencia OR deposito OR depósito OR abono OR pago OR debito OR débito)'
       );
       const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${queryStr}&maxResults=${maxResults}`;
       const listRes = await fetch(listUrl, {

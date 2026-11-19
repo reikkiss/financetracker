@@ -1,4 +1,5 @@
 const API_BASE_STORAGE_KEY = 'finance_api_base_url';
+const DEFAULT_CLOUD_RUN_BACKEND = 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app';
 
 function normalizeBaseUrl(raw?: string | null): string {
   if (!raw) return '';
@@ -40,7 +41,14 @@ export function setSavedApiBaseUrl(url: string): string {
 }
 
 export function getApiBaseUrl(): string {
-  return getSavedApiBaseUrl() || getEnvApiBaseUrl();
+  const saved = getSavedApiBaseUrl();
+  if (saved) return saved;
+  const env = getEnvApiBaseUrl();
+  if (env) return env;
+  if (isLikelyStaticHost()) {
+    return DEFAULT_CLOUD_RUN_BACKEND;
+  }
+  return '';
 }
 
 export function getApiUrl(path: string): string {
