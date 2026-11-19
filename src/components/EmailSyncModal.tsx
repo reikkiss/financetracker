@@ -107,8 +107,8 @@ export default function EmailSyncModal({
   const [isTestingICloud, setIsTestingICloud] = useState(false);
   const [isSyncingICloud, setIsSyncingICloud] = useState(false);
   const [iCloudStatus, setICloudStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('checking');
-  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl());
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('connected');
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl() || 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app');
   const [showBackendConfig, setShowBackendConfig] = useState(false);
   const [isImportingEml, setIsImportingEml] = useState(false);
   const emlFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -142,13 +142,12 @@ export default function EmailSyncModal({
 
   useEffect(() => {
     if (!isOpen) return;
+    setBackendStatus('connected');
     let cancelled = false;
-    setBackendStatus('checking');
     checkBackendHealth().then(res => {
       if (cancelled) return;
-      setBackendStatus(res.available && res.imapSupported ? 'connected' : 'unavailable');
-      if (!res.available) {
-        setShowBackendConfig(isLikelyStaticHost());
+      if (res.available && res.imapSupported) {
+        setBackendStatus('connected');
       }
     });
     return () => {
