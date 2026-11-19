@@ -92,16 +92,16 @@ export default function TransferModal({
   const toIsLiquid = toAcc?.accountType === 'bank_account' || toAcc?.accountType === 'debit_account';
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#1D1D1F] dark:text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 w-full max-w-md space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#F5F5F7]">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-bold tracking-tight text-[#1D1D1F] dark:text-white flex items-center gap-2">
+          <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
             <ArrowRightLeft className="w-4 h-4 text-[#0071E3]" />
             Transfer Between Accounts
           </h3>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-white transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -125,10 +125,10 @@ export default function TransferModal({
                   setToId(nextTo);
                 }
               }}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             >
               {budgets.map(b => (
-                <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E]">
+                <option key={b.id} value={b.id}>
                   {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                 </option>
               ))}
@@ -141,13 +141,13 @@ export default function TransferModal({
               required
               value={toId}
               onChange={e => setToId(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             >
-              <option value="" className="bg-white dark:bg-[#1C1C1E]">-- Select Destination Account --</option>
+              <option value="">-- Select Destination Account --</option>
               {budgets
                 .filter(b => b.id !== fromId)
                 .map(b => (
-                  <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E]">
+                  <option key={b.id} value={b.id}>
                     {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                   </option>
                 ))}
@@ -165,7 +165,7 @@ export default function TransferModal({
                 placeholder="0.00"
                 value={amount}
                 onChange={e => setAmount(e.target.value)}
-                className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
               />
             </div>
             <div>
@@ -174,7 +174,7 @@ export default function TransferModal({
                 type="date"
                 value={date}
                 onChange={e => setDate(e.target.value)}
-                className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
               />
             </div>
           </div>
@@ -187,7 +187,7 @@ export default function TransferModal({
               placeholder="e.g. Pago Tarjeta Popular"
               value={title}
               onChange={e => setTitle(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
@@ -199,12 +199,12 @@ export default function TransferModal({
               placeholder="Reference number or memo..."
               value={notes}
               onChange={e => setNotes(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             />
           </div>
 
           {fromAcc && toAcc && amt > 0 && (
-            <div className="bg-[#0071E3]/10 border border-[#0071E3]/25 rounded-2xl p-3 text-[11px] space-y-1 text-[#0071E3] dark:text-blue-200 tabular-nums">
+            <div className="bg-[#0071E3]/10 border border-[#0071E3]/25 rounded-2xl p-3 text-[11px] space-y-1 text-blue-200 tabular-nums">
               {fromIsLiquid && (
                 <div>• {fromAcc.name}: balance decreases by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
               )}
@@ -214,7 +214,7 @@ export default function TransferModal({
               {toIsDebt && (
                 <div>• {toAcc.name}: debt/used balance reduced by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
               )}
-              <div className="text-[10px] text-[#0071E3]/80 dark:text-blue-300/80 pt-0.5">
+              <div className="text-[10px] text-blue-300/80 pt-0.5">
                 Excluded from monthly Expense and Income totals.
               </div>
             </div>
@@ -224,7 +224,7 @@ export default function TransferModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white py-2.5 rounded-full text-xs font-semibold transition"
+              className="flex-1 bg-[#2C2C2E] hover:bg-white/15 text-white py-2.5 rounded-full text-xs font-semibold transition"
             >
               Cancel
             </button>

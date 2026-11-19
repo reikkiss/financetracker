@@ -16,7 +16,6 @@ import {
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import { parsePdfStatementLocally, PdfPasswordError } from '../utils/pdfStatementParser';
-import { getApiUrl } from '../utils/apiConfig';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -351,7 +350,7 @@ export default function StatementUploadModal({
       // Fall back to backend OCR only for images or unencrypted scanned PDFs with no extractable text transactions
       if (!data) {
         try {
-          const response = await fetch(getApiUrl('/api/ai/parse-statement'), {
+          const response = await fetch('/api/ai/parse-statement', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -555,48 +554,44 @@ export default function StatementUploadModal({
   const selectedBudgetObj = budgets.find(b => b.id === defaultBudgetId);
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl space-y-4 text-[#1D1D1F] dark:text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="bg-[#202020] border border-[#333] rounded-2xl p-6 w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl space-y-4">
         {/* Header */}
-        <div className="flex items-start justify-between gap-4 border-b border-black/[0.06] dark:border-white/10 pb-3 shrink-0">
+        <div className="flex items-start justify-between gap-4 border-b border-[#2b2b2b] pb-3 shrink-0">
           <div>
-            <h3 className="text-lg font-bold tracking-tight text-[#1D1D1F] dark:text-white flex items-center gap-2">
-              <Upload className="w-4 h-4 text-[#248A3D] dark:text-emerald-400" />
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Upload className="w-4 h-4 text-emerald-400" />
               Upload Bank / Credit Card Statement
             </h3>
-            <p className="text-[11px] text-[#86868B] mt-0.5">
+            <p className="text-[11px] text-[#9b9b9b] mt-0.5">
               Select a Credit Card or Budget account and upload a statement (PDF, CSV, TXT, or image) to add all transactions to it.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
-          >
+          <button onClick={handleClose} className="text-[#888] hover:text-white p-1">
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Step 1: Target Account Selector (Required) + Upload Zone */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 shrink-0">
-          <div className={`bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border rounded-2xl p-3.5 flex flex-col justify-center space-y-2 ${
+          <div className={`bg-[#181818] border rounded-xl p-3.5 flex flex-col justify-center space-y-2 ${
             defaultBudgetId ? 'border-emerald-500/40' : 'border-amber-500/50'
           }`}>
             <label className="text-[11px] font-semibold flex items-center justify-between gap-1.5">
-              <span className="flex items-center gap-1.5 text-[#1D1D1F] dark:text-white">
-                <CreditCard className="w-3.5 h-3.5 text-[#B25000] dark:text-amber-400" />
+              <span className="flex items-center gap-1.5 text-white">
+                <CreditCard className="w-3.5 h-3.5 text-amber-400" />
                 Target Credit Card / Budget *
               </span>
               {!defaultBudgetId ? (
-                <span className="text-[10px] text-[#B25000] dark:text-amber-400 font-medium">Required</span>
+                <span className="text-[10px] text-amber-400 font-medium">Required</span>
               ) : (
-                <span className="text-[10px] text-[#248A3D] dark:text-emerald-400 font-medium">Selected</span>
+                <span className="text-[10px] text-emerald-400 font-medium">Selected</span>
               )}
             </label>
 
             {budgets.length === 0 ? (
               <div className="space-y-2">
-                <p className="text-[11px] text-[#B25000] dark:text-amber-300 leading-snug">
+                <p className="text-[11px] text-amber-300 leading-snug">
                   No budgets or credit card accounts exist yet. Create one first to assign statement transactions.
                 </p>
                 {onOpenCreateBudget && (
@@ -606,7 +601,7 @@ export default function StatementUploadModal({
                       handleClose();
                       onOpenCreateBudget();
                     }}
-                    className="w-full bg-[#0071E3] hover:bg-[#0077ED] text-white py-2 rounded-full text-xs font-semibold transition"
+                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 rounded-lg text-xs font-medium transition"
                   >
                     + Create Credit Card / Budget
                   </button>
@@ -617,18 +612,18 @@ export default function StatementUploadModal({
                 <select
                   value={defaultBudgetId}
                   onChange={e => applyDefaultBudgetToAll(e.target.value)}
-                  className={`w-full bg-white dark:bg-[#1C1C1E] border rounded-xl px-2.5 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none ${
-                    defaultBudgetId ? 'border-emerald-500/50 focus:border-emerald-500' : 'border-amber-500/60 focus:border-amber-500'
+                  className={`w-full bg-[#222] border rounded-lg px-2.5 py-2 text-xs text-white focus:outline-none ${
+                    defaultBudgetId ? 'border-emerald-500/50 focus:border-emerald-400' : 'border-amber-500/60 focus:border-amber-400'
                   }`}
                 >
-                  <option value="" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">-- Select Account / Budget --</option>
+                  <option value="">-- Select Account / Budget --</option>
                   {budgets.map(b => (
-                    <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">
+                    <option key={b.id} value={b.id}>
                       {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                     </option>
                   ))}
                 </select>
-                <p className="text-[10px] text-[#86868B]">
+                <p className="text-[10px] text-[#888]">
                   {selectedBudgetObj
                     ? `All imported transactions will be added to ${selectedBudgetObj.name || selectedBudgetObj.category}.`
                     : 'Choose the Bank, Debit, Credit Card, Loan, or Budget account to receive all extracted transactions.'}
@@ -645,10 +640,10 @@ export default function StatementUploadModal({
               const f = e.dataTransfer.files?.[0];
               if (f && !isParsing && budgets.length > 0) handleFilePicked(f);
             }}
-            className={`md:col-span-2 border-2 border-dashed rounded-2xl p-4 flex items-center gap-4 transition ${
+            className={`md:col-span-2 border-2 border-dashed rounded-xl p-4 flex items-center gap-4 transition ${
               budgets.length === 0
-                ? 'border-black/[0.08] dark:border-white/10 bg-[#F5F5F7] dark:bg-[#2C2C2E]/40 opacity-50 cursor-not-allowed'
-                : 'border-black/[0.12] dark:border-white/15 hover:border-[#0071E3] bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 cursor-pointer'
+                ? 'border-[#2c2c2c] bg-[#161616] opacity-50 cursor-not-allowed'
+                : 'border-[#383838] hover:border-emerald-500/70 bg-[#181818] cursor-pointer'
             }`}
           >
             <input
@@ -664,26 +659,26 @@ export default function StatementUploadModal({
             />
             <div className="w-10 h-10 rounded-xl bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
               {isParsing ? (
-                <Loader2 className="w-5 h-5 text-[#248A3D] dark:text-emerald-400 animate-spin" />
+                <Loader2 className="w-5 h-5 text-emerald-400 animate-spin" />
               ) : (
-                <FileText className="w-5 h-5 text-[#248A3D] dark:text-emerald-400" />
+                <FileText className="w-5 h-5 text-emerald-400" />
               )}
             </div>
             <div className="min-w-0 flex-1">
               {isParsing ? (
                 <>
-                  <p className="text-xs font-semibold text-[#1D1D1F] dark:text-white">Extracting transactions from {selectedFile?.name}...</p>
-                  <p className="text-[11px] text-[#86868B] mt-0.5">Reading dates, merchants, amounts, and categories.</p>
+                  <p className="text-xs font-semibold text-white">Extracting transactions from {selectedFile?.name}...</p>
+                  <p className="text-[11px] text-[#888] mt-0.5">Reading dates, merchants, amounts, and categories.</p>
                 </>
               ) : selectedFile ? (
                 <>
-                  <p className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate">{selectedFile.name}</p>
-                  <p className="text-[11px] text-[#248A3D] dark:text-emerald-400 mt-0.5">Click or drop another statement to replace</p>
+                  <p className="text-xs font-semibold text-white truncate">{selectedFile.name}</p>
+                  <p className="text-[11px] text-emerald-400 mt-0.5">Click or drop another statement to replace</p>
                 </>
               ) : (
                 <>
-                  <p className="text-xs font-semibold text-[#1D1D1F] dark:text-white">Click to browse or drag & drop statement file</p>
-                  <p className="text-[11px] text-[#86868B] mt-0.5">Supports PDF, CSV, TXT, PNG, JPG statements (up to 15 MB)</p>
+                  <p className="text-xs font-semibold text-white">Click to browse or drag & drop statement file</p>
+                  <p className="text-[11px] text-[#888] mt-0.5">Supports PDF, CSV, TXT, PNG, JPG statements (up to 15 MB)</p>
                 </>
               )}
             </div>
@@ -694,17 +689,17 @@ export default function StatementUploadModal({
         {isPasswordRequired && selectedFile && (
           <form
             onSubmit={handleUnlockPdf}
-            className="bg-amber-500/10 border border-amber-500/35 rounded-2xl p-4 space-y-3 shrink-0"
+            className="bg-amber-500/10 border border-amber-500/35 rounded-xl p-4 space-y-3 shrink-0"
           >
             <div className="flex items-start gap-2.5">
               <div className="w-8 h-8 rounded-lg bg-amber-500/20 border border-amber-500/30 flex items-center justify-center shrink-0 mt-0.5">
-                <Lock className="w-4 h-4 text-[#B25000] dark:text-amber-400" />
+                <Lock className="w-4 h-4 text-amber-400" />
               </div>
               <div className="flex-1 min-w-0">
-                <p className="text-xs font-semibold text-[#B25000] dark:text-amber-200">
+                <p className="text-xs font-semibold text-amber-200">
                   This PDF statement is password-protected
                 </p>
-                <p className="text-[11px] text-[#B25000]/80 dark:text-amber-200/75 mt-0.5">
+                <p className="text-[11px] text-amber-200/75 mt-0.5">
                   Enter the document password to decrypt and extract transactions locally in your browser (the password is never saved or sent anywhere).
                 </p>
               </div>
@@ -721,12 +716,12 @@ export default function StatementUploadModal({
                   }}
                   placeholder="Enter PDF password..."
                   autoFocus
-                  className="w-full bg-white dark:bg-[#1C1C1E] border border-amber-500/40 rounded-xl pl-3 pr-9 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                  className="w-full bg-[#141414] border border-amber-500/40 rounded-lg pl-3 pr-9 py-2 text-xs text-white placeholder-[#777] focus:outline-none focus:border-amber-400"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPdfPassword(prev => !prev)}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#888] hover:text-white"
                   title={showPdfPassword ? 'Hide password' : 'Show password'}
                 >
                   {showPdfPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
@@ -735,7 +730,7 @@ export default function StatementUploadModal({
               <button
                 type="submit"
                 disabled={!pdfPassword || isParsing}
-                className="px-4 py-2 rounded-full bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-black text-xs font-semibold transition flex items-center justify-center gap-1.5 shrink-0"
+                className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 disabled:opacity-50 disabled:cursor-not-allowed text-black text-xs font-semibold transition flex items-center justify-center gap-1.5 shrink-0"
               >
                 {isParsing ? (
                   <>
@@ -750,8 +745,8 @@ export default function StatementUploadModal({
             </div>
 
             {passwordError && (
-              <p className="text-[11px] text-[#D70015] dark:text-rose-300 flex items-center gap-1.5">
-                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-[#D70015] dark:text-rose-400" />
+              <p className="text-[11px] text-rose-300 flex items-center gap-1.5">
+                <AlertCircle className="w-3.5 h-3.5 shrink-0 text-rose-400" />
                 <span>{passwordError}</span>
               </p>
             )}
@@ -760,41 +755,41 @@ export default function StatementUploadModal({
 
         {/* Error banner */}
         {errorMsg && (
-          <div className="bg-rose-500/10 border border-rose-500/30 text-[#D70015] dark:text-rose-300 rounded-2xl px-4 py-2.5 text-xs flex items-center gap-2 shrink-0">
-            <AlertCircle className="w-4 h-4 shrink-0 text-[#D70015] dark:text-rose-400" />
+          <div className="bg-rose-500/10 border border-rose-500/30 text-rose-300 rounded-xl px-4 py-2.5 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
             <span>{errorMsg}</span>
           </div>
         )}
 
         {/* Detected statement summary */}
         {drafts.length > 0 && (
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 rounded-2xl px-4 py-2.5 text-xs shrink-0">
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-[#181818] border border-[#2b2b2b] rounded-xl px-4 py-2.5 text-xs shrink-0">
             <div className="flex items-center gap-3 flex-wrap">
-              <span className="inline-flex items-center gap-1.5 text-[#248A3D] dark:text-emerald-400 font-medium tabular-nums">
+              <span className="inline-flex items-center gap-1.5 text-emerald-400 font-medium">
                 <CheckCircle2 className="w-4 h-4" />
                 {drafts.length} transactions extracted ({nonDuplicateDrafts.length} new)
               </span>
               {duplicateCount > 0 && (
-                <span className="bg-amber-500/10 border border-amber-500/30 text-[#B25000] dark:text-amber-300 px-2 py-0.5 rounded-full text-[11px] font-medium tabular-nums">
+                <span className="bg-amber-500/10 border border-amber-500/30 text-amber-300 px-2 py-0.5 rounded text-[11px] font-medium">
                   {duplicateCount} already in DB (skipped)
                 </span>
               )}
               {detectedInfo?.accountName && (
-                <span className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 text-[#424245] dark:text-zinc-300 px-2.5 py-0.5 rounded-full text-[11px]">
+                <span className="bg-[#252525] text-zinc-300 px-2 py-0.5 rounded text-[11px]">
                   Account: {detectedInfo.accountName}
                 </span>
               )}
               {detectedInfo?.period && (
-                <span className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 text-[#424245] dark:text-zinc-300 px-2.5 py-0.5 rounded-full text-[11px] tabular-nums">
+                <span className="bg-[#252525] text-zinc-300 px-2 py-0.5 rounded text-[11px]">
                   Period: {detectedInfo.period}
                 </span>
               )}
             </div>
-            <div className="flex items-center gap-4 text-[11px] tabular-nums">
-              <span className="text-[#248A3D] dark:text-emerald-400 font-medium">
+            <div className="flex items-center gap-4 text-[11px]">
+              <span className="text-emerald-400 font-medium">
                 Income: +{currencySymbol}{totalSelectedIncome.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
-              <span className="text-[#D70015] dark:text-rose-400 font-medium">
+              <span className="text-rose-400 font-medium">
                 Expenses: -{currencySymbol}{totalSelectedExpense.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </span>
             </div>
@@ -803,16 +798,16 @@ export default function StatementUploadModal({
 
         {/* All-Duplicate Info Banner */}
         {drafts.length > 0 && nonDuplicateDrafts.length === 0 && (
-          <div className="bg-blue-500/10 border border-blue-500/30 text-[#0071E3] dark:text-blue-300 rounded-2xl px-4 py-2 text-xs flex items-center gap-2 shrink-0">
-            <AlertCircle className="w-4 h-4 shrink-0 text-[#0071E3] dark:text-blue-400" />
+          <div className="bg-blue-500/10 border border-blue-500/30 text-blue-300 rounded-xl px-4 py-2 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle className="w-4 h-4 shrink-0 text-blue-400" />
             <span>All transactions from this statement already exist in your database (matching name, amount, and date).</span>
           </div>
         )}
 
         {/* Missing Account Selection Reminder Banner */}
         {drafts.length > 0 && !defaultBudgetId && (
-          <div className="bg-amber-500/10 border border-amber-500/30 text-[#B25000] dark:text-amber-300 rounded-2xl px-4 py-2 text-xs flex items-center gap-2 shrink-0">
-            <AlertCircle className="w-4 h-4 shrink-0 text-[#B25000] dark:text-amber-400" />
+          <div className="bg-amber-500/10 border border-amber-500/30 text-amber-300 rounded-xl px-4 py-2 text-xs flex items-center gap-2 shrink-0">
+            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400" />
             <span>Please select a Credit Card or Budget account above before adding these transactions.</span>
           </div>
         )}
@@ -835,38 +830,38 @@ export default function StatementUploadModal({
           );
           if (missingCats.length === 0) return null;
           return (
-            <div className="bg-emerald-500/10 border border-emerald-500/30 text-[#248A3D] dark:text-emerald-300 rounded-2xl px-4 py-2 text-[11px] flex items-center justify-between gap-2 shrink-0">
+            <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-xl px-4 py-2 text-[11px] flex items-center justify-between gap-2 shrink-0">
               <span>
                 Budgets will be created immediately for selected categories:{' '}
-                <strong className="text-[#1D1D1F] dark:text-white">{missingCats.join(', ')}</strong>
+                <strong className="text-white">{missingCats.join(', ')}</strong>
               </span>
             </div>
           );
         })()}
 
         {/* Review Table */}
-        <div className="flex-1 overflow-y-auto border border-black/[0.06] dark:border-white/10 rounded-2xl bg-[#F5F5F7] dark:bg-[#1C1C1E] min-h-[220px]">
+        <div className="flex-1 overflow-y-auto border border-[#2a2a2a] rounded-xl bg-[#181818] min-h-[220px]">
           {drafts.length === 0 ? (
-            <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center p-8 text-xs text-[#86868B] space-y-2">
+            <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center p-8 text-xs text-[#777] space-y-2">
               {isParsing ? (
                 <>
-                  <Loader2 className="w-7 h-7 text-[#248A3D] dark:text-emerald-400 animate-spin" />
-                  <p className="text-[#1D1D1F] dark:text-zinc-300 font-medium">Reading statement transactions...</p>
+                  <Loader2 className="w-7 h-7 text-emerald-400 animate-spin" />
+                  <p className="text-zinc-300 font-medium">Reading statement transactions...</p>
                 </>
               ) : (
                 <>
-                  <FileText className="w-8 h-8 text-[#86868B]/60" />
+                  <FileText className="w-8 h-8 text-[#444]" />
                   <p>Select a Credit Card or Budget account and upload a statement above to preview and edit extracted transactions.</p>
                 </>
               )}
             </div>
           ) : (
             <table className="w-full text-left text-xs">
-              <thead className="bg-[#F2F2F7] dark:bg-[#2C2C2E] border-b border-black/[0.06] dark:border-white/10 text-[#86868B] sticky top-0 z-10">
+              <thead className="bg-[#1e1e1e] border-b border-[#2b2b2b] text-[#9b9b9b] sticky top-0 z-10">
                 <tr>
                   <th className="p-2.5 w-9 text-center">
-                    <button type="button" onClick={toggleAll} className="text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white">
-                      {allSelected ? <CheckSquare className="w-4 h-4 text-[#0071E3] dark:text-emerald-400" /> : <Square className="w-4 h-4" />}
+                    <button type="button" onClick={toggleAll} className="text-zinc-300 hover:text-white">
+                      {allSelected ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
                     </button>
                   </th>
                   <th className="p-2.5 font-medium w-32">Date</th>
@@ -880,16 +875,16 @@ export default function StatementUploadModal({
                   <th className="p-2.5 w-9"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-black/[0.06] dark:divide-white/5 bg-white dark:bg-[#1C1C1E]">
+              <tbody className="divide-y divide-[#242424]">
                 {drafts.map(row => (
-                  <tr key={row.tempId} className={`hover:bg-[#F5F5F7] dark:hover:bg-[#2C2C2E]/50 transition ${row.isDuplicate ? 'bg-amber-500/5 opacity-60' : row.selected ? '' : 'opacity-45'}`}>
+                  <tr key={row.tempId} className={`hover:bg-[#222] transition ${row.isDuplicate ? 'bg-[#1b1915]/60 opacity-60' : row.selected ? '' : 'opacity-45'}`}>
                     <td className="p-2 text-center">
                       <button
                         type="button"
                         onClick={() => updateDraft(row.tempId, { selected: !row.selected })}
-                        className="text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white"
+                        className="text-zinc-300 hover:text-white"
                       >
-                        {row.selected ? <CheckSquare className="w-4 h-4 text-[#0071E3] dark:text-emerald-400" /> : <Square className="w-4 h-4" />}
+                        {row.selected ? <CheckSquare className="w-4 h-4 text-emerald-400" /> : <Square className="w-4 h-4" />}
                       </button>
                     </td>
                     <td className="p-2">
@@ -897,7 +892,7 @@ export default function StatementUploadModal({
                         type="date"
                         value={row.date}
                         onChange={e => updateDraft(row.tempId, { date: e.target.value })}
-                        className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-emerald-500"
                       />
                     </td>
                     <td className="p-2">
@@ -907,14 +902,14 @@ export default function StatementUploadModal({
                           value={row.title}
                           maxLength={180}
                           onChange={e => updateDraft(row.tempId, { title: e.target.value })}
-                          className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                          className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-emerald-500"
                         />
                         {row.isDuplicate && (
                           <span
-                            className={`shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium border ${
+                            className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-medium border ${
                               row.isMatchedTransfer
-                                ? 'bg-blue-500/15 text-[#0071E3] dark:text-blue-300 border-blue-500/30'
-                                : 'bg-amber-500/15 text-[#B25000] dark:text-amber-300 border-amber-500/30'
+                                ? 'bg-blue-500/15 text-blue-300 border-blue-500/30'
+                                : 'bg-amber-500/15 text-amber-300 border-amber-500/30'
                             }`}
                             title={
                               row.isMatchedTransfer
@@ -931,10 +926,10 @@ export default function StatementUploadModal({
                       <select
                         value={row.category}
                         onChange={e => updateDraft(row.tempId, { category: e.target.value })}
-                        className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                        className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-emerald-500"
                       >
                         {categoryOptions.map(c => (
-                          <option key={c} value={c} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">{c}</option>
+                          <option key={c} value={c}>{c}</option>
                         ))}
                       </select>
                     </td>
@@ -949,11 +944,11 @@ export default function StatementUploadModal({
                             ...(clearTransfer ? { isTransfer: false, transferToBudgetId: '' } : {})
                           });
                         }}
-                        className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-[11px] text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                        className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-[11px] text-white focus:outline-none focus:border-emerald-500"
                       >
-                        {!defaultBudgetId && <option value="" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">Select account...</option>}
+                        {!defaultBudgetId && <option value="">Select account...</option>}
                         {budgets.map(b => (
-                          <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">
+                          <option key={b.id} value={b.id}>
                             {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                           </option>
                         ))}
@@ -985,17 +980,17 @@ export default function StatementUploadModal({
                             ? 'Source account this transfer came from (← From)'
                             : 'Destination account this transfer went to (→ To)'
                         }
-                        className={`w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border rounded-lg px-2 py-1 text-[11px] focus:outline-none ${
+                        className={`w-full bg-[#121212] border rounded px-2 py-1 text-[11px] focus:outline-none ${
                           row.isTransfer && row.transferToBudgetId
-                            ? 'border-[#0071E3]/60 text-[#0071E3] dark:text-blue-300'
-                            : 'border-black/[0.08] dark:border-white/10 text-[#86868B] dark:text-zinc-400'
+                            ? 'border-blue-500/60 text-blue-300'
+                            : 'border-[#303030] text-zinc-400'
                         }`}
                       >
-                        <option value="" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">-- None --</option>
+                        <option value="">-- None --</option>
                         {budgets
                           .filter(b => b.id !== (row.budgetId || defaultBudgetId))
                           .map(b => (
-                            <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">
+                            <option key={b.id} value={b.id}>
                               {row.type === 'income' ? '← ' : '→ '}
                               {b.name || b.category} {getAccountTypeLabel(b.accountType)}
                             </option>
@@ -1006,12 +1001,12 @@ export default function StatementUploadModal({
                       <select
                         value={row.type}
                         onChange={e => updateDraft(row.tempId, { type: e.target.value as 'income' | 'expense' })}
-                        className={`w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-[11px] font-medium focus:outline-none ${
-                          row.type === 'income' ? 'text-[#248A3D] dark:text-emerald-400' : 'text-[#D70015] dark:text-rose-400'
+                        className={`w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-[11px] font-medium focus:outline-none ${
+                          row.type === 'income' ? 'text-emerald-400' : 'text-rose-400'
                         }`}
                       >
-                        <option value="expense" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">Expense</option>
-                        <option value="income" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">Income</option>
+                        <option value="expense">Expense</option>
+                        <option value="income">Income</option>
                       </select>
                     </td>
                     <td className="p-2">
@@ -1021,7 +1016,7 @@ export default function StatementUploadModal({
                         min="0"
                         value={row.amount}
                         onChange={e => updateDraft(row.tempId, { amount: parseFloat(e.target.value) || 0 })}
-                        className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-xs text-right font-semibold text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        className="w-full bg-[#121212] border border-[#303030] rounded px-2 py-1 text-xs text-right font-semibold text-white focus:outline-none focus:border-emerald-500"
                       />
                     </td>
                     <td className="p-2 text-center">
@@ -1030,14 +1025,14 @@ export default function StatementUploadModal({
                         checked={Boolean(row.isLoanPayment)}
                         onChange={e => updateDraft(row.tempId, { isLoanPayment: e.target.checked })}
                         title="Credit Card / Loan Payment (Abono)"
-                        className="accent-[#34C759] w-3.5 h-3.5 cursor-pointer"
+                        className="accent-emerald-500 w-3.5 h-3.5 cursor-pointer"
                       />
                     </td>
                     <td className="p-2 text-center">
                       <button
                         type="button"
                         onClick={() => removeDraft(row.tempId)}
-                        className="text-[#86868B] hover:text-[#FF3B30] p-1 rounded"
+                        className="text-[#777] hover:text-rose-400 p-1 rounded"
                         title="Remove row"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1051,8 +1046,8 @@ export default function StatementUploadModal({
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between gap-3 pt-2 border-t border-black/[0.06] dark:border-white/10 shrink-0">
-          <span className="text-[11px] text-[#86868B] tabular-nums">
+        <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#2b2b2b] shrink-0">
+          <span className="text-[11px] text-[#888]">
             {selectedDrafts.length} of {drafts.length} transactions selected
             {selectedBudgetObj ? ` • Target: ${selectedBudgetObj.name || selectedBudgetObj.category}` : ''}
           </span>
@@ -1060,7 +1055,7 @@ export default function StatementUploadModal({
             <button
               type="button"
               onClick={handleClose}
-              className="px-4 py-2 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white text-xs font-semibold transition"
+              className="px-4 py-2 rounded-lg bg-[#333] hover:bg-[#3d3d3d] text-white text-xs transition"
             >
               Cancel
             </button>
@@ -1068,7 +1063,7 @@ export default function StatementUploadModal({
               type="button"
               disabled={!defaultBudgetId || selectedDrafts.length === 0 || isImporting || isParsing}
               onClick={handleConfirmImport}
-              className="px-5 py-2 rounded-full bg-[#0071E3] hover:bg-[#0077ED] disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition flex items-center gap-1.5"
+              className="px-5 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold transition flex items-center gap-1.5"
             >
               {isImporting ? (
                 <>

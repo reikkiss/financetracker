@@ -34,9 +34,9 @@ interface TransactionsPageProps {
 
 function AccountTypeIcon({ accountType }: { accountType?: Budget['accountType'] }) {
   if (accountType === 'credit_card') return <CreditCard className="w-3 h-3 text-[#FF9F0A]" />;
-  if (accountType === 'loan') return <Landmark className="w-3 h-3 text-[#AF52DE]" />;
-  if (accountType === 'bank_account') return <Building2 className="w-3 h-3 text-[#0071E3] dark:text-[#5AC8FA]" />;
-  if (accountType === 'debit_account') return <Wallet className="w-3 h-3 text-[#248A3D] dark:text-[#34C759]" />;
+  if (accountType === 'loan') return <Landmark className="w-3 h-3 text-purple-400" />;
+  if (accountType === 'bank_account') return <Building2 className="w-3 h-3 text-[#5AC8FA]" />;
+  if (accountType === 'debit_account') return <Wallet className="w-3 h-3 text-[#34C759]" />;
   return null;
 }
 
@@ -134,13 +134,13 @@ export default function TransactionsPage({
           <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
             LEDGER & RECONCILIATION
           </span>
-          <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Transactions Database</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-white">Transactions Database</h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onOpenTransfer && budgets.length >= 2 && (
             <button
               onClick={onOpenTransfer}
-              className="bg-[#0071E3]/10 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
+              className="bg-[#0071E3]/15 hover:bg-[#0071E3]/25 text-[#5AC8FA] border border-[#0071E3]/30 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
             >
               <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer
             </button>
@@ -148,14 +148,14 @@ export default function TransactionsPage({
           {onOpenEmailParser && (
             <button
               onClick={onOpenEmailParser}
-              className="bg-[#FF9F0A]/12 hover:bg-[#FF9F0A]/20 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
+              className="bg-[#FF9F0A]/15 hover:bg-[#FF9F0A]/25 text-[#FF9F0A] border border-[#FF9F0A]/30 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
             >
               <Mail className="w-3.5 h-3.5" /> Sync Email Alerts
             </button>
           )}
           <button
             onClick={onOpenUploadStatement}
-            className="bg-white hover:bg-[#F2F2F7] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#248A3D] dark:text-[#34C759] border border-black/[0.06] dark:border-white/10 shadow-sm px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
+            className="bg-[#2C2C2E] hover:bg-white/15 text-[#34C759] border border-white/10 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
           >
             <Upload className="w-3.5 h-3.5" /> Upload Statement
           </button>
@@ -169,24 +169,24 @@ export default function TransactionsPage({
       </div>
 
       {/* Filter Toolbar & Saved Filters */}
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[22px] space-y-3 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
+      <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[22px] space-y-3 shadow-xl">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
+          <span className="text-xs font-semibold text-white flex items-center gap-1.5">
             <Filter className="w-3.5 h-3.5 text-[#0071E3]" /> Saved Ledger Filters
           </span>
           <div className="flex items-center gap-2">
-            {saveSuccess && <span className="text-[11px] text-[#248A3D] dark:text-[#34C759] font-semibold">Filters Saved</span>}
+            {saveSuccess && <span className="text-[11px] text-[#34C759] font-semibold">Filters Saved</span>}
             <button
               type="button"
               onClick={handleSaveFilters}
-              className="bg-[#34C759]/12 hover:bg-[#34C759]/20 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30 px-3 py-1 rounded-full text-[11px] font-semibold transition flex items-center gap-1"
+              className="bg-[#34C759]/15 hover:bg-[#34C759]/25 text-[#34C759] border border-[#34C759]/30 px-3 py-1 rounded-full text-[11px] font-semibold transition flex items-center gap-1"
             >
               <BookmarkCheck className="w-3.5 h-3.5" /> Save Filters
             </button>
             <button
               type="button"
               onClick={handleResetFilters}
-              className="bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-zinc-300 px-3 py-1 rounded-full text-[11px] font-semibold transition flex items-center gap-1"
+              className="bg-[#2C2C2E] hover:bg-white/15 text-zinc-300 px-3 py-1 rounded-full text-[11px] font-semibold transition flex items-center gap-1"
               title="Reset to current month and clear filters"
             >
               <RotateCcw className="w-3 h-3" /> Reset
@@ -201,7 +201,7 @@ export default function TransactionsPage({
               type="month"
               value={filterMonth === 'All' ? currentActualMonth : filterMonth}
               onChange={e => handleMonthChange(e.target.value || 'All')}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
             />
             <button
               type="button"
@@ -217,11 +217,11 @@ export default function TransactionsPage({
             <select
               value={filterCategory}
               onChange={e => setFilterCategory(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             >
-              <option value="All" className="bg-white dark:bg-[#1C1C1E]">All Categories</option>
+              <option value="All">All Categories</option>
               {categoriesList.map(c => (
-                <option key={c} value={c} className="bg-white dark:bg-[#1C1C1E]">{c}</option>
+                <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </div>
@@ -231,12 +231,12 @@ export default function TransactionsPage({
             <select
               value={filterType}
               onChange={e => setFilterType(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             >
-              <option value="All" className="bg-white dark:bg-[#1C1C1E]">All Types</option>
-              <option value="expense" className="bg-white dark:bg-[#1C1C1E]">Expense</option>
-              <option value="income" className="bg-white dark:bg-[#1C1C1E]">Income</option>
-              <option value="transfer" className="bg-white dark:bg-[#1C1C1E]">Transfer</option>
+              <option value="All">All Types</option>
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+              <option value="transfer">Transfer</option>
             </select>
           </div>
 
@@ -245,20 +245,20 @@ export default function TransactionsPage({
             <select
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
             >
-              <option value="All" className="bg-white dark:bg-[#1C1C1E]">All Statuses</option>
-              <option value="pending" className="bg-white dark:bg-[#1C1C1E]">Pending (Flotante)</option>
-              <option value="cleared" className="bg-white dark:bg-[#1C1C1E]">Cleared</option>
+              <option value="All">All Statuses</option>
+              <option value="pending">Pending (Flotante)</option>
+              <option value="cleared">Cleared</option>
             </select>
           </div>
         </div>
       </div>
 
       {/* Grouped Inset Ledger */}
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-[22px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl overflow-x-auto">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-[22px] overflow-hidden shadow-xl overflow-x-auto">
         <table className="w-full text-left text-xs">
-          <thead className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border-b border-black/[0.06] dark:border-white/10 text-[#6E6E73] dark:text-[#86868B]">
+          <thead className="bg-[#2C2C2E]/60 border-b border-white/10 text-[#86868B]">
             <tr>
               <th className="p-4 font-semibold">Merchant / Title</th>
               <th className="p-4 font-semibold">Category</th>
@@ -269,7 +269,7 @@ export default function TransactionsPage({
               <th className="p-4 font-semibold text-center">Actions</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-black/[0.06] dark:divide-white/[0.06]">
+          <tbody className="divide-y divide-white/[0.06]">
             {filteredTransactions.length === 0 ? (
               <tr>
                 <td colSpan={7} className="py-12 text-center text-[#86868B]">
@@ -282,48 +282,44 @@ export default function TransactionsPage({
                 const transferToBudget = t.transferToBudgetId ? budgetById[t.transferToBudgetId] : undefined;
                 const isTransfer = Boolean(t.isTransfer);
                 return (
-                  <tr key={t.id} className="hover:bg-[#F5F5F7]/75 dark:hover:bg-white/[0.03] transition group">
-                    <td className="p-4 font-medium text-[#1D1D1F] dark:text-white">
+                  <tr key={t.id} className="hover:bg-white/[0.03] transition group">
+                    <td className="p-4 font-medium text-white">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span>{t.title}</span>
                         {isTransfer && (
-                          <span className="inline-flex items-center gap-1 bg-[#0071E3]/10 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#0071E3]/15 text-[#5AC8FA] border border-[#0071E3]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <ArrowRightLeft className="w-2.5 h-2.5" /> Transfer
                           </span>
                         )}
                         {t.isLoanPayment && !isTransfer && (
-                          <span className="inline-flex items-center gap-1 bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <CheckCircle2 className="w-2.5 h-2.5" /> Payment
                           </span>
                         )}
                         {t.status === 'pending' && (
-                          <span className="inline-flex items-center gap-1 bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             Flotante
                           </span>
                         )}
                         {(!t.status || t.status === 'cleared') && (
-                          <span className="inline-flex items-center gap-1 bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#34C759]/10 text-[#34C759] border border-[#34C759]/20 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             Cleared
                           </span>
                         )}
                         {t.emailOutcome === 'reversed' && (
-                          <span className="inline-flex items-center gap-1 bg-[#AF52DE]/12 text-[#8944AB] dark:text-purple-300 border border-[#AF52DE]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#AF52DE]/15 text-purple-300 border border-[#AF52DE]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             Reversed
                           </span>
                         )}
                         {t.emailOutcome === 'declined' && (
-                          <span className="inline-flex items-center gap-1 bg-[#FF3B30]/12 text-[#D70015] dark:text-[#FF3B30] border border-[#FF3B30]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                          <span className="inline-flex items-center gap-1 bg-[#FF3B30]/15 text-[#FF3B30] border border-[#FF3B30]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             Declined
                           </span>
                         )}
                       </div>
-                      {(t.emailContext || t.notes) && (
-                        <span className="text-[11px] text-[#6E6E73] dark:text-[#86868B] block mt-0.5 line-clamp-2 max-w-md leading-snug">
-                          {t.emailContext || t.notes}
-                        </span>
-                      )}
+                      {t.notes && <span className="text-[10px] text-[#86868B] block mt-0.5 truncate max-w-xs">{t.notes}</span>}
                       {(typeof t.loanPrincipalPaid === 'number' || typeof t.loanInterestPaid === 'number') && (
-                        <span className="text-[10px] text-[#8944AB] dark:text-purple-300 block mt-0.5 tabular-nums">
+                        <span className="text-[10px] text-purple-300 block mt-0.5 tabular-nums">
                           Principal: {currencySymbol}{(Number(t.loanPrincipalPaid) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                           {' • '}
                           Interest: {currencySymbol}{(Number(t.loanInterestPaid) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
@@ -331,25 +327,25 @@ export default function TransactionsPage({
                       )}
                     </td>
                     <td className="p-4">
-                      <span className="bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#1D1D1F] dark:text-zinc-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
+                      <span className="bg-[#2C2C2E] text-zinc-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
                         {t.category}
                       </span>
                     </td>
                     <td className="p-4">
                       {isTransfer && linkedBudget && transferToBudget ? (
                         <div className="inline-flex items-center gap-1.5 flex-wrap">
-                          <span className="inline-flex items-center gap-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.05] dark:border-white/10 text-[#1D1D1F] dark:text-zinc-200 px-2 py-0.5 rounded-full text-[11px]">
+                          <span className="inline-flex items-center gap-1 bg-[#2C2C2E] border border-white/10 text-zinc-200 px-2 py-0.5 rounded-full text-[11px]">
                             <AccountTypeIcon accountType={linkedBudget.accountType} />
                             {linkedBudget.name || linkedBudget.category}
                           </span>
                           <span className="text-[#0071E3] font-bold">→</span>
-                          <span className="inline-flex items-center gap-1 bg-[#0071E3]/10 border border-[#0071E3]/25 text-[#0071E3] dark:text-blue-200 px-2 py-0.5 rounded-full text-[11px]">
+                          <span className="inline-flex items-center gap-1 bg-[#0071E3]/15 border border-[#0071E3]/25 text-blue-200 px-2 py-0.5 rounded-full text-[11px]">
                             <AccountTypeIcon accountType={transferToBudget.accountType} />
                             {transferToBudget.name || transferToBudget.category}
                           </span>
                         </div>
                       ) : linkedBudget ? (
-                        <span className="inline-flex items-center gap-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.05] dark:border-white/10 text-[#1D1D1F] dark:text-zinc-200 px-2 py-0.5 rounded-full text-[11px]">
+                        <span className="inline-flex items-center gap-1 bg-[#2C2C2E] border border-white/10 text-zinc-200 px-2 py-0.5 rounded-full text-[11px]">
                           <AccountTypeIcon accountType={linkedBudget.accountType} />
                           {linkedBudget.name || linkedBudget.category}
                         </span>
@@ -359,27 +355,27 @@ export default function TransactionsPage({
                     </td>
                     <td className="p-4 uppercase font-semibold text-[10px]">
                       {isTransfer ? (
-                        <span className="text-[#0071E3] dark:text-[#5AC8FA]">TRANSFER</span>
+                        <span className="text-[#5AC8FA]">TRANSFER</span>
                       ) : (
-                        <span className={t.type === 'income' ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#D70015] dark:text-[#FF3B30]'}>{t.type}</span>
+                        <span className={t.type === 'income' ? 'text-[#34C759]' : 'text-[#FF3B30]'}>{t.type}</span>
                       )}
                     </td>
                     <td className="p-4 text-[#86868B] tabular-nums">{t.date}</td>
-                    <td className={`p-4 text-right font-bold tabular-nums ${isTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : t.type === 'income' ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}`}>
+                    <td className={`p-4 text-right font-bold tabular-nums ${isTransfer ? 'text-[#5AC8FA]' : t.type === 'income' ? 'text-[#34C759]' : 'text-white'}`}>
                       {isTransfer ? '' : t.type === 'income' ? '+' : '-'}{currencySymbol}{t.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => onOpenEditTx(t)}
-                          className="text-[#86868B] hover:text-[#0071E3] p-1.5 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/10 transition"
+                          className="text-[#86868B] hover:text-[#0071E3] p-1.5 rounded-full hover:bg-white/10 transition"
                           title="Edit transaction"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => onDeleteTx(t.id)}
-                          className="text-[#86868B] hover:text-[#FF3B30] p-1.5 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/10 transition"
+                          className="text-[#86868B] hover:text-[#FF3B30] p-1.5 rounded-full hover:bg-white/10 transition"
                           title="Delete transaction"
                         >
                           <Trash2 className="w-3.5 h-3.5" />

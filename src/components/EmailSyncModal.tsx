@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   X,
   Mail,
@@ -9,9 +9,7 @@ import {
   ShieldCheck,
   KeyRound,
   Radio,
-  Power,
-  Upload,
-  Server
+  Power
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import { Transaction } from '../App';
@@ -21,14 +19,6 @@ import {
   findExistingTransactionForEmailAlert
 } from '../utils/bankEmailParser';
 import { GmailAuthError, scanGmailBankAlerts } from '../services/gmailSyncService';
-import {
-  checkBackendHealth,
-  getApiBaseUrl,
-  getApiUrl,
-  isLikelyStaticHost,
-  setSavedApiBaseUrl
-} from '../utils/apiConfig';
-import { parseEmailFilesToAlerts } from '../utils/emlParser';
 
 export interface PersistentGmailState {
   enabled: boolean;
@@ -107,11 +97,6 @@ export default function EmailSyncModal({
   const [isTestingICloud, setIsTestingICloud] = useState(false);
   const [isSyncingICloud, setIsSyncingICloud] = useState(false);
   const [iCloudStatus, setICloudStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('connected');
-  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl() || 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app');
-  const [showBackendConfig, setShowBackendConfig] = useState(false);
-  const [isImportingEml, setIsImportingEml] = useState(false);
-  const emlFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Gmail UI state
   const [isConnectingGmail, setIsConnectingGmail] = useState(false);
@@ -139,21 +124,6 @@ export default function EmailSyncModal({
       setICloudLimit(String(iCloudSession.limit));
     }
   }, [iCloudSession]);
-
-  useEffect(() => {
-    if (!isOpen) return;
-    setBackendStatus('connected');
-    let cancelled = false;
-    checkBackendHealth().then(res => {
-      if (cancelled) return;
-      if (res.available && res.imapSupported) {
-        setBackendStatus('connected');
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isOpen]);
 
   const processedEmailIdSet = useMemo(() => new Set(processedEmailIds), [processedEmailIds]);
 
@@ -212,26 +182,10 @@ export default function EmailSyncModal({
     const raw = await res.text();
     const trimmed = raw.trim();
     if (!trimmed) {
-      if (!res.ok) {
-        if (res.status === 405) {
-          setBackendStatus('unavailable');
-          setShowBackendConfig(true);
-          throw new Error(
-            'Live IMAP requires a running backend server (this static site returned HTTP 405). Import .eml/.mbox files below or connect a Backend Server URL.'
-          );
-        }
-        throw new Error(`Server returned HTTP ${res.status}.`);
-      }
+      if (!res.ok) throw new Error(`Server returned HTTP ${res.status}.`);
       return {};
     }
     if (trimmed.startsWith('<')) {
-      setBackendStatus('unavailable');
-      setShowBackendConfig(true);
-      if (res.status === 405 || res.status === 404 || isLikelyStaticHost()) {
-        throw new Error(
-          'Live iCloud IMAP cannot run directly on GitHub Pages static hosting (no Node server active). Import .eml/.mbox files below or enter a Backend Server URL.'
-        );
-      }
       throw new Error(`Unexpected HTML response (HTTP ${res.status}). Please retry in a moment.`);
     }
     try {
@@ -244,59 +198,6 @@ export default function EmailSyncModal({
     }
   };
 
-  const handleSaveBackendUrl = async () => {
-    let targetUrl = backendUrlInput.trim();
-    if (/mail\.me\.com|gmail\.com|smtp|imap|outlook|yahoo/i.test(targetUrl)) {
-      targetUrl = 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app';
-      setBackendUrlInput(targetUrl);
-    }
-    const normalized = setSavedApiBaseUrl(targetUrl);
-    setBackendUrlInput(normalized);
-    setBackendStatus('checking');
-    setICloudStatus(null);
-    const res = await checkBackendHealth(normalized);
-    if (res.available && res.imapSupported) {
-      setBackendStatus('connected');
-      setShowBackendConfig(false);
-      setICloudStatus({
-        ok: true,
-        msg: 'Connected directly to Cloud Run backend server! You can now test or scan your iCloud IMAP mail.'
-      });
-    } else {
-      setBackendStatus('unavailable');
-      setICloudStatus({
-        ok: false,
-        msg: res.reason || 'Could not reach backend server.'
-      });
-    }
-  };
-
-  const handleImportEmlFiles = async (files: FileList | null) => {
-    if (!files || files.length === 0) return;
-    setIsImportingEml(true);
-    setICloudStatus(null);
-    try {
-      const { totalEmailsScanned, alerts } = await parseEmailFilesToAlerts(files);
-      const mapped = mapAlertsWithAccountMatch(alerts);
-      setDetectedAlerts(mapped);
-      const newCount = mapped.filter(m => !m.imported).length;
-      setICloudStatus({
-        ok: mapped.length > 0,
-        msg:
-          mapped.length > 0
-            ? `Parsed ${totalEmailsScanned} email(s) locally in browser — found ${mapped.length} bank alert(s) (${newCount} new).`
-            : `Scanned ${totalEmailsScanned} email(s) locally, but no supported bank alerts were found.`
-      });
-    } catch (err: any) {
-      setICloudStatus({ ok: false, msg: err?.message || 'Could not read the selected .eml/.mbox file(s).' });
-    } finally {
-      setIsImportingEml(false);
-      if (emlFileInputRef.current) {
-        emlFileInputRef.current.value = '';
-      }
-    }
-  };
-
   // 1. iCloud Sync Handlers
   const handleTestICloud = async () => {
     if (!iCloudEmail.trim() || !iCloudPassword.trim()) {
@@ -306,13 +207,12 @@ export default function EmailSyncModal({
     setIsTestingICloud(true);
     setICloudStatus(null);
     try {
-      const res = await fetch(getApiUrl('/api/email/test-icloud'), {
+      const res = await fetch('/api/email/test-icloud', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: iCloudEmail.trim(), password: iCloudPassword.trim() })
       });
       const data = await parseApiJsonSafe(res);
-      setBackendStatus('connected');
       onSetICloudSession({
         connected: true,
         email: iCloudEmail.trim(),
@@ -341,7 +241,7 @@ export default function EmailSyncModal({
     setICloudStatus(null);
     try {
       const limitVal = parseInt(iCloudLimit, 10) || 40;
-      const res = await fetch(getApiUrl('/api/email/sync-icloud'), {
+      const res = await fetch('/api/email/sync-icloud', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -351,7 +251,6 @@ export default function EmailSyncModal({
         })
       });
       const data = await parseApiJsonSafe(res);
-      setBackendStatus('connected');
       onSetICloudSession({
         connected: true,
         email: iCloudEmail.trim(),
@@ -501,17 +400,17 @@ export default function EmailSyncModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-2xl space-y-5 shadow-2xl max-h-[92vh] overflow-y-auto text-[#1D1D1F] dark:text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 w-full max-w-2xl space-y-5 shadow-2xl max-h-[92vh] overflow-y-auto text-[#F5F5F7]">
         {/* Header */}
         <div className="flex justify-between items-start">
           <div>
             <div className="flex items-center gap-2.5">
-              <span className="w-9 h-9 rounded-2xl bg-[#0071E3]/12 dark:bg-[#0071E3]/20 text-[#0071E3] flex items-center justify-center">
+              <span className="w-9 h-9 rounded-2xl bg-[#0071E3]/20 text-[#0071E3] flex items-center justify-center">
                 <Mail className="w-4 h-4" />
               </span>
               <div>
-                <h3 className="text-xl font-bold tracking-tight text-[#1D1D1F] dark:text-white">Connect Email Accounts</h3>
+                <h3 className="text-xl font-bold tracking-tight text-white">Connect Email Accounts</h3>
                 <p className="text-xs text-[#86868B] mt-0.5">
                   Persistent bank alert sync with automatic live detection of newly received emails.
                 </p>
@@ -520,19 +419,19 @@ export default function EmailSyncModal({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-white transition"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Tab Switcher - Apple Style Segmented Pill */}
-        <div className="flex p-1 bg-[#F2F2F7] dark:bg-[#2C2C2E] rounded-full border border-black/[0.04] dark:border-white/5">
+        <div className="flex p-1 bg-[#2C2C2E] rounded-full border border-white/5">
           <button
             type="button"
             onClick={() => setActiveTab('gmail')}
             className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
-              activeTab === 'gmail' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
+              activeTab === 'gmail' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
             <span>Gmail Auto-Sync</span>
@@ -544,7 +443,7 @@ export default function EmailSyncModal({
             type="button"
             onClick={() => setActiveTab('icloud')}
             className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
-              activeTab === 'icloud' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
+              activeTab === 'icloud' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
             <span>iCloud Mail (IMAP)</span>
@@ -554,7 +453,7 @@ export default function EmailSyncModal({
             type="button"
             onClick={() => setActiveTab('paste')}
             className={`flex-1 py-1.5 px-3 rounded-full text-xs font-semibold transition ${
-              activeTab === 'paste' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white'
+              activeTab === 'paste' ? 'bg-[#0071E3] text-white shadow-sm' : 'text-[#86868B] hover:text-white'
             }`}
           >
             Paste Email
@@ -563,17 +462,17 @@ export default function EmailSyncModal({
 
         {/* TAB 1: Gmail Auto-Sync */}
         {activeTab === 'gmail' && (
-          <div className="space-y-4 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-4 rounded-2xl">
+          <div className="space-y-4 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">Gmail Live Read-Only Sync</h4>
+                  <h4 className="text-sm font-semibold text-white">Gmail Live Read-Only Sync</h4>
                   {gmailState.enabled && gmailState.tokenActive ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30">
-                      <Radio className="w-2.5 h-2.5" /> Connected
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/30">
+                      <Radio className="w-2.5 h-2.5 animate-pulse" /> Connected
                     </span>
                   ) : gmailState.enabled ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30">
                       Refresh Needed
                     </span>
                   ) : null}
@@ -590,21 +489,15 @@ export default function EmailSyncModal({
                   type="button"
                   onClick={handleAuthorizeAndScanGmail}
                   disabled={isConnectingGmail || isSyncingGmail}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white hover:bg-[#F2F2F7] text-[#1D1D1F] border border-black/[0.1] shadow-xs dark:bg-white dark:text-black dark:hover:bg-zinc-200 transition disabled:opacity-50 inline-flex items-center gap-1.5"
+                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-white text-black hover:bg-zinc-200 transition disabled:opacity-50"
                 >
-                  <svg className="w-3.5 h-3.5 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
-                    <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
-                    <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
-                    <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
-                    <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
-                  </svg>
                   {isConnectingGmail
                     ? 'Connecting...'
                     : gmailState.enabled && !gmailState.tokenActive
                     ? 'Reconnect Gmail'
                     : gmailState.enabled
                     ? 'Refresh Auth'
-                    : 'Sign in with Google'}
+                    : 'Connect Google Gmail'}
                 </button>
                 {gmailState.enabled && (
                   <button
@@ -614,7 +507,7 @@ export default function EmailSyncModal({
                       setGmailStatus({ ok: true, msg: 'Gmail auto-sync disconnected.' });
                     }}
                     title="Disconnect Gmail"
-                    className="p-1.5 rounded-full bg-black/[0.06] dark:bg-white/10 hover:bg-[#FF3B30]/15 text-[#86868B] hover:text-[#D70015] dark:hover:text-[#FF3B30] transition"
+                    className="p-1.5 rounded-full bg-white/10 hover:bg-[#FF3B30]/20 text-[#86868B] hover:text-[#FF3B30] transition"
                   >
                     <Power className="w-3.5 h-3.5" />
                   </button>
@@ -623,16 +516,16 @@ export default function EmailSyncModal({
             </div>
 
             {/* Persistent Connection & Auto-Scan Controls */}
-            <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.05] dark:border-white/10 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-0.5">
-                <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
-                  <ShieldCheck className="w-3.5 h-3.5 text-[#248A3D] dark:text-[#34C759]" />
+                <div className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#34C759]" />
                   Automatic Incoming Email Scanner
                 </div>
                 <p className="text-[11px] text-[#86868B]">
                   Watches your inbox continuously and auto-imports newly received alerts as Pending Flotante.
                   {gmailState.lastSyncedAt && (
-                    <span className="block text-[10px] text-[#6E6E73] dark:text-zinc-400 mt-0.5 tabular-nums">
+                    <span className="block text-[10px] text-zinc-400 mt-0.5 tabular-nums">
                       Last checked: {new Date(gmailState.lastSyncedAt).toLocaleTimeString()}
                     </span>
                   )}
@@ -645,17 +538,17 @@ export default function EmailSyncModal({
                   onChange={e => onToggleGmailAutoScan(e.target.checked)}
                   className="sr-only peer"
                 />
-                <div className="w-10 h-6 bg-[#E5E5EA] dark:bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:shadow-xs after:transition-transform peer-checked:after:translate-x-4" />
+                <div className="w-10 h-6 bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-4" />
               </label>
             </div>
 
             <div className="flex items-center justify-between gap-2 pt-1">
               <span className="text-[11px] text-[#86868B]">
                 {gmailState.tokenActive
-                  ? 'Firebase Google OAuth active in memory — safe to close modal.'
+                  ? 'OAuth session active in memory — safe to close modal.'
                   : gmailState.enabled
-                  ? 'Click "Reconnect Gmail" or "Scan Bank Alerts Now" to renew your 1-hour session token.'
-                  : 'Uses Firebase Auth Google Sign-In (gmail.readonly).'}
+                  ? 'Click "Reconnect Gmail" or "Scan Now" to renew your 1-hour session token.'
+                  : 'Read-only access (gmail.readonly).'}
               </span>
 
               <button
@@ -673,14 +566,14 @@ export default function EmailSyncModal({
               <div
                 className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                   gmailStatus.ok
-                    ? 'bg-[#34C759]/10 text-[#248A3D] dark:text-emerald-300 border border-[#34C759]/25'
-                    : 'bg-[#FF3B30]/10 text-[#D70015] dark:text-rose-300 border border-[#FF3B30]/25'
+                    ? 'bg-[#34C759]/10 text-emerald-300 border border-[#34C759]/25'
+                    : 'bg-[#FF3B30]/10 text-rose-300 border border-[#FF3B30]/25'
                 }`}
               >
                 {gmailStatus.ok ? (
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#248A3D] dark:text-[#34C759]" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#34C759]" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0 text-[#D70015] dark:text-[#FF3B30]" />
+                  <AlertCircle className="w-4 h-4 shrink-0 text-[#FF3B30]" />
                 )}
                 <span>{gmailStatus.msg}</span>
               </div>
@@ -690,38 +583,22 @@ export default function EmailSyncModal({
 
         {/* TAB 2: iCloud IMAP */}
         {activeTab === 'icloud' && (
-          <div className="space-y-4 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-4 rounded-2xl">
+          <div className="space-y-4 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
             <div className="flex items-start justify-between gap-2">
               <div>
-                <div className="flex items-center gap-2 flex-wrap">
-                  <h4 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">Apple iCloud Mail (IMAP SSL 993)</h4>
-                  {iCloudSession?.connected ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30">
-                      <Radio className="w-2.5 h-2.5" /> Connected
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-semibold text-white">Apple iCloud Mail (IMAP SSL 993)</h4>
+                  {iCloudSession?.connected && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/15 text-[#34C759] border border-[#34C759]/30">
+                      <Radio className="w-2.5 h-2.5 animate-pulse" /> Connected
                     </span>
-                  ) : backendStatus === 'connected' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25">
-                      IMAP Bridge Ready
-                    </span>
-                  ) : backendStatus === 'unavailable' ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
-                      Static Host Mode
-                    </span>
-                  ) : null}
+                  )}
                 </div>
                 <p className="text-[11px] text-[#86868B] mt-0.5">
-                  Direct encrypted connection to <code className="text-[#0071E3] dark:text-blue-400">imap.mail.me.com</code> via backend server, or import <code className="text-[#0071E3] dark:text-blue-400">.eml / .mbox</code> files directly.
+                  Direct encrypted connection to <code className="text-blue-400">imap.mail.me.com</code>.
                 </p>
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setShowBackendConfig(v => !v)}
-                  title="Configure IMAP Backend URL"
-                  className="text-[11px] text-[#6E6E73] dark:text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white flex items-center gap-1 px-2 py-1 rounded-full bg-white/80 dark:bg-white/10 border border-black/[0.06] dark:border-white/10"
-                >
-                  <Server className="w-3 h-3" /> Server
-                </button>
                 <a
                   href="https://account.apple.com"
                   target="_blank"
@@ -738,48 +615,13 @@ export default function EmailSyncModal({
                       setICloudStatus({ ok: true, msg: 'iCloud session disconnected.' });
                     }}
                     title="Disconnect iCloud"
-                    className="p-1.5 rounded-full bg-black/[0.06] dark:bg-white/10 hover:bg-[#FF3B30]/15 text-[#86868B] hover:text-[#D70015] dark:hover:text-[#FF3B30] transition"
+                    className="p-1.5 rounded-full bg-white/10 hover:bg-[#FF3B30]/20 text-[#86868B] hover:text-[#FF3B30] transition"
                   >
                     <Power className="w-3.5 h-3.5" />
                   </button>
                 )}
               </div>
             </div>
-
-            {/* Static host notice / Backend Server Bridge Configuration */}
-            {(showBackendConfig || backendStatus === 'unavailable') && (
-              <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-2xl p-3.5 space-y-2.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
-                      <Server className="w-3.5 h-3.5 text-[#0071E3]" />
-                      {backendStatus === 'connected' ? 'IMAP Backend Server URL' : 'Connect iCloud IMAP Backend (Optional for Static Sites)'}
-                    </div>
-                    <p className="text-[11px] text-[#86868B] mt-0.5">
-                      {backendStatus === 'unavailable'
-                        ? 'Static hosts (like GitHub Pages) cannot open IMAP port 993 directly. Point to your running Node server (e.g. http://localhost:3000 or Render/Cloud Run URL), or use Apple Mail .eml/.mbox import below.'
-                        : 'Override the Node backend URL used for live iCloud IMAP & AI parsing.'}
-                    </p>
-                  </div>
-                </div>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="url"
-                    placeholder="http://localhost:3000 or https://your-server.onrender.com"
-                    value={backendUrlInput}
-                    onChange={e => setBackendUrlInput(e.target.value)}
-                    className="flex-1 bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
-                  />
-                  <button
-                    type="button"
-                    onClick={handleSaveBackendUrl}
-                    className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#1D1D1F] hover:bg-black dark:bg-white dark:text-black dark:hover:bg-zinc-200 text-white transition shrink-0"
-                  >
-                    Save & Verify
-                  </button>
-                </div>
-              </div>
-            )}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
@@ -789,7 +631,7 @@ export default function EmailSyncModal({
                   placeholder="yourname@icloud.com"
                   value={iCloudEmail}
                   onChange={e => setICloudEmail(e.target.value)}
-                  className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3]"
                 />
               </div>
 
@@ -801,35 +643,30 @@ export default function EmailSyncModal({
                     placeholder="xxxx-xxxx-xxxx-xxxx"
                     value={iCloudPassword}
                     onChange={e => setICloudPassword(e.target.value)}
-                    className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3] font-mono"
+                    className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-[#0071E3] font-mono"
                   />
                   <KeyRound className="w-3.5 h-3.5 text-[#86868B] absolute right-3 top-2.5" />
                 </div>
               </div>
             </div>
 
-            <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/5 p-3 rounded-xl flex items-start gap-2.5 text-[11px] text-[#86868B]">
-              <ShieldCheck className="w-4 h-4 text-[#248A3D] dark:text-[#34C759] shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <div>
-                  <strong className="text-[#1D1D1F] dark:text-zinc-200">How to get an App-Specific Password:</strong>
-                  <p className="mt-0.5">
-                    Sign in at{' '}
-                    <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">
-                      account.apple.com
-                    </a>{' '}
-                    → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
-                  </p>
-                </div>
-                <p className="text-[10px] text-[#6E6E73] dark:text-zinc-400">
-                  Tip for GitHub Pages: You can also set an iCloud Mail rule (<span className="font-medium">icloud.com/mail → Settings → Rules</span>) to auto-forward bank alerts to your connected Gmail so Gmail Auto-Sync imports them automatically with zero server setup.
+            <div className="bg-[#1C1C1E] border border-white/5 p-3 rounded-xl flex items-start gap-2.5 text-[11px] text-[#86868B]">
+              <ShieldCheck className="w-4 h-4 text-[#34C759] shrink-0 mt-0.5" />
+              <div>
+                <strong className="text-zinc-200">How to get an App-Specific Password:</strong>
+                <p className="mt-0.5">
+                  Sign in at{' '}
+                  <a href="https://account.apple.com" target="_blank" rel="noreferrer" className="text-[#0071E3] underline">
+                    account.apple.com
+                  </a>{' '}
+                  → Sign-In and Security → <strong>App-Specific Passwords</strong> → Generate a password for Finance Tracker.
                 </p>
               </div>
             </div>
 
             {iCloudSession?.connected && (
-              <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.05] dark:border-white/10 rounded-2xl p-3 flex items-center justify-between gap-3">
-                <span className="text-xs text-[#1D1D1F] dark:text-zinc-200 font-medium">
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3 flex items-center justify-between gap-3">
+                <span className="text-xs text-zinc-200 font-medium">
                   Auto-scan new iCloud emails during session
                 </span>
                 <label className="inline-flex items-center gap-2 cursor-pointer shrink-0">
@@ -844,7 +681,7 @@ export default function EmailSyncModal({
                     }
                     className="sr-only peer"
                   />
-                  <div className="w-10 h-6 bg-[#E5E5EA] dark:bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:shadow-xs after:transition-transform peer-checked:after:translate-x-4" />
+                  <div className="w-10 h-6 bg-[#2C2C2E] peer-checked:bg-[#34C759] rounded-full relative transition-colors after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:w-5 after:h-5 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-4" />
                 </label>
               </div>
             )}
@@ -855,11 +692,11 @@ export default function EmailSyncModal({
                 <select
                   value={iCloudLimit}
                   onChange={e => setICloudLimit(e.target.value)}
-                  className="bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-lg px-2 py-1 text-xs text-[#1D1D1F] dark:text-white focus:outline-none"
+                  className="bg-[#1C1C1E] border border-white/10 rounded-lg px-2 py-1 text-xs text-white focus:outline-none"
                 >
-                  <option value="20" className="bg-white dark:bg-[#1C1C1E]">Latest 20</option>
-                  <option value="40" className="bg-white dark:bg-[#1C1C1E]">Latest 40</option>
-                  <option value="80" className="bg-white dark:bg-[#1C1C1E]">Latest 80</option>
+                  <option value="20">Latest 20</option>
+                  <option value="40">Latest 40</option>
+                  <option value="80">Latest 80</option>
                 </select>
               </div>
 
@@ -868,7 +705,7 @@ export default function EmailSyncModal({
                   type="button"
                   onClick={handleTestICloud}
                   disabled={isTestingICloud || isSyncingICloud}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-white hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/15 text-[#1D1D1F] dark:text-zinc-200 border border-black/[0.06] dark:border-transparent transition disabled:opacity-50"
+                  className="px-3.5 py-1.5 rounded-full text-xs font-medium bg-white/10 hover:bg-white/15 text-zinc-200 transition disabled:opacity-50"
                 >
                   {isTestingICloud ? 'Testing...' : 'Test Connection'}
                 </button>
@@ -884,47 +721,18 @@ export default function EmailSyncModal({
               </div>
             </div>
 
-            {/* Direct Apple Mail / iCloud .eml & .mbox File Import (works 100% client-side with zero backend) */}
-            <div className="bg-white dark:bg-[#1C1C1E] border border-dashed border-black/[0.12] dark:border-white/15 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white">
-                  Direct Apple Mail / iCloud File Import (.eml, .mbox)
-                </div>
-                <p className="text-[11px] text-[#86868B] mt-0.5">
-                  Works offline & on GitHub Pages without a server — select or drop saved bank alert emails.
-                </p>
-              </div>
-              <input
-                ref={emlFileInputRef}
-                type="file"
-                accept=".eml,.mbox,message/rfc822,text/plain"
-                multiple
-                onChange={e => handleImportEmlFiles(e.target.files)}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => emlFileInputRef.current?.click()}
-                disabled={isImportingEml}
-                className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white transition inline-flex items-center gap-1.5 shrink-0 disabled:opacity-50"
-              >
-                <Upload className="w-3.5 h-3.5 text-[#0071E3]" />
-                {isImportingEml ? 'Parsing...' : 'Import .eml / .mbox'}
-              </button>
-            </div>
-
             {iCloudStatus && (
               <div
                 className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
                   iCloudStatus.ok
-                    ? 'bg-[#34C759]/10 text-[#248A3D] dark:text-emerald-300 border border-[#34C759]/25'
-                    : 'bg-[#FF3B30]/10 text-[#D70015] dark:text-rose-300 border border-[#FF3B30]/25'
+                    ? 'bg-[#34C759]/10 text-emerald-300 border border-[#34C759]/25'
+                    : 'bg-[#FF3B30]/10 text-rose-300 border border-[#FF3B30]/25'
                 }`}
               >
                 {iCloudStatus.ok ? (
-                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#248A3D] dark:text-[#34C759]" />
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-[#34C759]" />
                 ) : (
-                  <AlertCircle className="w-4 h-4 shrink-0 text-[#D70015] dark:text-[#FF3B30]" />
+                  <AlertCircle className="w-4 h-4 shrink-0 text-[#FF3B30]" />
                 )}
                 <span>{iCloudStatus.msg}</span>
               </div>
@@ -934,9 +742,9 @@ export default function EmailSyncModal({
 
         {/* TAB 3: Direct Ingest / Paste */}
         {activeTab === 'paste' && (
-          <div className="space-y-3 bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-4 rounded-2xl">
+          <div className="space-y-3 bg-[#2C2C2E]/60 border border-white/5 p-4 rounded-2xl">
             <div>
-              <h4 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">Paste Real Bank Notification</h4>
+              <h4 className="text-sm font-semibold text-white">Paste Real Bank Notification</h4>
               <p className="text-[11px] text-[#86868B] mt-0.5">
                 Paste the subject and text from a real bank alert email to parse and import as pending flotante.
               </p>
@@ -950,7 +758,7 @@ export default function EmailSyncModal({
                   placeholder="e.g. Aviso de Transacción"
                   value={pasteSubject}
                   onChange={e => setPasteSubject(e.target.value)}
-                  className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
                 />
               </div>
               <div>
@@ -960,7 +768,7 @@ export default function EmailSyncModal({
                   placeholder="e.g. alertas@banreservas.com"
                   value={pasteSender}
                   onChange={e => setPasteSender(e.target.value)}
-                  className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none"
                 />
               </div>
             </div>
@@ -972,7 +780,7 @@ export default function EmailSyncModal({
                 placeholder="Paste your real bank email body here..."
                 value={pasteBody}
                 onChange={e => setPasteBody(e.target.value)}
-                className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl p-3 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                className="w-full bg-[#1C1C1E] border border-white/10 rounded-xl p-3 text-xs text-white focus:outline-none focus:border-[#0071E3]"
               />
             </div>
 
@@ -987,20 +795,20 @@ export default function EmailSyncModal({
             </div>
 
             {parsedPreview && (
-              <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-2xl p-3.5 space-y-2.5 mt-2">
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 space-y-2.5 mt-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <span className="text-xs font-bold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
-                      <CheckCircle2 className="w-4 h-4 text-[#248A3D] dark:text-[#34C759]" />
+                    <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                      <CheckCircle2 className="w-4 h-4 text-[#34C759]" />
                       {parsedPreview.bankName}
                     </span>
                     <span
                       className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
                         parsedPreview.emailOutcome === 'declined'
-                          ? 'bg-[#FF3B30]/12 text-[#D70015] dark:text-[#FF3B30] border-[#FF3B30]/30'
+                          ? 'bg-[#FF3B30]/15 text-[#FF3B30] border-[#FF3B30]/30'
                           : parsedPreview.emailOutcome === 'reversed'
-                          ? 'bg-[#AF52DE]/12 text-[#8944AB] dark:text-purple-300 border-[#AF52DE]/30'
-                          : 'bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border-[#34C759]/30'
+                          ? 'bg-[#AF52DE]/15 text-purple-300 border-[#AF52DE]/30'
+                          : 'bg-[#34C759]/15 text-[#34C759] border-[#34C759]/30'
                       }`}
                     >
                       {parsedPreview.outcomeLabel}
@@ -1009,35 +817,30 @@ export default function EmailSyncModal({
                   <span
                     className={`font-bold text-sm tabular-nums ${
                       parsedPreview.emailOutcome === 'declined'
-                        ? 'text-[#D70015] dark:text-[#FF3B30] line-through'
+                        ? 'text-[#FF3B30] line-through'
                         : parsedPreview.emailOutcome === 'reversed'
-                        ? 'text-[#8944AB] dark:text-purple-300'
-                        : 'text-[#248A3D] dark:text-[#34C759]'
+                        ? 'text-purple-300'
+                        : 'text-[#34C759]'
                     }`}
                   >
                     {parsedPreview.currency} {parsedPreview.amount.toFixed(2)}
                   </span>
                 </div>
                 <div className="grid grid-cols-2 gap-2 text-[11px] text-[#86868B]">
-                  <div>Merchant: <span className="text-[#1D1D1F] dark:text-zinc-200 font-medium">{parsedPreview.title}</span></div>
-                  <div>Status: <span className="text-[#1D1D1F] dark:text-zinc-200 font-medium">{parsedPreview.outcomeLabel}</span></div>
-                  <div>Date: <span className="text-[#1D1D1F] dark:text-zinc-200 tabular-nums">{parsedPreview.date}</span></div>
-                  <div>Card: <span className="text-[#1D1D1F] dark:text-zinc-200 tabular-nums">{parsedPreview.cardNumber ? `*${parsedPreview.cardNumber}` : 'N/A'}</span></div>
+                  <div>Merchant: <span className="text-zinc-200">{parsedPreview.title}</span></div>
+                  <div>Status: <span className="text-zinc-200">{parsedPreview.outcomeLabel}</span></div>
+                  <div>Date: <span className="text-zinc-200 tabular-nums">{parsedPreview.date}</span></div>
+                  <div>Card: <span className="text-zinc-200">{parsedPreview.cardNumber ? `*${parsedPreview.cardNumber}` : 'N/A'}</span></div>
                 </div>
-                {parsedPreview.contextSnippet && (
-                  <p className="text-[11px] text-[#6E6E73] dark:text-zinc-400 bg-[#F5F5F7] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 rounded-xl px-2.5 py-1.5 leading-relaxed">
-                    {parsedPreview.contextSnippet}
-                  </p>
-                )}
                 {budgets.length > 0 && (
                   <select
                     value={pasteBudgetId}
                     onChange={e => setPasteBudgetId(e.target.value)}
-                    className="w-full text-xs bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-[#1D1D1F] dark:text-white"
+                    className="w-full text-xs bg-[#2C2C2E] border border-white/10 rounded-xl px-3 py-1.5 text-white"
                   >
-                    <option value="" className="bg-white dark:bg-[#1C1C1E]">No Account Link</option>
+                    <option value="">No Account Link</option>
                     {budgets.map(b => (
-                      <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E]">{b.name || b.category}</option>
+                      <option key={b.id} value={b.id}>{b.name || b.category}</option>
                     ))}
                   </select>
                 )}
@@ -1064,7 +867,7 @@ export default function EmailSyncModal({
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <h4 className="text-sm font-bold text-[#1D1D1F] dark:text-white">
+                <h4 className="text-sm font-bold text-white">
                   Detected Bank Transactions ({detectedAlerts.length})
                 </h4>
                 <span className="text-[11px] text-[#86868B]">
@@ -1094,25 +897,25 @@ export default function EmailSyncModal({
                         ? 'bg-[#FF3B30]/5 border-[#FF3B30]/20 opacity-85'
                         : isImported
                         ? 'bg-[#34C759]/5 border-[#34C759]/20 opacity-75'
-                        : 'bg-[#F5F5F7] dark:bg-[#2C2C2E] border-black/[0.04] dark:border-white/5 hover:border-black/[0.12] dark:hover:border-white/15'
+                        : 'bg-[#2C2C2E] border-white/5 hover:border-white/15'
                     }`}
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate max-w-[180px]">{alert.title}</span>
+                        <span className="text-xs font-semibold text-white truncate max-w-[180px]">{alert.title}</span>
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border shrink-0 ${
                             isDeclined
-                              ? 'bg-[#FF3B30]/12 text-[#D70015] dark:text-[#FF3B30] border-[#FF3B30]/30'
+                              ? 'bg-[#FF3B30]/15 text-[#FF3B30] border-[#FF3B30]/30'
                               : isReversed
-                              ? 'bg-[#AF52DE]/12 text-[#8944AB] dark:text-purple-300 border-[#AF52DE]/30'
-                              : 'bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border-[#34C759]/30'
+                              ? 'bg-[#AF52DE]/15 text-purple-300 border-[#AF52DE]/30'
+                              : 'bg-[#34C759]/15 text-[#34C759] border-[#34C759]/30'
                           }`}
                         >
                           {alert.outcomeLabel || (isDeclined ? 'Declined' : isReversed ? 'Reversed' : 'Went Through')}
                         </span>
                         {!isDeclined && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30 shrink-0">
+                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#FF9F0A] border border-[#FF9F0A]/30 shrink-0">
                             Flotante
                           </span>
                         )}
@@ -1127,16 +930,11 @@ export default function EmailSyncModal({
                         <span>•</span>
                         <span>{alert.category}</span>
                       </div>
-                      {alert.contextSnippet && (
-                        <p className="text-[11px] text-[#6E6E73] dark:text-zinc-400 mt-1 line-clamp-2 leading-snug">
-                          {alert.contextSnippet}
-                        </p>
-                      )}
                     </div>
 
                     <div className="flex items-center gap-3 shrink-0">
                       <div className="text-right">
-                        <div className={`text-sm font-bold tabular-nums ${isDeclined ? 'text-[#D70015] dark:text-[#FF3B30] line-through' : isReversed ? 'text-[#8944AB] dark:text-purple-300' : 'text-[#1D1D1F] dark:text-white'}`}>
+                        <div className={`text-sm font-bold tabular-nums ${isDeclined ? 'text-[#FF3B30] line-through' : isReversed ? 'text-purple-300' : 'text-white'}`}>
                           {alert.currency} {alert.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </div>
                         {budgets.length > 0 && (
@@ -1149,11 +947,11 @@ export default function EmailSyncModal({
                                 prev.map((a, i) => (i === idx ? { ...a, selectedBudgetId: val } : a))
                               );
                             }}
-                            className="text-[10px] bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-lg px-1.5 py-0.5 text-[#1D1D1F] dark:text-zinc-300 mt-1 max-w-[140px] truncate"
+                            className="text-[10px] bg-[#1C1C1E] border border-white/10 rounded-lg px-1.5 py-0.5 text-zinc-300 mt-1 max-w-[140px] truncate"
                           >
-                            <option value="" className="bg-white dark:bg-[#1C1C1E]">No Account Link</option>
+                            <option value="">No Account Link</option>
                             {budgets.map(b => (
-                              <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E]">
+                              <option key={b.id} value={b.id}>
                                 {b.name || b.category}
                               </option>
                             ))}
@@ -1167,9 +965,9 @@ export default function EmailSyncModal({
                         disabled={isImported || isDeclined || importingIndex === idx}
                         className={`px-3 py-1.5 rounded-full text-xs font-semibold transition ${
                           isDeclined
-                            ? 'bg-[#FF3B30]/12 text-[#D70015] dark:text-[#FF3B30] cursor-default'
+                            ? 'bg-[#FF3B30]/15 text-[#FF3B30] cursor-default'
                             : isImported
-                            ? 'bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] cursor-default'
+                            ? 'bg-[#34C759]/20 text-[#34C759] cursor-default'
                             : 'bg-[#0071E3] hover:bg-[#0077ED] text-white'
                         }`}
                       >

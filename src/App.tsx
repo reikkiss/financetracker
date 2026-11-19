@@ -10,9 +10,7 @@ import {
   Upload,
   ArrowRightLeft,
   Calendar,
-  Mail,
-  Sun,
-  Moon
+  Mail
 } from 'lucide-react';
 
 import { initializeApp } from 'firebase/app';
@@ -65,7 +63,6 @@ import {
   trySilentRefreshGmailToken,
   GmailAuthError
 } from './services/gmailSyncService';
-import { getApiUrl } from './utils/apiConfig';
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || 'seashore');
@@ -174,7 +171,6 @@ export interface Transaction {
   status?: 'pending' | 'cleared';
   emailId?: string;
   emailOutcome?: 'approved' | 'declined' | 'reversed';
-  emailContext?: string;
 }
 
 const CATEGORIES = [
@@ -241,16 +237,6 @@ export default function App() {
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResult, setAiResult] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
-
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('app_theme');
-    return saved === 'dark' ? 'dark' : 'light';
-  });
-
-  useEffect(() => {
-    localStorage.setItem('app_theme', theme);
-    document.documentElement.classList.toggle('dark', theme === 'dark');
-  }, [theme]);
 
   const [globalSelectedMonth, setGlobalSelectedMonth] = useState<string>(() => {
     return localStorage.getItem('global_selected_month') || new Date().toISOString().slice(0, 7);
@@ -754,7 +740,6 @@ export default function App() {
       ...(parsed.budgetId?.trim() ? { budgetId: parsed.budgetId.trim().slice(0, 50) } : {}),
       ...(parsed.emailId ? { emailId: parsed.emailId.slice(0, 100) } : {}),
       ...(parsed.emailOutcome ? { emailOutcome: parsed.emailOutcome } : {}),
-      ...(parsed.contextSnippet ? { emailContext: parsed.contextSnippet.slice(0, 240) } : {}),
       status: 'pending' as const,
       ...(isTrans ? { isTransfer: true } : {})
     });
@@ -817,7 +802,6 @@ export default function App() {
         ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
         ...(item.emailId ? { emailId: item.emailId.slice(0, 100) } : {}),
         ...(item.emailOutcome ? { emailOutcome: item.emailOutcome } : {}),
-        ...(item.contextSnippet ? { emailContext: item.contextSnippet.slice(0, 240) } : {}),
         status: 'pending' as const,
         ...(isTrans ? { isTransfer: true } : {})
       });
@@ -1029,7 +1013,7 @@ export default function App() {
         const tag = a.emailOutcome === 'reversed' ? 'Reversed / Refund' : 'Flotante';
         setEmailSyncToast({
           title: `New bank alert synced: ${a.title}`,
-          subtitle: `${a.currency} ${a.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • ${a.bankName} (${tag})${a.contextSnippet ? ` — ${a.contextSnippet}` : ''}`
+          subtitle: `${a.currency} ${a.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • ${a.bankName} (${tag})`
         });
       } else if (items.length > 1) {
         setEmailSyncToast({
@@ -1143,7 +1127,7 @@ export default function App() {
       if (icloudAutoLockRef.current) return;
       icloudAutoLockRef.current = true;
       try {
-        const res = await fetch(getApiUrl('/api/email/sync-icloud'), {
+        const res = await fetch('/api/email/sync-icloud', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1724,7 +1708,7 @@ export default function App() {
     if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
     setAiLoading(true);
     try {
-      const res = await fetch(getApiUrl('/api/ai/advice'), {
+      const res = await fetch('/api/ai/advice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: firebaseUser.uid, prompt: aiPrompt })
@@ -1745,7 +1729,7 @@ export default function App() {
 
   if (authLoading) {
     return (
-      <div className="flex h-screen bg-[#F5F5F7] dark:bg-[#000000] text-[#1D1D1F] dark:text-[#F5F5F7] items-center justify-center antialiased">
+      <div className="flex h-screen bg-[#000000] text-[#F5F5F7] items-center justify-center antialiased">
         <div className="flex flex-col items-center gap-3">
           <div className="w-8 h-8 border-[3px] border-[#0071E3] border-t-transparent rounded-full animate-spin" />
           <span className="text-xs text-[#86868B] font-medium">Loading Wallet & Ledger...</span>
@@ -1756,11 +1740,11 @@ export default function App() {
 
   if (!firebaseUser) {
     return (
-      <div className="flex h-screen bg-[#F5F5F7] dark:bg-[#000000] text-[#1D1D1F] dark:text-[#F5F5F7] antialiased items-center justify-center p-6 relative overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-[520px] h-[520px] bg-[#0071E3]/10 dark:bg-[#0071E3]/15 rounded-full blur-3xl pointer-events-none" />
+      <div className="flex h-screen bg-[#000000] text-[#F5F5F7] antialiased items-center justify-center p-6 relative overflow-hidden">
+        <div className="absolute -top-40 -right-40 w-[520px] h-[520px] bg-[#0071E3]/15 rounded-full blur-3xl pointer-events-none" />
         <div className="absolute -bottom-40 -left-40 w-[480px] h-[480px] bg-[#34C759]/10 rounded-full blur-3xl pointer-events-none" />
 
-        <div className="max-w-md w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-3xl p-8 shadow-[0_4px_24px_rgba(0,0,0,0.06)] dark:shadow-2xl relative z-10 text-center space-y-6">
+        <div className="max-w-md w-full bg-[#1C1C1E] border border-white/10 rounded-3xl p-8 shadow-2xl relative z-10 text-center space-y-6">
           <div className="w-16 h-16 bg-gradient-to-tr from-[#0071E3] to-[#5AC8FA] rounded-2xl mx-auto flex items-center justify-center shadow-lg text-3xl">
             💳
           </div>
@@ -1768,14 +1752,14 @@ export default function App() {
             <span className="text-[11px] uppercase tracking-[0.06em] font-semibold text-[#86868B] block">
               PERSONAL FINANCE & WALLET
             </span>
-            <h1 className="text-3xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Finance Tracker</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-white">Finance Tracker</h1>
             <p className="text-xs text-[#86868B] leading-relaxed">
               Private multi-account ledger, real-time iCloud & Gmail bank alerts, and statement reconciliation.
             </p>
           </div>
 
           {authError && (
-            <div className="bg-[#FF3B30]/10 border border-[#FF3B30]/25 text-[#D70015] dark:text-rose-300 rounded-2xl p-3.5 text-[11px] text-left leading-relaxed">
+            <div className="bg-[#FF3B30]/10 border border-[#FF3B30]/30 text-rose-300 rounded-2xl p-3.5 text-[11px] text-left leading-relaxed">
               {authError}
             </div>
           )}
@@ -1783,10 +1767,10 @@ export default function App() {
           <button
             onClick={handleGoogleSignIn}
             disabled={isLoggingIn}
-            className="w-full bg-[#1D1D1F] hover:bg-black dark:bg-white dark:hover:bg-zinc-200 disabled:opacity-50 text-white dark:text-black font-semibold py-3 rounded-full text-xs transition shadow-md flex items-center justify-center gap-2 active:scale-[0.98]"
+            className="w-full bg-white hover:bg-zinc-200 disabled:opacity-50 text-black font-semibold py-3 rounded-full text-xs transition shadow-md flex items-center justify-center gap-2 active:scale-[0.98]"
           >
             {isLoggingIn ? (
-              <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+              <div className="w-4 h-4 border-2 border-black border-t-transparent rounded-full animate-spin" />
             ) : (
               <svg className="w-4 h-4" viewBox="0 0 24 24">
                 <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -1803,20 +1787,20 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-screen bg-[#F5F5F7] dark:bg-[#000000] text-[#1D1D1F] dark:text-[#F5F5F7] antialiased overflow-hidden select-none">
+    <div className="flex h-screen bg-[#000000] text-[#F5F5F7] antialiased overflow-hidden select-none">
 
       {/* SIDEBAR / LEFT PANEL */}
-      <aside className="hidden md:flex w-64 bg-white/90 dark:bg-[#141416] border-r border-black/[0.06] dark:border-white/[0.08] flex-col p-4 z-10 overflow-y-auto shrink-0">
+      <aside className="hidden md:flex w-64 bg-[#141416] border-r border-white/[0.08] flex-col p-4 z-10 overflow-y-auto shrink-0">
         <div
-          className="flex items-center justify-between pb-4 mb-4 border-b border-black/[0.06] dark:border-white/[0.08] cursor-pointer group"
+          className="flex items-center justify-between pb-4 mb-4 border-b border-white/[0.08] cursor-pointer group"
           onClick={() => setActiveTab('settings')}
         >
           <div className="flex items-center gap-2.5 truncate">
-            <span className="w-9 h-9 rounded-2xl bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.05] dark:border-white/10 flex items-center justify-center text-lg shrink-0">
+            <span className="w-9 h-9 rounded-2xl bg-[#2C2C2E] border border-white/10 flex items-center justify-center text-lg shrink-0">
               {currentUserProfile?.avatar || '💳'}
             </span>
             <div className="truncate">
-              <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate block group-hover:text-[#0071E3] transition">
+              <span className="text-xs font-semibold text-white truncate block group-hover:text-[#0071E3] transition">
                 {currentUserProfile?.name || firebaseUser.displayName}
               </span>
               <span className="text-[10px] text-[#86868B] truncate block">Profile & Settings</span>
@@ -1834,7 +1818,7 @@ export default function App() {
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
               activeTab === 'dashboard'
                 ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#6E6E73] dark:text-[#86868B] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-[#1D1D1F] dark:hover:text-white'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
             }`}
           >
             <LayoutDashboard className="w-4 h-4 shrink-0" /> Dashboard
@@ -1844,7 +1828,7 @@ export default function App() {
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
               activeTab === 'stats'
                 ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#6E6E73] dark:text-[#86868B] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-[#1D1D1F] dark:hover:text-white'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
             }`}
           >
             <BarChart2 className="w-4 h-4 shrink-0" /> Monthly Stats
@@ -1854,7 +1838,7 @@ export default function App() {
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
               activeTab === 'budgets'
                 ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#6E6E73] dark:text-[#86868B] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-[#1D1D1F] dark:hover:text-white'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
             }`}
           >
             <PieChart className="w-4 h-4 shrink-0" /> Budgets & Accounts
@@ -1864,7 +1848,7 @@ export default function App() {
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
               activeTab === 'transactions'
                 ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#6E6E73] dark:text-[#86868B] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-[#1D1D1F] dark:hover:text-white'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
             }`}
           >
             <Receipt className="w-4 h-4 shrink-0" /> Transactions DB
@@ -1874,7 +1858,7 @@ export default function App() {
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
               activeTab === 'settings'
                 ? 'bg-[#0071E3] text-white shadow-sm'
-                : 'text-[#6E6E73] dark:text-[#86868B] hover:bg-black/[0.04] dark:hover:bg-white/[0.06] hover:text-[#1D1D1F] dark:hover:text-white'
+                : 'text-[#86868B] hover:bg-white/[0.06] hover:text-white'
             }`}
           >
             <Settings className="w-4 h-4 shrink-0" /> Settings & Profile
@@ -1895,7 +1879,7 @@ export default function App() {
               setNewTxDate(new Date().toISOString().split('T')[0]);
               setIsAddTxOpen(true);
             }}
-            className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#1D1D1F] dark:text-zinc-200 dark:hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-zinc-200 hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
             <Plus className="w-3.5 h-3.5 text-[#FF3B30]" /> New Expense
           </button>
@@ -1909,27 +1893,27 @@ export default function App() {
               setNewTxDate(new Date().toISOString().split('T')[0]);
               setIsAddTxOpen(true);
             }}
-            className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#1D1D1F] dark:text-zinc-200 dark:hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-zinc-200 hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
-            <Plus className="w-3.5 h-3.5 text-[#248A3D] dark:text-[#34C759]" /> New Income
+            <Plus className="w-3.5 h-3.5 text-[#34C759]" /> New Income
           </button>
           {budgets.length >= 2 && (
             <button
               onClick={() => handleOpenTransfer()}
-              className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#0071E3] dark:text-[#5AC8FA] px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
+              className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#5AC8FA] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
             >
               <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer Money
             </button>
           )}
           <button
             onClick={() => setIsUploadStatementOpen(true)}
-            className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#248A3D] dark:text-[#34C759] px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#34C759] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
             <Upload className="w-3.5 h-3.5" /> Upload Statement
           </button>
           <button
             onClick={() => setIsEmailParserOpen(true)}
-            className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#C93400] dark:text-[#FF9F0A] px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
+            className="w-full flex items-center gap-2 bg-[#1C1C1E] hover:bg-[#2C2C2E] text-[#FF9F0A] hover:text-white px-3 py-2 rounded-xl text-xs font-medium border border-white/[0.08] transition"
           >
             <Mail className="w-3.5 h-3.5" /> Sync Email Alerts
           </button>
@@ -1937,13 +1921,13 @@ export default function App() {
 
         {/* Persistent Month Summary Card */}
         <div className="mt-auto">
-          <div className="bg-[#F5F5F7] dark:bg-[#1C1C1E] border border-black/[0.05] dark:border-white/10 rounded-2xl p-3.5 space-y-2.5 text-xs shadow-sm dark:shadow-lg">
-            <div className="font-semibold text-[#1D1D1F] dark:text-white flex items-center justify-between gap-2">
+          <div className="bg-[#1C1C1E] border border-white/10 rounded-2xl p-3.5 space-y-2.5 text-xs shadow-lg">
+            <div className="font-semibold text-white flex items-center justify-between gap-2">
               <span className="truncate">{selectedMonthName}</span>
               <span
                 className={`w-2 h-2 rounded-full shrink-0 ${
                   globalSelectedMonth === currentMonthKey
-                    ? 'bg-[#34C759]'
+                    ? 'bg-[#34C759] animate-pulse'
                     : 'bg-[#0071E3]'
                 }`}
               />
@@ -1951,19 +1935,19 @@ export default function App() {
             <div className="space-y-1.5 text-[#86868B] text-[11px]">
               <div className="flex justify-between">
                 <span>Income</span>
-                <span className="text-[#248A3D] dark:text-[#34C759] font-semibold tabular-nums">
+                <span className="text-[#34C759] font-semibold tabular-nums">
                   {currencySymbol}{selectedMonthStats.income.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </span>
               </div>
               <div className="flex justify-between">
                 <span>Expense</span>
-                <span className="text-[#D70015] dark:text-[#FF3B30] font-semibold tabular-nums">
+                <span className="text-[#FF3B30] font-semibold tabular-nums">
                   {currencySymbol}{selectedMonthStats.expense.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </span>
               </div>
-              <div className="flex justify-between border-t border-black/[0.06] dark:border-white/10 pt-1.5">
+              <div className="flex justify-between border-t border-white/10 pt-1.5">
                 <span>Cashflow</span>
-                <span className="text-[#1D1D1F] dark:text-white font-bold tabular-nums">
+                <span className="text-white font-bold tabular-nums">
                   {currencySymbol}{selectedMonthStats.cashflow.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                 </span>
               </div>
@@ -1973,13 +1957,13 @@ export default function App() {
       </aside>
 
       {/* MAIN CONTENT AREA */}
-      <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-[#F5F5F7] dark:bg-[#000000]">
+      <main className="flex-1 flex flex-col h-screen overflow-y-auto bg-[#000000]">
 
         {/* Sticky Translucent Apple Glass Header */}
         <header className="sticky top-0 z-20 apple-glass px-6 py-3.5">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <h1 className="text-xl sm:text-2xl font-bold text-[#1D1D1F] dark:text-white tracking-[-0.03em] whitespace-nowrap">
+              <h1 className="text-xl sm:text-2xl font-bold text-white tracking-tight">
                 {activeTab === 'dashboard' && 'Wallet & Overview'}
                 {activeTab === 'stats' && 'Monthly Stats'}
                 {activeTab === 'budgets' && 'Budgets & Accounts'}
@@ -1989,24 +1973,24 @@ export default function App() {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-full px-3.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white shadow-sm whitespace-nowrap">
+              <div className="flex items-center gap-1.5 bg-[#2C2C2E] border border-white/10 rounded-full px-3.5 py-1.5 text-xs text-white shadow-sm">
                 <Calendar className="w-3.5 h-3.5 text-[#0071E3] shrink-0" />
                 <span className="text-[#86868B] hidden sm:inline">Month:</span>
                 <select
                   value={globalSelectedMonth}
                   onChange={e => setGlobalSelectedMonth(e.target.value)}
-                  className="bg-transparent text-[#1D1D1F] dark:text-white focus:outline-none cursor-pointer font-semibold tabular-nums"
+                  className="bg-transparent text-white focus:outline-none cursor-pointer font-semibold tabular-nums"
                 >
-                  <option value="All" className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">All Months</option>
+                  <option value="All" className="bg-[#1C1C1E]">All Months</option>
                   {allMonthsList.map(m => (
-                    <option key={m.key} value={m.key} className="bg-white dark:bg-[#1C1C1E] text-[#1D1D1F] dark:text-white">{m.name}</option>
+                    <option key={m.key} value={m.key} className="bg-[#1C1C1E]">{m.name}</option>
                   ))}
                 </select>
               </div>
 
               <button
                 onClick={() => setIsEmailParserOpen(true)}
-                className="flex items-center gap-1.5 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white border border-black/[0.06] dark:border-white/10 px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98] whitespace-nowrap"
+                className="flex items-center gap-1.5 bg-[#2C2C2E] hover:bg-white/15 text-white border border-white/10 px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98]"
               >
                 <Mail className="w-3.5 h-3.5 text-[#FF9F0A]" />
                 <span className="hidden sm:inline">
@@ -2017,7 +2001,7 @@ export default function App() {
                     : 'Sync Email'}
                 </span>
                 {((gmailState.enabled && gmailState.tokenActive) || iCloudSession?.connected) && (
-                  <span className="w-2 h-2 rounded-full bg-[#34C759]" />
+                  <span className="w-2 h-2 rounded-full bg-[#34C759] animate-pulse" />
                 )}
                 {gmailState.enabled && !gmailState.tokenActive && !iCloudSession?.connected && (
                   <span className="w-2 h-2 rounded-full bg-[#FF9F0A]" />
@@ -2025,18 +2009,8 @@ export default function App() {
               </button>
 
               <button
-                type="button"
-                onClick={() => setTheme(prev => (prev === 'light' ? 'dark' : 'light'))}
-                title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-                aria-label={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
-                className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 border border-black/[0.06] dark:border-white/10 flex items-center justify-center text-[#1D1D1F] dark:text-white transition active:scale-[0.98] shrink-0"
-              >
-                {theme === 'light' ? <Moon className="w-3.5 h-3.5 text-[#6E6E73]" /> : <Sun className="w-3.5 h-3.5 text-[#FF9F0A]" />}
-              </button>
-
-              <button
                 onClick={() => setIsAiOpen(true)}
-                className="flex items-center gap-1.5 bg-[#0071E3] hover:bg-[#0077ED] text-white px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98] whitespace-nowrap"
+                className="flex items-center gap-1.5 bg-[#0071E3] hover:bg-[#0077ED] text-white px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98]"
               >
                 <Sparkles className="w-3.5 h-3.5" />
                 <span>AI Insights</span>
@@ -2057,7 +2031,7 @@ export default function App() {
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`px-3 py-1 rounded-full text-xs font-semibold shrink-0 transition ${
-                  activeTab === tab.id ? 'bg-[#0071E3] text-white' : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#6E6E73] dark:text-[#86868B]'
+                  activeTab === tab.id ? 'bg-[#0071E3] text-white' : 'bg-[#2C2C2E] text-[#86868B]'
                 }`}
               >
                 {tab.label}
@@ -2165,8 +2139,6 @@ export default function App() {
               db={db}
               currencies={CURRENCIES}
               onSignOut={handleSignOut}
-              theme={theme}
-              setTheme={setTheme}
             />
           )}
         </div>
@@ -2477,10 +2449,10 @@ export default function App() {
       />
 
       {emailSyncToast && (
-        <div className="fixed bottom-5 right-5 z-50 bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-[#34C759]/35 rounded-2xl px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-2xl flex items-center gap-3 max-w-sm">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#34C759] shrink-0" />
+        <div className="fixed bottom-5 right-5 z-50 bg-[#1C1C1E]/95 backdrop-blur-xl border border-[#34C759]/35 rounded-2xl px-4 py-3 shadow-2xl flex items-center gap-3 max-w-sm">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#34C759] shrink-0 animate-pulse" />
           <div className="min-w-0">
-            <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate">{emailSyncToast.title}</div>
+            <div className="text-xs font-semibold text-white truncate">{emailSyncToast.title}</div>
             <div className="text-[11px] text-[#86868B] truncate">{emailSyncToast.subtitle}</div>
           </div>
         </div>

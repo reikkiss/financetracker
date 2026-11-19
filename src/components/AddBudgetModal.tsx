@@ -175,14 +175,13 @@ export default function AddBudgetModal({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#1D1D1F] dark:text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#F5F5F7]">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-bold tracking-tight text-[#1D1D1F] dark:text-white">Create Budget / Account</h3>
+          <h3 className="text-lg font-bold tracking-tight text-white">Create Budget / Account</h3>
           <button
-            type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-white transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -191,15 +190,15 @@ export default function AddBudgetModal({
         <form onSubmit={handleSubmit} className="space-y-3.5">
           {/* Account Type Switcher */}
           <div>
-            <label className="text-[11px] font-medium text-[#86868B] block mb-1.5">Account / Budget Type</label>
+            <label className="text-[11px] text-[#9b9b9b] block mb-1.5">Account / Budget Type</label>
             <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
               <button
                 type="button"
                 onClick={() => setAccountType('standard')}
-                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-medium border transition ${
+                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                   accountType === 'standard'
-                    ? 'bg-emerald-500/15 text-[#248A3D] dark:text-emerald-300 border-emerald-500/40'
-                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] dark:text-zinc-400 border-black/[0.04] dark:border-white/5 hover:text-[#1D1D1F] dark:hover:text-white'
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                 }`}
               >
                 <Wallet className="w-3.5 h-3.5 shrink-0" /> Standard
@@ -207,10 +206,10 @@ export default function AddBudgetModal({
               <button
                 type="button"
                 onClick={() => setAccountType('bank_account')}
-                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-medium border transition ${
+                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                   accountType === 'bank_account'
-                    ? 'bg-sky-500/15 text-[#0071E3] dark:text-sky-300 border-sky-500/40'
-                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] dark:text-zinc-400 border-black/[0.04] dark:border-white/5 hover:text-[#1D1D1F] dark:hover:text-white'
+                    ? 'bg-sky-500/15 text-sky-300 border-sky-500/40'
+                    : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                 }`}
               >
                 <Building2 className="w-3.5 h-3.5 shrink-0" /> Bank
@@ -218,10 +217,10 @@ export default function AddBudgetModal({
               <button
                 type="button"
                 onClick={() => setAccountType('debit_account')}
-                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-medium border transition ${
+                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                   accountType === 'debit_account'
-                    ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/40'
-                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] dark:text-zinc-400 border-black/[0.04] dark:border-white/5 hover:text-[#1D1D1F] dark:hover:text-white'
+                    ? 'bg-teal-500/15 text-teal-300 border-teal-500/40'
+                    : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                 }`}
               >
                 <Wallet className="w-3.5 h-3.5 shrink-0" /> Debit
@@ -229,10 +228,10 @@ export default function AddBudgetModal({
               <button
                 type="button"
                 onClick={() => setAccountType('credit_card')}
-                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-medium border transition ${
+                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition ${
                   accountType === 'credit_card'
-                    ? 'bg-amber-500/15 text-[#B25000] dark:text-amber-300 border-amber-500/40'
-                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] dark:text-zinc-400 border-black/[0.04] dark:border-white/5 hover:text-[#1D1D1F] dark:hover:text-white'
+                    ? 'bg-amber-500/15 text-amber-300 border-amber-500/40'
+                    : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                 }`}
               >
                 <CreditCard className="w-3.5 h-3.5 shrink-0" /> Credit
@@ -240,10 +239,10 @@ export default function AddBudgetModal({
               <button
                 type="button"
                 onClick={() => setAccountType('loan')}
-                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-xl text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
+                className={`flex items-center justify-center gap-1 py-2 px-2 rounded-lg text-[11px] font-medium border transition col-span-2 sm:col-span-1 ${
                   accountType === 'loan'
-                    ? 'bg-purple-500/15 text-[#8944AB] dark:text-purple-300 border-purple-500/40'
-                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] dark:text-zinc-400 border-black/[0.04] dark:border-white/5 hover:text-[#1D1D1F] dark:hover:text-white'
+                    ? 'bg-purple-500/15 text-purple-300 border-purple-500/40'
+                    : 'bg-[#1a1a1a] text-zinc-400 border-[#333] hover:text-white'
                 }`}
               >
                 <Landmark className="w-3.5 h-3.5 shrink-0" /> Loan
@@ -253,7 +252,7 @@ export default function AddBudgetModal({
 
           {/* Budget Name / Category */}
           <div>
-            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Budget Name / Category *</label>
+            <label className="text-[11px] text-[#9b9b9b] block mb-1">Budget Name / Category *</label>
             <input
               type="text"
               required
@@ -261,19 +260,19 @@ export default function AddBudgetModal({
               placeholder="e.g. Prestamo Banreservas, Visa Popular, Groceries..."
               value={category}
               onChange={e => setCategory(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
             <div className="flex items-center gap-1.5 overflow-x-auto py-1.5 scrollbar-thin">
-              <span className="text-[10px] text-[#86868B] shrink-0">Quick pick:</span>
+              <span className="text-[10px] text-[#777] shrink-0">Quick pick:</span>
               {availableCategories.slice(0, 8).map(c => (
                 <button
                   key={c}
                   type="button"
                   onClick={() => setCategory(c)}
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-medium shrink-0 transition ${
+                  className={`px-2 py-0.5 rounded text-[10px] shrink-0 transition ${
                     category.toLowerCase() === c.toLowerCase()
-                      ? 'bg-[#0071E3] text-white'
-                      : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#1D1D1F] dark:text-zinc-300 hover:bg-[#E5E5EA] dark:hover:bg-white/15'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-[#2a2a2a] text-zinc-300 hover:text-white'
                   }`}
                 >
                   {c}
@@ -284,14 +283,14 @@ export default function AddBudgetModal({
 
           {/* Description */}
           <div>
-            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Description (Optional)</label>
+            <label className="text-[11px] text-[#9b9b9b] block mb-1">Description (Optional)</label>
             <textarea
               rows={2}
               maxLength={500}
               placeholder="Describe what belongs to this budget, due dates, terms..."
               value={description}
               onChange={e => setDescription(e.target.value)}
-              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
+              className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
             />
           </div>
 
@@ -303,13 +302,13 @@ export default function AddBudgetModal({
             );
             return (
               <div className="space-y-3">
-                <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-3.5 rounded-2xl space-y-3">
-                  <div className="text-xs font-semibold text-[#B25000] dark:text-amber-400 flex items-center gap-1.5">
+                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
+                  <div className="text-xs font-semibold text-amber-400 flex items-center gap-1.5">
                     <CreditCard className="w-3.5 h-3.5" /> Credit Card Terms
                   </div>
                   <div className="grid grid-cols-3 gap-2.5">
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Credit Limit ({currencySymbol}) *</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Credit Limit ({currencySymbol}) *</label>
                       <input
                         type="number"
                         required
@@ -318,11 +317,11 @@ export default function AddBudgetModal({
                         placeholder="50000"
                         value={creditLimit}
                         onChange={e => setCreditLimit(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-amber-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Overdraft %</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Overdraft %</label>
                       <input
                         type="number"
                         step="0.01"
@@ -330,11 +329,11 @@ export default function AddBudgetModal({
                         placeholder="e.g. 10"
                         value={overdraftPercentage}
                         onChange={e => setOverdraftPercentage(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-amber-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">APR (%)</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">APR (%)</label>
                       <input
                         type="number"
                         step="0.01"
@@ -342,20 +341,20 @@ export default function AddBudgetModal({
                         placeholder="e.g. 24.9"
                         value={apr}
                         onChange={e => setApr(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-amber-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-amber-500"
                       />
                     </div>
                   </div>
                 </div>
 
-                <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-[#B25000] dark:text-amber-300 font-semibold block">Calculated Monthly Limit</span>
-                    <span className="text-[10px] text-[#B25000]/80 dark:text-amber-400/80 tabular-nums">
+                    <span className="text-amber-300 font-semibold block">Calculated Monthly Limit</span>
+                    <span className="text-[10px] text-amber-400/80">
                       Credit Limit ({currencySymbol}{cc.baseCreditLimit.toLocaleString()}) + {cc.overdraftPct}% Overdraft
                     </span>
                   </div>
-                  <span className="text-base font-bold text-[#1D1D1F] dark:text-white tabular-nums">
+                  <span className="text-base font-bold text-white">
                     {currencySymbol}{cc.monthlyLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
@@ -382,16 +381,16 @@ export default function AddBudgetModal({
 
             return (
               <div className="space-y-3">
-                <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-3.5 rounded-2xl space-y-3">
+                <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-[#8944AB] dark:text-purple-400 flex items-center gap-1.5">
+                    <span className="text-xs font-semibold text-purple-400 flex items-center gap-1.5">
                       <Landmark className="w-3.5 h-3.5" /> Loan Terms & Quotas
                     </span>
                     {principal > 0 && (
                       <button
                         type="button"
                         onClick={() => setLoanQuotas(previewSchedule.quotas)}
-                        className="text-[10px] bg-purple-500/15 hover:bg-purple-500/25 text-[#8944AB] dark:text-purple-300 border border-purple-500/30 px-2.5 py-1 rounded-full transition"
+                        className="text-[10px] bg-purple-600/20 hover:bg-purple-600/35 text-purple-300 border border-purple-500/30 px-2 py-1 rounded-md transition"
                       >
                         Generate {term} Quotas
                       </button>
@@ -400,7 +399,7 @@ export default function AddBudgetModal({
 
                   <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="text-[10px] text-[#86868B] block mb-1">Rate Period</label>
+                      <label className="text-[10px] text-[#888] block mb-1">Rate Period</label>
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
@@ -408,10 +407,10 @@ export default function AddBudgetModal({
                             setLoanRatePeriod('annual');
                             setLoanQuotas([]);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-medium border transition ${
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
                             loanRatePeriod === 'annual'
-                              ? 'bg-purple-500/15 text-[#8944AB] dark:text-purple-300 border-purple-500/40'
-                              : 'bg-white dark:bg-[#1C1C1E] text-[#86868B] dark:text-zinc-400 border-black/[0.08] dark:border-white/10 hover:text-[#1D1D1F] dark:hover:text-white'
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                              : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
                           }`}
                         >
                           Annual (APR %)
@@ -422,10 +421,10 @@ export default function AddBudgetModal({
                             setLoanRatePeriod('monthly');
                             setLoanQuotas([]);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-medium border transition ${
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
                             loanRatePeriod === 'monthly'
-                              ? 'bg-purple-500/15 text-[#8944AB] dark:text-purple-300 border-purple-500/40'
-                              : 'bg-white dark:bg-[#1C1C1E] text-[#86868B] dark:text-zinc-400 border-black/[0.08] dark:border-white/10 hover:text-[#1D1D1F] dark:hover:text-white'
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                              : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
                           }`}
                         >
                           Monthly (%)
@@ -433,7 +432,7 @@ export default function AddBudgetModal({
                       </div>
                     </div>
                     <div>
-                      <label className="text-[10px] text-[#86868B] block mb-1">Method</label>
+                      <label className="text-[10px] text-[#888] block mb-1">Method</label>
                       <div className="grid grid-cols-2 gap-1.5">
                         <button
                           type="button"
@@ -441,10 +440,10 @@ export default function AddBudgetModal({
                             setLoanCalcMethod('amortized');
                             setLoanQuotas([]);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-medium border transition ${
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
                             loanCalcMethod === 'amortized'
-                              ? 'bg-purple-500/15 text-[#8944AB] dark:text-purple-300 border-purple-500/40'
-                              : 'bg-white dark:bg-[#1C1C1E] text-[#86868B] dark:text-zinc-400 border-black/[0.08] dark:border-white/10 hover:text-[#1D1D1F] dark:hover:text-white'
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                              : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
                           }`}
                         >
                           Amortized
@@ -455,10 +454,10 @@ export default function AddBudgetModal({
                             setLoanCalcMethod('flat');
                             setLoanQuotas([]);
                           }}
-                          className={`py-1.5 px-2 rounded-xl text-[11px] font-medium border transition ${
+                          className={`py-1.5 px-2 rounded-lg text-[11px] font-medium border transition ${
                             loanCalcMethod === 'flat'
-                              ? 'bg-purple-500/15 text-[#8944AB] dark:text-purple-300 border-purple-500/40'
-                              : 'bg-white dark:bg-[#1C1C1E] text-[#86868B] dark:text-zinc-400 border-black/[0.08] dark:border-white/10 hover:text-[#1D1D1F] dark:hover:text-white'
+                              ? 'bg-purple-500/20 text-purple-300 border-purple-500/45'
+                              : 'bg-[#121212] text-zinc-400 border-[#333] hover:text-white'
                           }`}
                         >
                           Flat Interest
@@ -469,7 +468,7 @@ export default function AddBudgetModal({
 
                   <div className="grid grid-cols-2 gap-2.5">
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Principal ({currencySymbol}) *</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Principal ({currencySymbol}) *</label>
                       <input
                         type="number"
                         required
@@ -481,11 +480,11 @@ export default function AddBudgetModal({
                           setCreditLimit(e.target.value);
                           setLoanQuotas([]);
                         }}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-purple-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">
                         {loanRatePeriod === 'monthly' ? 'Monthly Rate (%)' : 'Interest Rate (APR %)'}
                       </label>
                       <input
@@ -498,11 +497,11 @@ export default function AddBudgetModal({
                           setApr(e.target.value);
                           setLoanQuotas([]);
                         }}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-purple-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Term (Months)</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Term (Months)</label>
                       <input
                         type="number"
                         min="1"
@@ -512,11 +511,11 @@ export default function AddBudgetModal({
                           setLoanTermMonths(e.target.value);
                           setLoanQuotas([]);
                         }}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-purple-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Start / Due Date</label>
+                      <label className="text-[11px] text-[#9b9b9b] block mb-1">Start / Due Date</label>
                       <input
                         type="date"
                         value={loanStartDate}
@@ -524,20 +523,20 @@ export default function AddBudgetModal({
                           setLoanStartDate(e.target.value);
                           setLoanQuotas([]);
                         }}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-purple-500"
+                        className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-purple-500"
                       />
                     </div>
                   </div>
 
                   {displayQuotas.length > 0 && (
-                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1 pt-1 border-t border-black/[0.06] dark:border-white/10">
-                      <span className="text-[10px] text-[#86868B] block mb-1">
+                    <div className="space-y-1 max-h-32 overflow-y-auto pr-1 pt-1 border-t border-[#262626]">
+                      <span className="text-[10px] text-[#888] block mb-1">
                         Monthly Quotas Preview ({displayQuotas.length} quotas):
                       </span>
                       {displayQuotas.slice(0, 10).map(q => (
-                        <div key={q.id} className="flex items-center justify-between text-[11px] bg-white dark:bg-[#1C1C1E] px-2.5 py-1 rounded-lg tabular-nums">
-                          <span className="text-[#424245] dark:text-zinc-300">#{q.quotaNumber} • {q.dueDate}</span>
-                          <span className="font-semibold text-[#1D1D1F] dark:text-white">{currencySymbol}{q.amount.toFixed(2)}</span>
+                        <div key={q.id} className="flex items-center justify-between text-[11px] bg-[#222] px-2.5 py-1 rounded">
+                          <span className="text-zinc-300">#{q.quotaNumber} • {q.dueDate}</span>
+                          <span className="font-semibold text-white">{currencySymbol}{q.amount.toFixed(2)}</span>
                         </div>
                       ))}
                     </div>
@@ -545,14 +544,14 @@ export default function AddBudgetModal({
                 </div>
 
                 {principal > 0 && (
-                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-2xl p-3 flex items-center justify-between text-xs">
+                  <div className="bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
                     <div>
-                      <span className="text-[#8944AB] dark:text-purple-300 font-semibold block">Monthly Quota Payment</span>
-                      <span className="text-[10px] text-[#8944AB]/80 dark:text-purple-300/80 tabular-nums">
+                      <span className="text-purple-300 font-semibold block">Monthly Quota Payment</span>
+                      <span className="text-[10px] text-purple-300/80">
                         Total Interest: {currencySymbol}{previewSchedule.totalInterest.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
                     </div>
-                    <span className="text-base font-bold text-[#1D1D1F] dark:text-white tabular-nums">
+                    <span className="text-base font-bold text-white">
                       {currencySymbol}{(customQuota > 0 ? customQuota : previewSchedule.monthlyQuota).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                     </span>
                   </div>
@@ -563,25 +562,25 @@ export default function AddBudgetModal({
 
           {/* Bank / Debit Account Details */}
           {(accountType === 'bank_account' || accountType === 'debit_account') && (
-            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-3.5 rounded-2xl space-y-3">
-              <div className={`text-xs font-semibold flex items-center gap-1.5 ${accountType === 'bank_account' ? 'text-[#0071E3] dark:text-sky-400' : 'text-teal-700 dark:text-teal-400'}`}>
+            <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
+              <div className={`text-xs font-semibold flex items-center gap-1.5 ${accountType === 'bank_account' ? 'text-sky-400' : 'text-teal-400'}`}>
                 {accountType === 'bank_account' ? <Building2 className="w-3.5 h-3.5" /> : <Wallet className="w-3.5 h-3.5" />}
                 {accountType === 'bank_account' ? 'Bank Account Details' : 'Debit Account Details'}
               </div>
               <div className={`grid grid-cols-1 ${accountType === 'bank_account' ? 'sm:grid-cols-3' : 'sm:grid-cols-2'} gap-2.5`}>
                 <div>
-                  <label className="text-[11px] text-[#86868B] block mb-1">Opening Balance ({currencySymbol})</label>
+                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Opening Balance ({currencySymbol})</label>
                   <input
                     type="number"
                     step="0.01"
                     placeholder="0.00"
                     value={accountBalance}
                     onChange={e => setAccountBalance(e.target.value)}
-                    className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                    className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
                   />
                 </div>
                 <div>
-                  <label className="text-[11px] text-[#86868B] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
+                  <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Spend Limit ({currencySymbol}, opt.)</label>
                   <input
                     type="number"
                     step="0.01"
@@ -589,12 +588,12 @@ export default function AddBudgetModal({
                     placeholder="0 (No limit)"
                     value={limit}
                     onChange={e => setLimit(e.target.value)}
-                    className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                    className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
                   />
                 </div>
                 {accountType === 'bank_account' && (
                   <div>
-                    <label className="text-[11px] text-[#86868B] block mb-1">Interest APY (%)</label>
+                    <label className="text-[11px] text-[#9b9b9b] block mb-1">Interest APY (%)</label>
                     <input
                       type="number"
                       step="0.01"
@@ -602,7 +601,7 @@ export default function AddBudgetModal({
                       placeholder="e.g. 3.5"
                       value={apr}
                       onChange={e => setApr(e.target.value)}
-                      className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                      className="w-full bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-sky-500"
                     />
                   </div>
                 )}
@@ -612,10 +611,10 @@ export default function AddBudgetModal({
 
           {/* Belonging Items Checklist (Standard only) */}
           {accountType === 'standard' && (
-            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border border-black/[0.04] dark:border-white/5 p-3.5 rounded-2xl space-y-3">
+            <div className="bg-[#181818] border border-[#2f2f2f] p-3.5 rounded-xl space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white">Items Belonging to This Budget</span>
-                <span className="text-[10px] text-[#86868B]">Auto-calculates limit</span>
+                <span className="text-xs font-semibold text-white">Items Belonging to This Budget</span>
+                <span className="text-[10px] text-[#888]">Auto-calculates limit</span>
               </div>
 
               <div className="flex gap-2">
@@ -624,7 +623,7 @@ export default function AddBudgetModal({
                   placeholder="e.g. Supermercado, Luz"
                   value={itemName}
                   onChange={e => setItemName(e.target.value)}
-                  className="flex-1 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
+                  className="flex-1 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
                 <input
                   type="number"
@@ -633,12 +632,12 @@ export default function AddBudgetModal({
                   placeholder={`Amount (${currencySymbol})`}
                   value={itemAmount}
                   onChange={e => setItemAmount(e.target.value)}
-                  className="w-28 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                  className="w-28 bg-[#121212] border border-[#333] rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
                 <button
                   type="button"
                   onClick={handleAddNewItem}
-                  className="bg-[#34C759] hover:bg-emerald-500 text-white dark:text-black px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 shrink-0"
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1 shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" /> Add
                 </button>
@@ -647,15 +646,15 @@ export default function AddBudgetModal({
               {items.length > 0 && (
                 <div className="space-y-1 max-h-36 overflow-y-auto pr-1">
                   {items.map(item => (
-                    <div key={item.id} className="flex items-center justify-between gap-2 bg-white dark:bg-[#1C1C1E] px-2.5 py-1.5 rounded-xl text-xs">
-                      <span className="text-[#1D1D1F] dark:text-zinc-200 truncate flex-1">{item.name}</span>
-                      <span className="text-[#1D1D1F] dark:text-white font-semibold shrink-0 tabular-nums">
+                    <div key={item.id} className="flex items-center justify-between gap-2 bg-[#222] px-2.5 py-1.5 rounded-lg text-xs">
+                      <span className="text-zinc-200 truncate flex-1">{item.name}</span>
+                      <span className="text-white font-semibold shrink-0">
                         {currencySymbol}{Number(item.amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
                       <button
                         type="button"
                         onClick={() => setItems(prev => prev.filter(i => i.id !== item.id))}
-                        className="text-[#86868B] hover:text-[#FF3B30]"
+                        className="text-[#777] hover:text-rose-400"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -665,7 +664,7 @@ export default function AddBudgetModal({
               )}
 
               <div>
-                <label className="text-[11px] text-[#86868B] block mb-1">Other Extra Expenses ({currencySymbol})</label>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">Other Extra Expenses ({currencySymbol})</label>
                 <input
                   type="number"
                   step="0.01"
@@ -673,7 +672,7 @@ export default function AddBudgetModal({
                   placeholder="0.00"
                   value={extraExpenses}
                   onChange={e => setExtraExpenses(e.target.value)}
-                  className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                  className="w-full bg-[#121212] border border-[#333] rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
                 />
               </div>
             </div>
@@ -688,14 +687,14 @@ export default function AddBudgetModal({
 
             if (hasChecklist) {
               return (
-                <div className="bg-[#34C759]/10 border border-[#34C759]/30 rounded-2xl p-3 flex items-center justify-between text-xs">
+                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-xl p-3 flex items-center justify-between text-xs">
                   <div>
-                    <span className="text-[#248A3D] dark:text-[#34C759] font-semibold block">Calculated Monthly Limit</span>
-                    <span className="text-[10px] text-[#248A3D]/80 dark:text-emerald-400/80 tabular-nums">
+                    <span className="text-emerald-300 font-semibold block">Calculated Monthly Limit</span>
+                    <span className="text-[10px] text-emerald-400/80">
                       Items ({currencySymbol}{itemsSum.toLocaleString()}) + Extra ({currencySymbol}{extra.toLocaleString()})
                     </span>
                   </div>
-                  <span className="text-base font-bold text-[#1D1D1F] dark:text-white tabular-nums">
+                  <span className="text-base font-bold text-white">
                     {currencySymbol}{totalCalculated.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </span>
                 </div>
@@ -704,7 +703,7 @@ export default function AddBudgetModal({
 
             return (
               <div>
-                <label className="text-[11px] font-medium text-[#86868B] block mb-1">Monthly Limit ({currencySymbol}) *</label>
+                <label className="text-[11px] text-[#9b9b9b] block mb-1">Monthly Limit ({currencySymbol}) *</label>
                 <input
                   type="number"
                   required
@@ -713,7 +712,7 @@ export default function AddBudgetModal({
                   placeholder="500"
                   value={limit}
                   onChange={e => setLimit(e.target.value)}
-                  className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.08] dark:border-white/10 rounded-xl px-3 py-2 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                  className="w-full bg-[#1a1a1a] border border-[#333] rounded-lg px-3 py-2 text-xs text-white focus:outline-none"
                 />
               </div>
             );
@@ -721,7 +720,7 @@ export default function AddBudgetModal({
 
           {/* Bar Color */}
           <div>
-            <label className="text-[11px] font-medium text-[#86868B] block mb-1">Color Theme</label>
+            <label className="text-[11px] text-[#9b9b9b] block mb-1">Color Theme</label>
             <div className="flex items-center gap-2">
               {colors.map(c => (
                 <button
@@ -729,7 +728,7 @@ export default function AddBudgetModal({
                   type="button"
                   onClick={() => setColor(c)}
                   className={`w-5 h-5 rounded-full transition-transform ${
-                    color === c ? 'scale-125 ring-2 ring-[#1D1D1F] dark:ring-white' : 'opacity-80 hover:opacity-100'
+                    color === c ? 'scale-125 ring-2 ring-white' : 'opacity-80 hover:opacity-100'
                   }`}
                   style={{ backgroundColor: c }}
                 />
@@ -741,7 +740,7 @@ export default function AddBudgetModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white py-2.5 rounded-full text-xs font-semibold transition"
+              className="flex-1 bg-[#2C2C2E] hover:bg-white/15 text-white py-2.5 rounded-full text-xs font-semibold transition"
             >
               Cancel
             </button>

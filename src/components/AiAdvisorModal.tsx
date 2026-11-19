@@ -23,15 +23,15 @@ export default function AiAdvisorModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#1D1D1F] dark:text-[#F5F5F7]">
+    <div className="fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+      <div className="bg-[#1C1C1E] border border-white/10 rounded-3xl p-6 w-full max-w-lg space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto text-[#F5F5F7]">
         <div className="flex justify-between items-center">
-          <h3 className="text-lg font-bold tracking-tight text-[#1D1D1F] dark:text-white flex items-center gap-2">
+          <h3 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-[#0071E3]" /> Financial Insights Advisor
           </h3>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-white transition"
           >
             <X className="w-4 h-4" />
           </button>
@@ -43,7 +43,7 @@ export default function AiAdvisorModal({
             placeholder="Ask anything about your spending, loans, bank statements, or savings goals..."
             value={aiPrompt}
             onChange={e => setAiPrompt(e.target.value)}
-            className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-2xl p-3.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
+            className="w-full bg-[#2C2C2E] border border-white/10 rounded-2xl p-3.5 text-xs text-white focus:outline-none focus:border-[#0071E3]"
           />
 
           <div className="flex justify-between items-center gap-3">
@@ -59,7 +59,7 @@ export default function AiAdvisorModal({
           </div>
 
           {aiResult && (
-            <div className="mt-4 p-4 bg-[#F5F5F7] dark:bg-[#2C2C2E]/70 border border-black/[0.04] dark:border-white/5 rounded-2xl text-xs text-[#1D1D1F] dark:text-zinc-200 leading-relaxed max-h-72 overflow-y-auto whitespace-pre-wrap">
+            <div className="mt-4 p-4 bg-[#2C2C2E]/70 border border-white/5 rounded-2xl text-xs text-zinc-200 leading-relaxed max-h-72 overflow-y-auto whitespace-pre-wrap">
               {aiResult}
             </div>
           )}
