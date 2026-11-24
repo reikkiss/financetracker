@@ -14,7 +14,8 @@ import {
   parseDayOfMonth,
   getCreditCardCycleForMonth,
   getTransactionCreditCardCycleKey,
-  formatShortIsoDate
+  formatShortIsoDate,
+  getCleanTransactionDisplay
 } from '../utils/financeMath';
 
 interface TransactionDetailDrawerProps {
@@ -51,6 +52,7 @@ export default function TransactionDetailDrawer({
     cardCutoffDay && cardCycleKey ? getCreditCardCycleForMonth(cardCutoffDay, cardDueDay, cardCycleKey) : null;
   const isPending = tx.status === 'pending';
   const isIncome = tx.type === 'income';
+  const { displayTitle, displayNotes } = getCleanTransactionDisplay(tx, linkedBudget, transferToBudget);
 
   // Dominican FX estimation (USD <-> DOP ~ 60.50)
   const fxRate = 60.50;
@@ -94,10 +96,10 @@ export default function TransactionDetailDrawer({
         {/* Hero Section */}
         <div className="p-6 space-y-6 flex-1">
           <div className="space-y-1">
-            <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">{tx.title}</h2>
+            <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">{displayTitle}</h2>
             <div className="text-3xl font-extrabold tracking-tight tabular-nums mt-2">
-              <span className={isIncome ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}>
-                {isIncome ? '+' : '-'} {currencySymbol}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <span className={tx.isTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : isIncome ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}>
+                {tx.isTransfer ? '' : isIncome ? '+' : '-'} {currencySymbol}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
             </div>
             <p className="text-xs text-[#86868B] tabular-nums pt-0.5">
@@ -127,7 +129,7 @@ export default function TransactionDetailDrawer({
 
             <div className="flex items-center justify-between text-xs">
               <span className="text-[#86868B] flex items-center gap-1.5">
-                <CreditCard className="w-3.5 h-3.5" /> Linked Product / Account
+                <CreditCard className="w-3.5 h-3.5" /> {tx.isTransfer && transferToBudget ? 'From Account' : 'Linked Product / Account'}
               </span>
               <span className="font-medium text-[#1D1D1F] dark:text-white truncate max-w-[200px]">
                 {linkedBudget ? linkedBudget.name || linkedBudget.category : 'General Ledger'}
@@ -139,7 +141,7 @@ export default function TransactionDetailDrawer({
                 <div className="h-[0.5px] bg-black/[0.06] dark:bg-white/10" />
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#86868B] flex items-center gap-1.5">
-                    <ArrowRightLeft className="w-3.5 h-3.5 text-[#0071E3]" /> Transfer Target
+                    <ArrowRightLeft className="w-3.5 h-3.5 text-[#0071E3]" /> To Account
                   </span>
                   <span className="font-medium text-[#1D1D1F] dark:text-white">
                     {transferToBudget.name || transferToBudget.category}
@@ -186,19 +188,23 @@ export default function TransactionDetailDrawer({
           </div>
 
           {/* Notes & Bank Details */}
-          <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.04] dark:border-white/5 rounded-2xl p-4 space-y-2">
-            <span className="text-[11px] text-[#86868B] uppercase tracking-wider font-semibold block">
-              Statement & Ingestion Notes
-            </span>
-            {tx.emailContext && (
-              <p className="text-xs text-[#1D1D1F] dark:text-white leading-relaxed bg-white dark:bg-white/[0.04] border border-black/[0.05] dark:border-white/5 rounded-xl px-3 py-2">
-                {tx.emailContext}
-              </p>
-            )}
-            <p className="text-xs text-[#6E6E73] dark:text-zinc-300 leading-relaxed">
-              {tx.notes || (!tx.emailContext ? 'No specific notes recorded for this transaction.' : '')}
-            </p>
-          </div>
+          {(tx.emailContext || displayNotes) && (
+            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.04] dark:border-white/5 rounded-2xl p-4 space-y-2">
+              <span className="text-[11px] text-[#86868B] uppercase tracking-wider font-semibold block">
+                Statement & Ingestion Notes
+              </span>
+              {tx.emailContext && (
+                <p className="text-xs text-[#1D1D1F] dark:text-white leading-relaxed bg-white dark:bg-white/[0.04] border border-black/[0.05] dark:border-white/5 rounded-xl px-3 py-2">
+                  {tx.emailContext}
+                </p>
+              )}
+              {displayNotes && (
+                <p className="text-xs text-[#6E6E73] dark:text-zinc-300 leading-relaxed">
+                  {displayNotes}
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Reconciliation Status Callout */}
           <div className="bg-[#F5F5F7] dark:bg-white/5 border border-black/[0.05] dark:border-white/10 rounded-2xl p-4 flex items-start gap-3">

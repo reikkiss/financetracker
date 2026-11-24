@@ -50,7 +50,8 @@ import StatementUploadModal, { ImportedTransactionDraft } from './components/Sta
 import {
   ParsedEmailTransaction,
   findFuzzyPendingMatch,
-  findExistingTransactionForEmailAlert
+  findExistingTransactionForEmailAlert,
+  findOppositeTransferCandidate
 } from './utils/bankEmailParser';
 import AddTransactionModal from './components/AddTransactionModal';
 import EditTransactionModal from './components/EditTransactionModal';
@@ -385,11 +386,17 @@ export default function App() {
   const currencySymbol = currentUserProfile ? (CURRENCIES[currentUserProfile.currency] || '$') : '$';
 
   const totalIncome = useMemo(
-    () => displayTransactions.filter(t => t.type === 'income' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    () =>
+      displayTransactions
+        .filter(t => t.type === 'income' && !t.isTransfer && t.emailOutcome !== 'declined')
+        .reduce((s, t) => s + t.amount, 0),
     [displayTransactions]
   );
   const totalExpense = useMemo(
-    () => displayTransactions.filter(t => t.type === 'expense' && !t.isTransfer).reduce((s, t) => s + t.amount, 0),
+    () =>
+      displayTransactions
+        .filter(t => t.type === 'expense' && !t.isTransfer && t.emailOutcome !== 'declined')
+        .reduce((s, t) => s + t.amount, 0),
     [displayTransactions]
   );
 
@@ -408,7 +415,7 @@ export default function App() {
   const breakdownData = useMemo(() => {
     const map: Record<string, number> = {};
     displayTransactions
-      .filter(t => !t.isTransfer && t.type === breakdownMode.toLowerCase())
+      .filter(t => !t.isTransfer && t.emailOutcome !== 'declined' && t.type === breakdownMode.toLowerCase())
       .forEach(t => {
         map[t.category] = (map[t.category] || 0) + t.amount;
       });
@@ -419,7 +426,7 @@ export default function App() {
     if (transactions.length === 0) return [];
     const map: Record<string, { income: number; expense: number }> = {};
     transactions.forEach(t => {
-      if (t.isTransfer) return;
+      if (t.isTransfer || t.emailOutcome === 'declined') return;
       const monthKey = t.date ? t.date.slice(0, 7) : 'Unknown';
       if (!map[monthKey]) {
         map[monthKey] = { income: 0, expense: 0 };
@@ -459,7 +466,7 @@ export default function App() {
   }, [globalSelectedMonth]);
 
   const selectedMonthStats = useMemo(() => {
-    const mTransactions = displayTransactions.filter(t => !t.isTransfer);
+    const mTransactions = displayTransactions.filter(t => !t.isTransfer && t.emailOutcome !== 'declined');
     const income = mTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
     const expense = mTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
     return { income, expense, cashflow: income - expense };
@@ -487,7 +494,9 @@ export default function App() {
 
   const filteredMonthsStats = useMemo(() => {
     const listWithStats = allMonthsList.map(m => {
-      const monthTxs = transactions.filter(t => !t.isTransfer && t.date && t.date.startsWith(m.key));
+      const monthTxs = transactions.filter(
+        t => !t.isTransfer && t.emailOutcome !== 'declined' && t.date && t.date.startsWith(m.key)
+      );
       const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
       const expense = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
       const cashflowVal = income - expense;
@@ -503,6 +512,9 @@ export default function App() {
     tx: Transaction,
     budgetList: Budget[]
   ): { enrichedTx: Transaction; nextBudgets: Budget[]; touchedIds: string[] } => {
+    if (tx.emailOutcome === 'declined') {
+      return { enrichedTx: tx, nextBudgets: budgetList, touchedIds: [] };
+    }
     const amt = Math.abs(Number(tx.amount) || 0);
     if (amt <= 0) return { enrichedTx: tx, nextBudgets: budgetList, touchedIds: [] };
 
@@ -595,6 +607,9 @@ export default function App() {
     tx: Transaction,
     budgetList: Budget[]
   ): { nextBudgets: Budget[]; touchedIds: string[] } => {
+    if (tx.emailOutcome === 'declined') {
+      return { nextBudgets: budgetList, touchedIds: [] };
+    }
     const amt = Math.abs(Number(tx.amount) || 0);
     if (amt <= 0) return { nextBudgets: budgetList, touchedIds: [] };
 
@@ -767,9 +782,78 @@ export default function App() {
 
   const handleIngestParsedEmailTx = async (parsed: ParsedEmailTransaction & { budgetId?: string }) => {
     if (!firebaseUser) return;
+    const targetBudgetId = parsed.budgetId?.trim() || '';
+    const existingHit = findExistingTransactionForEmailAlert(transactionsRef.current, {
+      ...parsed,
+      budgetId: targetBudgetId || undefined
+    });
+    if (existingHit) return;
+
+    const oppositeCandidate = targetBudgetId
+      ? findOppositeTransferCandidate(
+          transactionsRef.current,
+          {
+            budgetId: targetBudgetId,
+            amount: parsed.amount,
+            date: parsed.date,
+            type: parsed.type,
+            title: parsed.title,
+            category: parsed.category
+          },
+          budgetsRef.current
+        )
+      : undefined;
+
+    if (oppositeCandidate && oppositeCandidate.budgetId) {
+      const incomingAcc = budgetsRef.current.find(b => b.id === targetBudgetId);
+      const existingAcc = budgetsRef.current.find(b => b.id === oppositeCandidate.budgetId);
+      const incomingIsDebt = incomingAcc?.accountType === 'credit_card' || incomingAcc?.accountType === 'loan';
+      const existingIsDebt = existingAcc?.accountType === 'credit_card' || existingAcc?.accountType === 'loan';
+
+      let fromId = parsed.type === 'income' ? oppositeCandidate.budgetId : targetBudgetId;
+      let toId = parsed.type === 'income' ? targetBudgetId : oppositeCandidate.budgetId;
+      if (existingIsDebt && !incomingIsDebt) {
+        fromId = targetBudgetId;
+        toId = oppositeCandidate.budgetId;
+      } else if (incomingIsDebt && !existingIsDebt) {
+        fromId = oppositeCandidate.budgetId;
+        toId = targetBudgetId;
+      }
+
+      const toAcc = budgetsRef.current.find(b => b.id === toId);
+      const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+      const cleanTitle = isPayingDebt
+        ? toAcc?.accountType === 'loan'
+          ? 'Loan Payment'
+          : 'Card Payment'
+        : 'Self Transfer';
+      const mergedTx: Transaction = stripUndefined({
+        ...oppositeCandidate,
+        title: cleanTitle,
+        type: 'expense' as const,
+        category: isPayingDebt ? 'Debt Payment' : 'Transfer',
+        budgetId: fromId.slice(0, 50),
+        transferToBudgetId: toId.slice(0, 50),
+        isTransfer: true,
+        isLoanPayment: isPayingDebt
+      });
+      const reverted = revertSingleTxInMemory(oppositeCandidate, budgetsRef.current);
+      const applied = applySingleTxInMemory(mergedTx, reverted.nextBudgets);
+      const touched = Array.from(new Set([...reverted.touchedIds, ...applied.touchedIds]));
+      try {
+        await setDoc(doc(db, 'transactions', oppositeCandidate.id), stripUndefined(applied.enrichedTx));
+        if (touched.length > 0) {
+          await persistTouchedBudgets(touched, applied.nextBudgets);
+        }
+        setTransactions(prev => prev.map(t => (t.id === oppositeCandidate.id ? applied.enrichedTx : t)));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `transactions/${oppositeCandidate.id}`);
+      }
+      return;
+    }
+
     const id = `tx_email_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     const isTrans = parsed.type === 'transfer';
-    const targetBudgetId = parsed.budgetId?.trim() || '';
     const newTx: Transaction = stripUndefined({
       id,
       userId: firebaseUser.uid,
@@ -779,7 +863,7 @@ export default function App() {
       category: (isTrans ? 'Transfer' : parsed.category || 'Other').slice(0, 50),
       date: (parsed.date || new Date().toISOString().split('T')[0]).slice(0, 20),
       notes: (parsed.notes || '').slice(0, 500),
-      ...(parsed.budgetId?.trim() ? { budgetId: parsed.budgetId.trim().slice(0, 50) } : {}),
+      ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
       ...(parsed.emailId ? { emailId: parsed.emailId.slice(0, 100) } : {}),
       ...(parsed.emailOutcome ? { emailOutcome: parsed.emailOutcome } : {}),
       ...(parsed.contextSnippet ? { emailContext: parsed.contextSnippet.slice(0, 240) } : {}),
@@ -817,7 +901,7 @@ export default function App() {
 
     const categoryTotals: Record<string, number> = {};
     for (const item of items) {
-      if (item.type === 'transfer') continue;
+      if (item.type === 'transfer' || item.emailOutcome === 'declined') continue;
       const cat = (item.category || 'Other').trim().slice(0, 50);
       const amt = Math.abs(Number(item.amount) || 0);
       categoryTotals[cat] = (categoryTotals[cat] || 0) + (item.type === 'expense' ? amt : 0);
@@ -826,13 +910,85 @@ export default function App() {
     let workingBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
     const allTouchedIds = new Set<string>();
     const createdTxs: Transaction[] = [];
+    const updatedTxsMap = new Map<string, Transaction>();
+    let workingTxs = [...transactionsRef.current];
     const baseTs = Date.now();
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
+      const targetBudgetId = item.budgetId?.trim() || '';
+
+      const existingHit = findExistingTransactionForEmailAlert(workingTxs, {
+        ...item,
+        budgetId: targetBudgetId || undefined
+      });
+      if (existingHit) continue;
+
+      const oppositeCandidate = targetBudgetId
+        ? findOppositeTransferCandidate(
+            workingTxs,
+            {
+              budgetId: targetBudgetId,
+              amount: item.amount,
+              date: item.date,
+              type: item.type,
+              title: item.title,
+              category: item.category
+            },
+            workingBudgets
+          )
+        : undefined;
+
+      if (oppositeCandidate && oppositeCandidate.budgetId) {
+        const incomingAcc = workingBudgets.find(b => b.id === targetBudgetId);
+        const existingAcc = workingBudgets.find(b => b.id === oppositeCandidate.budgetId);
+        const incomingIsDebt = incomingAcc?.accountType === 'credit_card' || incomingAcc?.accountType === 'loan';
+        const existingIsDebt = existingAcc?.accountType === 'credit_card' || existingAcc?.accountType === 'loan';
+
+        let fromId = item.type === 'income' ? oppositeCandidate.budgetId : targetBudgetId;
+        let toId = item.type === 'income' ? targetBudgetId : oppositeCandidate.budgetId;
+        if (existingIsDebt && !incomingIsDebt) {
+          fromId = targetBudgetId;
+          toId = oppositeCandidate.budgetId;
+        } else if (incomingIsDebt && !existingIsDebt) {
+          fromId = oppositeCandidate.budgetId;
+          toId = targetBudgetId;
+        }
+
+        const toAcc = workingBudgets.find(b => b.id === toId);
+        const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+        const cleanTitle = isPayingDebt
+          ? toAcc?.accountType === 'loan'
+            ? 'Loan Payment'
+            : 'Card Payment'
+          : 'Self Transfer';
+        const mergedTx: Transaction = stripUndefined({
+          ...oppositeCandidate,
+          title: cleanTitle,
+          type: 'expense' as const,
+          category: isPayingDebt ? 'Debt Payment' : 'Transfer',
+          budgetId: fromId.slice(0, 50),
+          transferToBudgetId: toId.slice(0, 50),
+          isTransfer: true,
+          isLoanPayment: isPayingDebt
+        });
+        const reverted = revertSingleTxInMemory(oppositeCandidate, workingBudgets);
+        const applied = applySingleTxInMemory(mergedTx, reverted.nextBudgets);
+        workingBudgets = applied.nextBudgets;
+        reverted.touchedIds.forEach(tid => allTouchedIds.add(tid));
+        applied.touchedIds.forEach(tid => allTouchedIds.add(tid));
+        try {
+          await setDoc(doc(db, 'transactions', oppositeCandidate.id), stripUndefined(applied.enrichedTx));
+          updatedTxsMap.set(oppositeCandidate.id, applied.enrichedTx);
+          workingTxs = workingTxs.map(t => (t.id === oppositeCandidate.id ? applied.enrichedTx : t));
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `transactions/${oppositeCandidate.id}`);
+        }
+        continue;
+      }
+
       const id = `tx_email_${baseTs}_${i}`;
       const isTrans = item.type === 'transfer';
-      const targetBudgetId = item.budgetId?.trim() || '';
       const newTx: Transaction = stripUndefined({
         id,
         userId: firebaseUser.uid,
@@ -857,6 +1013,7 @@ export default function App() {
       try {
         await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
         createdTxs.push(enrichedTx);
+        workingTxs = [enrichedTx, ...workingTxs];
       } catch (err) {
         handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
       }
@@ -866,10 +1023,11 @@ export default function App() {
       await persistTouchedBudgets(Array.from(allTouchedIds), workingBudgets);
     }
 
-    if (createdTxs.length > 0) {
-      setTransactions(prev =>
-        [...createdTxs, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || ''))
-      );
+    if (createdTxs.length > 0 || updatedTxsMap.size > 0) {
+      setTransactions(prev => {
+        const merged = prev.map(t => updatedTxsMap.get(t.id) || t);
+        return [...createdTxs, ...merged].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+      });
     }
 
     return createdTxs.length;
@@ -1251,9 +1409,15 @@ export default function App() {
           ...(r.category ? { category: r.category.slice(0, 50) } : {}),
           ...(r.statementCycle ? { statementCycle: r.statementCycle.slice(0, 20) } : {})
         });
-        updatedTxsMap.set(updatedPending.id, updatedPending);
+        const reverted = revertSingleTxInMemory(matchedPending, workingBudgets);
+        const applied = applySingleTxInMemory(updatedPending, reverted.nextBudgets);
+        workingBudgets = applied.nextBudgets;
+        reverted.touchedIds.forEach(tid => allTouchedIds.add(tid));
+        applied.touchedIds.forEach(tid => allTouchedIds.add(tid));
+
+        updatedTxsMap.set(updatedPending.id, applied.enrichedTx);
         try {
-          await setDoc(doc(db, 'transactions', updatedPending.id), updatedPending);
+          await setDoc(doc(db, 'transactions', updatedPending.id), applied.enrichedTx);
         } catch (err) {
           handleFirestoreError(err, OperationType.UPDATE, `transactions/${updatedPending.id}`);
         }
@@ -1733,12 +1897,81 @@ export default function App() {
   const handleOpenRecordPayment = (b: Budget) => {
     const name = b.name || b.category;
     setDefaultTxType('expense');
-    setNewTxTitle(`Payment - ${name}`);
-    setNewTxCategory(name);
+    setNewTxTitle(b.accountType === 'loan' ? 'Loan Payment' : 'Card Payment');
+    setNewTxCategory('Debt Payment');
     setNewTxBudgetId(b.id);
     setNewTxIsLoanPayment(true);
     setNewTxDate(new Date().toISOString().split('T')[0]);
     setIsAddTxOpen(true);
+  };
+
+  const handleRecalculateLiquidBalance = async (budgetId: string) => {
+    const target = budgetsRef.current.find(b => b.id === budgetId);
+    if (!target || (target.accountType !== 'bank_account' && target.accountType !== 'debit_account')) return;
+    const catName = (target.name || target.category || '').trim().toLowerCase();
+
+    let net = 0;
+    transactionsRef.current.forEach(t => {
+      if (t.emailOutcome === 'declined') return;
+      const amt = Math.abs(Number(t.amount) || 0);
+      if (t.isTransfer) {
+        if (t.budgetId === target.id) net -= amt;
+        if (t.transferToBudgetId === target.id) net += amt;
+      } else {
+        const belongs =
+          t.budgetId === target.id ||
+          (!t.budgetId && (t.category || '').trim().toLowerCase() === catName);
+        if (!belongs) return;
+        net += t.type === 'income' ? amt : -amt;
+      }
+    });
+
+    const computedBalance = Number(net.toFixed(2));
+    try {
+      await updateDoc(doc(db, 'budgets', target.id), { accountBalance: computedBalance });
+      setBudgets(prev => prev.map(b => (b.id === target.id ? { ...b, accountBalance: computedBalance } : b)));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `budgets/${target.id}`);
+    }
+  };
+
+  const handleRecalculateAccountBalance = async (budgetId: string) => {
+    const target = budgetsRef.current.find(b => b.id === budgetId);
+    if (!target) return;
+    if (target.accountType === 'bank_account' || target.accountType === 'debit_account') {
+      await handleRecalculateLiquidBalance(budgetId);
+      return;
+    }
+    if (target.accountType === 'credit_card') {
+      const catName = (target.name || target.category || '').trim().toLowerCase();
+      let charges = 0;
+      let payments = 0;
+      transactionsRef.current.forEach(t => {
+        if (t.emailOutcome === 'declined') return;
+        const amt = Math.abs(Number(t.amount) || 0);
+        if (t.isTransfer) {
+          if (t.budgetId === target.id) charges += amt;
+          if (t.transferToBudgetId === target.id) payments += amt;
+        } else {
+          const belongs =
+            t.budgetId === target.id ||
+            (!t.budgetId && (t.category || '').trim().toLowerCase() === catName);
+          if (!belongs) return;
+          if (t.isLoanPayment || t.type === 'income') {
+            payments += amt;
+          } else {
+            charges += amt;
+          }
+        }
+      });
+      const computedUsed = Math.max(0, Number((charges - payments).toFixed(2)));
+      try {
+        await updateDoc(doc(db, 'budgets', target.id), { actualUsedAmount: computedUsed });
+        setBudgets(prev => prev.map(b => (b.id === target.id ? { ...b, actualUsedAmount: computedUsed } : b)));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `budgets/${target.id}`);
+      }
+    }
   };
 
   const handleDeleteBudget = async (id: string) => {
@@ -2227,6 +2460,8 @@ export default function App() {
               onGenerateLoanQuotas={handleGenerateLoanQuotas}
               onReorderBudget={handleReorderBudget}
               onReorderBudgetToIndex={handleMoveBudgetToIndex}
+              onRecalculateLiquidBalance={handleRecalculateLiquidBalance}
+              onRecalculateAccountBalance={handleRecalculateAccountBalance}
             />
           )}
 
@@ -2512,22 +2747,24 @@ export default function App() {
         initialFromId={transferInitialFromId}
         onSave={async ({ fromBudgetId, toBudgetId, amount, date, title, notes }) => {
           if (!firebaseUser || !fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) return;
-          const fromAcc = budgets.find(b => b.id === fromBudgetId);
           const toAcc = budgets.find(b => b.id === toBudgetId);
-          const fromName = fromAcc?.name || fromAcc?.category || 'Account';
-          const toName = toAcc?.name || toAcc?.category || 'Account';
           const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+          const defaultLabel = isPayingDebt
+            ? toAcc?.accountType === 'loan'
+              ? 'Loan Payment'
+              : 'Card Payment'
+            : 'Self Transfer';
           const id = `tx_tr_${Date.now()}`;
 
           const newTx: Transaction = stripUndefined({
             id,
             userId: firebaseUser.uid,
-            title: (title || `Transfer: ${fromName} → ${toName}`).slice(0, 200),
+            title: (title || defaultLabel).slice(0, 200),
             amount: Math.abs(Number(amount) || 0),
             type: 'expense',
-            category: 'Transfer',
+            category: isPayingDebt ? 'Debt Payment' : 'Transfer',
             date: (date || new Date().toISOString().split('T')[0]).slice(0, 20),
-            notes: (notes || `Internal transfer from ${fromName} to ${toName}`).slice(0, 500),
+            notes: (notes || '').trim().slice(0, 500),
             budgetId: fromBudgetId.slice(0, 50),
             transferToBudgetId: toBudgetId.slice(0, 50),
             isTransfer: true,

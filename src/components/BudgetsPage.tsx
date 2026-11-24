@@ -19,7 +19,8 @@ import {
   Clock,
   GripVertical,
   ArrowUpDown,
-  Check
+  Check,
+  RefreshCw
 } from 'lucide-react';
 import {
   LoanQuota,
@@ -96,6 +97,8 @@ interface BudgetsPageProps {
   onGenerateLoanQuotas?: (budgetId: string) => Promise<void>;
   onReorderBudget?: (budgetId: string, direction: 'up' | 'down') => void;
   onReorderBudgetToIndex?: (budgetId: string, targetIndex: number) => void | Promise<void>;
+  onRecalculateLiquidBalance?: (budgetId: string) => Promise<void>;
+  onRecalculateAccountBalance?: (budgetId: string) => Promise<void>;
 }
 
 export default function BudgetsPage({
@@ -116,10 +119,14 @@ export default function BudgetsPage({
   onDeleteLoanQuota,
   onGenerateLoanQuotas,
   onReorderBudget,
-  onReorderBudgetToIndex
+  onReorderBudgetToIndex,
+  onRecalculateLiquidBalance,
+  onRecalculateAccountBalance
 }: BudgetsPageProps) {
   const [expandedLoans, setExpandedLoans] = useState<Record<string, boolean>>({});
   const [expandedCardCycles, setExpandedCardCycles] = useState<Record<string, boolean>>({});
+  const [expandedLiquidLedgers, setExpandedLiquidLedgers] = useState<Record<string, boolean>>({});
+  const [recalculatingId, setRecalculatingId] = useState<string | null>(null);
   const [cardCycleOverrides, setCardCycleOverrides] = useState<Record<string, string>>({});
   const [isReorganizeMode, setIsReorganizeMode] = useState(false);
   const [draggedBudgetId, setDraggedBudgetId] = useState<string | null>(null);
@@ -463,12 +470,13 @@ export default function BudgetsPage({
             const spent = transactions
               .filter(
                 t =>
+                  t.emailOutcome !== 'declined' &&
                   t.type === 'expense' &&
                   !t.isLoanPayment &&
                   !t.isTransfer &&
                   (t.budgetId === b.id || (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())
               )
-              .reduce((sum, t) => sum + t.amount, 0);
+              .reduce((sum, t) => sum + (Number(t.amount) || 0), 0);
 
             // Standard budget checklist items ONLY
             const items = isStandard ? (b.items || []) : [];
@@ -483,22 +491,62 @@ export default function BudgetsPage({
               ? (ccCalc.monthlyLimit > 0 ? ccCalc.monthlyLimit : b.limit)
               : b.limit;
 
-            // Liquid Account (Bank / Debit) metrics
+            // Liquid Account (Bank / Debit) metrics (selected month + all-time ledger net)
             const currentCashBalance = Number(b.accountBalance) || 0;
+            const belongsDirectLiquid = (t: any) =>
+              t.emailOutcome !== 'declined' &&
+              !t.isTransfer &&
+              (t.budgetId === b.id || (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase()));
+
             const directInflows = transactions
-              .filter(t => !t.isTransfer && t.type === 'income' && t.budgetId === b.id)
-              .reduce((s, t) => s + t.amount, 0);
+              .filter(t => belongsDirectLiquid(t) && t.type === 'income')
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
             const transfersIn = transactions
-              .filter(t => t.isTransfer && t.transferToBudgetId === b.id)
-              .reduce((s, t) => s + t.amount, 0);
+              .filter(t => t.emailOutcome !== 'declined' && t.isTransfer && t.transferToBudgetId === b.id)
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
             const directOutflows = transactions
-              .filter(t => !t.isTransfer && t.type === 'expense' && t.budgetId === b.id)
-              .reduce((s, t) => s + t.amount, 0);
+              .filter(t => belongsDirectLiquid(t) && t.type === 'expense')
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
             const transfersOut = transactions
-              .filter(t => t.isTransfer && t.budgetId === b.id)
-              .reduce((s, t) => s + t.amount, 0);
+              .filter(t => t.emailOutcome !== 'declined' && t.isTransfer && t.budgetId === b.id)
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
             const totalInflows = directInflows + transfersIn;
             const totalOutflows = directOutflows + transfersOut;
+            const liquidNetFlow = totalInflows - totalOutflows;
+            const pendingLiquidOutflows = transactions
+              .filter(
+                t =>
+                  t.status === 'pending' &&
+                  t.emailOutcome !== 'declined' &&
+                  ((belongsDirectLiquid(t) && t.type === 'expense') || (t.isTransfer && t.budgetId === b.id))
+              )
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+            const allTimeLiquidTxs = isLiquidAccount
+              ? fullLedgerTransactions
+                  .filter(
+                    t =>
+                      t.emailOutcome !== 'declined' &&
+                      (belongsDirectLiquid(t) ||
+                        (t.isTransfer && (t.budgetId === b.id || t.transferToBudgetId === b.id)))
+                  )
+                  .sort((a, x) => String(x.date || '').localeCompare(String(a.date || '')))
+              : [];
+            const allTimeLedgerNet = Number(
+              allTimeLiquidTxs
+                .reduce((net, t) => {
+                  const amt = Math.abs(Number(t.amount) || 0);
+                  if (t.isTransfer) {
+                    if (t.transferToBudgetId === b.id) net += amt;
+                    if (t.budgetId === b.id) net -= amt;
+                    return net;
+                  }
+                  return net + (t.type === 'income' ? amt : -amt);
+                }, 0)
+                .toFixed(2)
+            );
+            const hasLiquidBalanceDrift = isLiquidAccount && Math.abs(currentCashBalance - allTimeLedgerNet) > 0.01;
+            const isLiquidLedgerExpanded = Boolean(expandedLiquidLedgers[b.id]);
 
             const usedBalance = Number(b.actualUsedAmount) || 0;
             const availableCredit = isCreditCard
@@ -529,6 +577,7 @@ export default function BudgetsPage({
             const cardChargesInCycle =
               isCreditCard && cycleInfo
                 ? fullLedgerTransactions.filter(t => {
+                    if (t.emailOutcome === 'declined') return false;
                     const belongsToCard =
                       t.budgetId === b.id ||
                       (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase());
@@ -544,6 +593,7 @@ export default function BudgetsPage({
             const cardPaymentsInCycle =
               isCreditCard && cycleInfo
                 ? fullLedgerTransactions.filter(t => {
+                    if (t.emailOutcome === 'declined') return false;
                     const isDirectPayment =
                       (t.budgetId === b.id ||
                         (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())) &&
@@ -558,6 +608,7 @@ export default function BudgetsPage({
             const postCutoffPaymentsTowardDue =
               isCreditCard && cycleInfo && cycleInfo.dueDate && cycleInfo.dueDate > cycleInfo.cutoffDate
                 ? fullLedgerTransactions.filter(t => {
+                    if (t.emailOutcome === 'declined') return false;
                     if (t.statementCycle && t.statementCycle !== cycleInfo.cycleKey) return false;
                     const isDirectPayment =
                       (t.budgetId === b.id ||
@@ -582,6 +633,39 @@ export default function BudgetsPage({
               String(x.date || '').localeCompare(String(a.date || ''))
             );
             const isCycleLedgerExpanded = Boolean(expandedCardCycles[b.id]);
+
+            // All-time card ledger reconciliation (explains carried-over / opening balance vs 0 cycle charges)
+            let cardAllTimeCharges = 0;
+            let cardAllTimePayments = 0;
+            let cardAllTimeChargesCount = 0;
+            if (isCreditCard) {
+              fullLedgerTransactions.forEach(t => {
+                if (t.emailOutcome === 'declined') return;
+                const amt = Math.abs(Number(t.amount) || 0);
+                if (t.isTransfer) {
+                  if (t.budgetId === b.id) {
+                    cardAllTimeCharges += amt;
+                    cardAllTimeChargesCount += 1;
+                  }
+                  if (t.transferToBudgetId === b.id) {
+                    cardAllTimePayments += amt;
+                  }
+                } else {
+                  const belongs =
+                    t.budgetId === b.id ||
+                    (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase());
+                  if (!belongs) return;
+                  if (t.isLoanPayment || t.type === 'income') {
+                    cardAllTimePayments += amt;
+                  } else {
+                    cardAllTimeCharges += amt;
+                    cardAllTimeChargesCount += 1;
+                  }
+                }
+              });
+            }
+            const cardLedgerNetDebt = Math.max(0, Number((cardAllTimeCharges - cardAllTimePayments).toFixed(2)));
+            const hasCardLedgerDrift = isCreditCard && Math.abs(usedBalance - cardLedgerNetDebt) > 0.01;
 
             // Loan calculations & Quotas
             const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
@@ -615,8 +699,9 @@ export default function BudgetsPage({
             // Related payments (including transfers targeting this credit card or loan)
             const relatedPayments = transactions.filter(
               t =>
-                ((t.budgetId === b.id || (t.category || '').toLowerCase() === budgetCatName.toLowerCase()) && t.isLoanPayment && !t.isTransfer) ||
-                (t.isTransfer && t.transferToBudgetId === b.id)
+                t.emailOutcome !== 'declined' &&
+                (((t.budgetId === b.id || (t.category || '').toLowerCase() === budgetCatName.toLowerCase()) && t.isLoanPayment && !t.isTransfer) ||
+                  (t.isTransfer && t.transferToBudgetId === b.id))
             );
             const totalPaymentsMade = relatedPayments.reduce((s, t) => s + t.amount, 0);
             const hasFullLoanSplit =
@@ -822,8 +907,8 @@ export default function BudgetsPage({
 
                 {/* BANK / DEBIT ACCOUNT VIEW */}
                 {isLiquidAccount && (
-                  <div className="space-y-2.5 bg-[#F5F5F7] dark:bg-[#171717] p-3 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
-                    <div className={`grid grid-cols-3 ${isBankAccount && (b.apr || 0) > 0 ? 'sm:grid-cols-4' : ''} gap-2`}>
+                  <div className="space-y-2.5 bg-[#F5F5F7] dark:bg-[#171717] p-3.5 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
                         <span className="text-[10px] text-[#86868B] block">Current Balance</span>
                         <span className={`text-xs font-bold tabular-nums block mt-0.5 ${currentCashBalance >= 0 ? 'text-[#248A3D] dark:text-emerald-400' : 'text-[#D70015] dark:text-rose-400'}`}>
@@ -842,13 +927,111 @@ export default function BudgetsPage({
                           -{currencySymbol}{totalOutflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
-                      {isBankAccount && (b.apr || 0) > 0 && (
-                        <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
-                          <span className="text-[10px] text-[#86868B] block">APY</span>
-                          <span className="text-xs font-bold tabular-nums text-[#B25000] dark:text-amber-400 block mt-0.5">{b.apr}%</span>
-                        </div>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center shadow-2xs border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Net Flow</span>
+                        <span className={`text-xs font-bold tabular-nums block mt-0.5 ${liquidNetFlow >= 0 ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#D70015] dark:text-[#FF3B30]'}`}>
+                          {liquidNetFlow >= 0 ? '+' : '-'}{currencySymbol}{Math.abs(liquidNetFlow).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {isBankAccount && (b.apr || 0) > 0 && (
+                      <div className="flex items-center justify-between bg-white dark:bg-[#1f1f1f] px-3 py-1.5 rounded-xl text-[11px] border border-black/[0.03] dark:border-transparent tabular-nums">
+                        <span className="text-[#86868B]">Annual Percentage Yield (APY)</span>
+                        <span className="font-bold text-[#B25000] dark:text-[#FF9F0A]">{b.apr}%</span>
+                      </div>
+                    )}
+
+                    {pendingLiquidOutflows > 0 && (
+                      <div className="flex items-center justify-between bg-[#FF9F0A]/10 border border-[#FF9F0A]/25 px-3 py-1.5 rounded-xl text-[11px] tabular-nums">
+                        <span className="text-[#B25000] dark:text-[#FF9F0A] font-medium">
+                          Pending Flotante Hold: -{currencySymbol}{pendingLiquidOutflows.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="font-semibold text-[#1D1D1F] dark:text-white">
+                          After Flotantes: {currencySymbol}{(currentCashBalance - pendingLiquidOutflows).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-black/[0.05] dark:border-[#262626] text-[11px]">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => setExpandedLiquidLedgers(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
+                          className="text-[#1D1D1F] dark:text-zinc-300 flex items-center gap-1 bg-white dark:bg-[#222] border border-black/[0.06] dark:border-transparent px-2.5 py-1 rounded-full font-medium transition"
+                        >
+                          {isLiquidLedgerExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                          <span>Activity ({allTimeLiquidTxs.length})</span>
+                        </button>
+                        <span className="text-[10px] text-[#86868B] tabular-nums">
+                          Ledger Net: <strong className="text-[#1D1D1F] dark:text-white">{currencySymbol}{allTimeLedgerNet.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong>
+                        </span>
+                      </div>
+                      {hasLiquidBalanceDrift && (onRecalculateAccountBalance || onRecalculateLiquidBalance) && (
+                        <button
+                          type="button"
+                          disabled={recalculatingId === b.id}
+                          onClick={async () => {
+                            setRecalculatingId(b.id);
+                            try {
+                              if (onRecalculateAccountBalance) {
+                                await onRecalculateAccountBalance(b.id);
+                              } else if (onRecalculateLiquidBalance) {
+                                await onRecalculateLiquidBalance(b.id);
+                              }
+                            } finally {
+                              setRecalculatingId(null);
+                            }
+                          }}
+                          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#0071E3]/12 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] font-semibold text-[10px] transition disabled:opacity-50"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${recalculatingId === b.id ? 'animate-spin' : ''}`} />
+                          Sync Balance to Ledger
+                        </button>
                       )}
                     </div>
+
+                    {isLiquidLedgerExpanded && (
+                      <div className="space-y-1 max-h-52 overflow-y-auto pr-1 scrollbar-thin">
+                        {allTimeLiquidTxs.length === 0 ? (
+                          <div className="bg-white dark:bg-[#1f1f1f] rounded-xl p-3 text-center text-[11px] text-[#86868B]">
+                            No activity recorded for this account yet.
+                          </div>
+                        ) : (
+                          allTimeLiquidTxs.slice(0, 30).map(txItem => {
+                            const isInflow = txItem.isTransfer
+                              ? txItem.transferToBudgetId === b.id
+                              : txItem.type === 'income';
+                            const otherAccount = txItem.isTransfer
+                              ? budgets.find(x => x.id === (isInflow ? txItem.budgetId : txItem.transferToBudgetId))
+                              : null;
+                            return (
+                              <div
+                                key={txItem.id}
+                                className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-xl bg-white dark:bg-[#1f1f1f] border border-black/[0.03] dark:border-transparent text-xs"
+                              >
+                                <div className="min-w-0 flex-1">
+                                  <span className="font-medium text-[#1D1D1F] dark:text-zinc-200 truncate block">
+                                    {txItem.isTransfer && otherAccount
+                                      ? isInflow
+                                        ? `From ${otherAccount.name || otherAccount.category}`
+                                        : `To ${otherAccount.name || otherAccount.category}`
+                                      : txItem.title}
+                                  </span>
+                                  <span className="text-[10px] text-[#86868B] block tabular-nums">
+                                    {txItem.date} • {txItem.category}
+                                    {txItem.status === 'pending' ? ' • Flotante' : ''}
+                                  </span>
+                                </div>
+                                <span className={`font-semibold tabular-nums shrink-0 ${isInflow ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}`}>
+                                  {isInflow ? '+' : '-'}{currencySymbol}{Math.abs(Number(txItem.amount) || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </span>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1055,8 +1238,8 @@ export default function BudgetsPage({
                       </span>
                     </div>
 
-                    {/* Credit Utilization Bar */}
-                    <div className="space-y-1 pt-1">
+                    {/* Credit Utilization Bar + Ledger Drift Explanation */}
+                    <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
                         <span>Total Capacity Used: {utilizationPct}%</span>
                         <span className="text-[#248A3D] dark:text-emerald-400 font-semibold">Available: {currencySymbol}{availableCredit.toLocaleString()}</span>
@@ -1074,6 +1257,56 @@ export default function BudgetsPage({
                         <span className="text-[10px] text-[#B25000] dark:text-amber-400 block tabular-nums">
                           Using overdraft allowance ({currencySymbol}{(usedBalance - ccCalc.baseCreditLimit).toLocaleString()} over base limit)
                         </span>
+                      )}
+                      {usedBalance > 0 && cycleChargesTotal === 0 && (
+                        <div className="bg-white dark:bg-[#1f1f1f] border border-black/[0.05] dark:border-white/10 rounded-xl px-2.5 py-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#6E6E73] dark:text-zinc-300">
+                          <span className="leading-snug">
+                            {cardAllTimeChargesCount > 0 && cardLedgerNetDebt > 0
+                              ? `0 cargos en este ciclo — el balance usado proviene de ciclos anteriores (${cardAllTimeChargesCount} cargos registrados, neto ${currencySymbol}${cardLedgerNetDebt.toLocaleString('en-US', { minimumFractionDigits: 2 })}).`
+                              : `Sin cargos pendientes en el ledger (neto ${currencySymbol}${cardLedgerNetDebt.toLocaleString('en-US', { minimumFractionDigits: 2 })}). Este monto es un balance inicial manual o de cargos eliminados.`}
+                          </span>
+                          {hasCardLedgerDrift && onRecalculateAccountBalance && (
+                            <button
+                              type="button"
+                              disabled={recalculatingId === b.id}
+                              onClick={async () => {
+                                setRecalculatingId(b.id);
+                                try {
+                                  await onRecalculateAccountBalance(b.id);
+                                } finally {
+                                  setRecalculatingId(null);
+                                }
+                              }}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-[#0071E3]/12 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] font-semibold shrink-0 transition disabled:opacity-50"
+                            >
+                              <RefreshCw className={`w-3 h-3 ${recalculatingId === b.id ? 'animate-spin' : ''}`} />
+                              Sync Balance ({currencySymbol}{cardLedgerNetDebt.toLocaleString('en-US', { minimumFractionDigits: 2 })})
+                            </button>
+                          )}
+                        </div>
+                      )}
+                      {usedBalance > 0 && cycleChargesTotal > 0 && hasCardLedgerDrift && onRecalculateAccountBalance && (
+                        <div className="flex items-center justify-between gap-2 text-[10px] text-[#86868B] pt-0.5">
+                          <span className="tabular-nums">
+                            Ledger Net Debt: {currencySymbol}{cardLedgerNetDebt.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={recalculatingId === b.id}
+                            onClick={async () => {
+                              setRecalculatingId(b.id);
+                              try {
+                                await onRecalculateAccountBalance(b.id);
+                              } finally {
+                                setRecalculatingId(null);
+                              }
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#0071E3]/10 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] font-semibold transition disabled:opacity-50"
+                          >
+                            <RefreshCw className={`w-2.5 h-2.5 ${recalculatingId === b.id ? 'animate-spin' : ''}`} />
+                            Sync Balance
+                          </button>
+                        </div>
                       )}
                     </div>
 
@@ -1473,6 +1706,8 @@ export default function BudgetsPage({
                     ? currentMonthLoanPaid
                     : isCreditCard && cycleInfo
                     ? cycleChargesTotal
+                    : isLiquidAccount
+                    ? directOutflows
                     : spent;
                   const progressPct = progressTarget > 0 ? Math.min(Math.round((progressCurrent / progressTarget) * 100), 100) : 0;
                   const isBarOver = !isLoan && progressTarget > 0 && progressCurrent > progressTarget;

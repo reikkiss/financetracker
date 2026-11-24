@@ -30,7 +30,8 @@ import {
   getActiveCreditCardCycleKey,
   getCreditCardCycleForMonth,
   getTransactionCreditCardCycleKey,
-  formatShortIsoDate
+  formatShortIsoDate,
+  getCleanTransactionDisplay
 } from '../utils/financeMath';
 
 export interface Transaction {
@@ -190,6 +191,7 @@ export default function DashboardPage({
     });
 
     transactions.forEach(t => {
+      if (t.emailOutcome === 'declined') return;
       if (t.status === 'pending') {
         flotantes += Number(t.amount) || 0;
         pCount += 1;
@@ -208,8 +210,8 @@ export default function DashboardPage({
   // 2. Filter transactions for feed
   const filteredFeed = useMemo(() => {
     return transactions.filter(t => {
-      if (feedStatusFilter === 'pending' && t.status !== 'pending') return false;
-      if (feedStatusFilter === 'cleared' && t.status === 'pending') return false;
+      if (feedStatusFilter === 'pending' && (t.status !== 'pending' || t.emailOutcome === 'declined')) return false;
+      if (feedStatusFilter === 'cleared' && (t.status === 'pending' || t.emailOutcome === 'declined')) return false;
       if (feedSearch.trim()) {
         const query = feedSearch.toLowerCase();
         const matchTitle = (t.title || '').toLowerCase().includes(query);
@@ -225,7 +227,7 @@ export default function DashboardPage({
   const categoryData = useMemo(() => {
     const map: Record<string, number> = {};
     transactions
-      .filter(t => t.type === 'expense' && !t.isTransfer)
+      .filter(t => t.emailOutcome !== 'declined' && t.type === 'expense' && !t.isTransfer)
       .forEach(t => {
         const cat = t.category || 'General';
         map[cat] = (map[cat] || 0) + (t.amount * fxMultiplier);
@@ -422,6 +424,7 @@ export default function DashboardPage({
                 ? transactions
                     .filter(
                       t =>
+                        t.emailOutcome !== 'declined' &&
                         t.type === 'expense' &&
                         !t.isTransfer &&
                         !t.isLoanPayment &&
@@ -429,6 +432,33 @@ export default function DashboardPage({
                           (t.category || '').toLowerCase() === (b.name || b.category || '').toLowerCase())
                     )
                     .reduce((s, t) => s + t.amount, 0)
+                : 0;
+
+              const isLiquid = isBank || isDebit;
+              const accountCatLower = (b.name || b.category || '').trim().toLowerCase();
+              const liquidInflows = isLiquid
+                ? transactions
+                    .filter(t => {
+                      if (t.emailOutcome === 'declined') return false;
+                      if (t.isTransfer) return t.transferToBudgetId === b.id;
+                      return (
+                        t.type === 'income' &&
+                        (t.budgetId === b.id || (!t.budgetId && (t.category || '').trim().toLowerCase() === accountCatLower))
+                      );
+                    })
+                    .reduce((s, t) => s + (Number(t.amount) || 0), 0)
+                : 0;
+              const liquidOutflows = isLiquid
+                ? transactions
+                    .filter(t => {
+                      if (t.emailOutcome === 'declined') return false;
+                      if (t.isTransfer) return t.budgetId === b.id;
+                      return (
+                        t.type === 'expense' &&
+                        (t.budgetId === b.id || (!t.budgetId && (t.category || '').trim().toLowerCase() === accountCatLower))
+                      );
+                    })
+                    .reduce((s, t) => s + (Number(t.amount) || 0), 0)
                 : 0;
 
               const cutoffDay = isCredit ? parseDayOfMonth(b.cutoffDate) : null;
@@ -447,10 +477,11 @@ export default function DashboardPage({
                 isCredit && cycleInfo
                   ? fullLedgerTransactions
                       .filter(t => {
+                        if (t.emailOutcome === 'declined') return false;
                         const belongs =
                           t.budgetId === b.id ||
                           (!t.budgetId &&
-                            (t.category || '').trim().toLowerCase() === (b.name || b.category || '').trim().toLowerCase());
+                            (t.category || '').trim().toLowerCase() === accountCatLower);
                         if (!belongs) return false;
                         const isCharge =
                           (!t.isTransfer && t.type === 'expense' && !t.isLoanPayment) ||
@@ -460,6 +491,35 @@ export default function DashboardPage({
                       })
                       .reduce((s, t) => s + (Number(t.amount) || 0), 0)
                   : 0;
+
+              let cardAllTimeNet = 0;
+              let cardAllTimeChargesCount = 0;
+              if (isCredit) {
+                let cCharges = 0;
+                let cPays = 0;
+                fullLedgerTransactions.forEach(t => {
+                  if (t.emailOutcome === 'declined') return;
+                  const amt = Math.abs(Number(t.amount) || 0);
+                  if (t.isTransfer) {
+                    if (t.budgetId === b.id) {
+                      cCharges += amt;
+                      cardAllTimeChargesCount += 1;
+                    }
+                    if (t.transferToBudgetId === b.id) cPays += amt;
+                  } else {
+                    const belongs =
+                      t.budgetId === b.id ||
+                      (!t.budgetId && (t.category || '').trim().toLowerCase() === accountCatLower);
+                    if (!belongs) return;
+                    if (t.isLoanPayment || t.type === 'income') cPays += amt;
+                    else {
+                      cCharges += amt;
+                      cardAllTimeChargesCount += 1;
+                    }
+                  }
+                });
+                cardAllTimeNet = Math.max(0, Number((cCharges - cPays).toFixed(2)));
+              }
 
               const utilization = isCredit && limit > 0
                 ? Math.min(100, Math.round((used / limit) * 100))
@@ -528,6 +588,15 @@ export default function DashboardPage({
                     <div className="text-2xl font-extrabold text-[#1D1D1F] dark:text-white tabular-nums tracking-tight">
                       {formatAmt(isCredit || isLoan ? used : isStandard ? standardSpent : Number(b.accountBalance) || 0)}
                     </div>
+                    {isLiquid && (
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#6E6E73] dark:text-zinc-300 tabular-nums pt-0.5">
+                        <span className="text-[#248A3D] dark:text-[#34C759]">+{formatAmt(liquidInflows)}</span>
+                        <span className="text-[#D70015] dark:text-[#FF3B30]">-{formatAmt(liquidOutflows)}</span>
+                        <span className="font-semibold text-[#1D1D1F] dark:text-white">
+                          Net {liquidInflows - liquidOutflows >= 0 ? '+' : '-'}{formatAmt(Math.abs(liquidInflows - liquidOutflows))}
+                        </span>
+                      </div>
+                    )}
                     {isCredit && cycleInfo && (
                       <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#6E6E73] dark:text-zinc-300 tabular-nums pt-0.5">
                         <span>
@@ -538,6 +607,13 @@ export default function DashboardPage({
                           {cycleInfo.dueDate ? ` • Pago ${formatShortIsoDate(cycleInfo.dueDate)}` : ''}
                         </span>
                       </div>
+                    )}
+                    {isCredit && used > 0 && cardCycleCharges === 0 && (
+                      <span className="text-[10px] text-[#86868B] block">
+                        {cardAllTimeChargesCount > 0 && cardAllTimeNet > 0
+                          ? 'Balance carried from prior cycles'
+                          : 'Opening balance (0 charges in ledger — sync in Budgets)'}
+                      </span>
                     )}
                     {(isCredit || isStandard) && limit > 0 && (
                       <div className="flex items-center justify-between text-[11px] text-[#86868B] tabular-nums pt-1">
@@ -867,6 +943,10 @@ export default function DashboardPage({
                 const isPending = t.status === 'pending';
                 const isIncome = t.type === 'income';
                 const matchedBudget = budgets.find(b => b.id === t.budgetId);
+                const transferToBudget = t.transferToBudgetId
+                  ? budgets.find(b => b.id === t.transferToBudgetId)
+                  : undefined;
+                const { displayTitle } = getCleanTransactionDisplay(t, matchedBudget, transferToBudget);
 
                 return (
                   <div
@@ -887,25 +967,32 @@ export default function DashboardPage({
 
                       <div className="min-w-0">
                         <div className="flex items-center gap-2">
-                          <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white truncate">{t.title}</h5>
+                          <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white truncate">{displayTitle}</h5>
                           {isPending && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
                               Flotante
                             </span>
                           )}
                         </div>
-                        <div className="text-xs text-[#86868B] flex items-center gap-2 mt-0.5">
+                        <div className="text-xs text-[#86868B] flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="tabular-nums">{t.date}</span>
                           <span>•</span>
                           <span>{t.category}</span>
-                          {matchedBudget && (
+                          {t.isTransfer && matchedBudget && transferToBudget ? (
+                            <>
+                              <span>•</span>
+                              <span className="text-[#0071E3] dark:text-[#5AC8FA] truncate max-w-[220px] font-medium">
+                                {matchedBudget.name || matchedBudget.category} → {transferToBudget.name || transferToBudget.category}
+                              </span>
+                            </>
+                          ) : matchedBudget ? (
                             <>
                               <span>•</span>
                               <span className="text-[#6E6E73] dark:text-zinc-300 truncate max-w-[140px]">
                                 {matchedBudget.name || matchedBudget.category}
                               </span>
                             </>
-                          )}
+                          ) : null}
                         </div>
                         {t.emailContext && (
                           <p className="text-[11px] text-[#6E6E73] dark:text-zinc-400 mt-0.5 truncate max-w-md">

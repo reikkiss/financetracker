@@ -23,7 +23,8 @@ import {
   getCreditCardCycleForMonth,
   getTransactionCreditCardCycleKey,
   shiftMonthKey,
-  formatShortIsoDate
+  formatShortIsoDate,
+  getCleanTransactionDisplay
 } from '../utils/financeMath';
 
 interface TransactionsPageProps {
@@ -399,17 +400,22 @@ export default function TransactionsPage({
                 const txCycleKey = cardBudget
                   ? getTransactionCreditCardCycleKey(t.date || '', cardCutoffDay, t.statementCycle)
                   : null;
+                const { displayTitle, displayNotes, isDebtPayment } = getCleanTransactionDisplay(
+                  t,
+                  linkedBudget,
+                  transferToBudget
+                );
                 return (
                   <tr key={t.id} className="hover:bg-[#F5F5F7]/75 dark:hover:bg-white/[0.03] transition group">
                     <td className="p-4 font-medium text-[#1D1D1F] dark:text-white">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span>{t.title}</span>
-                        {isTransfer && (
+                        <span>{displayTitle}</span>
+                        {isTransfer && !isDebtPayment && (
                           <span className="inline-flex items-center gap-1 bg-[#0071E3]/10 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <ArrowRightLeft className="w-2.5 h-2.5" /> Transfer
                           </span>
                         )}
-                        {t.isLoanPayment && !isTransfer && (
+                        {(t.isLoanPayment || (isTransfer && isDebtPayment)) && (
                           <span className="inline-flex items-center gap-1 bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <CheckCircle2 className="w-2.5 h-2.5" /> Payment
                           </span>
@@ -440,9 +446,9 @@ export default function TransactionsPage({
                           </span>
                         )}
                       </div>
-                      {(t.emailContext || t.notes) && (
+                      {(t.emailContext || displayNotes) && (
                         <span className="text-[11px] text-[#6E6E73] dark:text-[#86868B] block mt-0.5 line-clamp-2 max-w-md leading-snug">
-                          {t.emailContext || t.notes}
+                          {t.emailContext || displayNotes}
                         </span>
                       )}
                       {(typeof t.loanPrincipalPaid === 'number' || typeof t.loanInterestPaid === 'number') && (

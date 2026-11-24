@@ -1416,14 +1416,56 @@ export function findExistingTransactionForEmailAlert(
       return tx;
     }
 
-    // Compatible transaction direction (transfer alerts are stored as expense with isTransfer)
-    if (tx.type && tx.type !== expectedTxType) continue;
-
     const txAmt = Math.abs(Number(tx.amount) || 0);
     if (txAmt <= 0) continue;
 
     const dayDiff = getDayDifference(tx.date, alert.date);
     if (dayDiff > 4) continue;
+
+    // 2. Match against an already-recorded self-account transfer (either source or destination account)
+    if (tx.isTransfer) {
+      const amountDiff = Math.abs(txAmt - alertAmt);
+      const closeAmt = amountDiff <= Math.max(0.05, alertAmt * 0.01);
+      if (closeAmt) {
+        const matchesSource = Boolean(
+          alert.budgetId &&
+            tx.budgetId === alert.budgetId &&
+            (alert.type === 'expense' || alert.type === 'transfer')
+        );
+        const matchesDest = Boolean(
+          alert.budgetId &&
+            tx.transferToBudgetId === alert.budgetId &&
+            (alert.type === 'income' || alert.type === 'transfer' || tx.isLoanPayment)
+        );
+        const matchesUnassignedTransfer = Boolean(!alert.budgetId && alert.type === 'transfer');
+        if (matchesSource || matchesDest || matchesUnassignedTransfer) {
+          const transferScore = 95 - dayDiff * 5;
+          if (!bestMatch || transferScore > bestMatch.score) {
+            bestMatch = { tx, score: transferScore };
+          }
+          continue;
+        }
+      }
+    }
+
+    // 2b. Match against already-recorded card/loan payments (manual payments are saved as expense with isLoanPayment=true, while card confirmation emails may arrive as income)
+    const paymentKeywordRegex = /\b(?:pago\s*(?:de\s*)?tarjeta|pago\s*tc|card\s*payment|pago\s*(?:de\s*)?pr[eé]stamo|pago\s*recibido|abono|cuota)\b/i;
+    const alertLooksLikePayment = paymentKeywordRegex.test(`${alert.title || ''} ${alert.category || ''} ${alert.notes || ''}`);
+    if (tx.isLoanPayment && !tx.isTransfer) {
+      const amountDiff = Math.abs(txAmt - alertAmt);
+      const closeAmt = amountDiff <= Math.max(0.05, alertAmt * 0.01);
+      const sameAccount = Boolean(alert.budgetId && tx.budgetId && alert.budgetId === tx.budgetId);
+      if (closeAmt && (sameAccount || (alertLooksLikePayment && !alert.budgetId))) {
+        const payScore = 92 - dayDiff * 5 + (sameAccount ? 5 : 0);
+        if (!bestMatch || payScore > bestMatch.score) {
+          bestMatch = { tx, score: payScore };
+        }
+        continue;
+      }
+    }
+
+    // Compatible transaction direction (transfer alerts are stored as expense with isTransfer)
+    if (tx.type && tx.type !== expectedTxType) continue;
 
     const sameBudget = Boolean(alert.budgetId && tx.budgetId && alert.budgetId === tx.budgetId);
     const conflictingBudget = Boolean(alert.budgetId && tx.budgetId && alert.budgetId !== tx.budgetId);
@@ -1470,4 +1512,55 @@ export function findExistingTransactionForEmailAlert(
   }
 
   return bestMatch?.tx;
+}
+
+/**
+ * Finds an unlinked opposite-side transaction on a DIFFERENT user account with the same amount within ±3 days,
+ * so a self-account transfer or credit-card/loan payment detected on both sides merges into one record without duplication.
+ */
+export function findOppositeTransferCandidate(
+  existingTxs: any[],
+  incoming: { budgetId?: string; amount: number; date: string; type: 'income' | 'expense' | 'transfer'; title?: string; category?: string },
+  budgets?: Array<{ id: string; accountType?: string }>
+): any | undefined {
+  if (!incoming.budgetId) return undefined;
+  const amt = Math.abs(Number(incoming.amount) || 0);
+  if (amt <= 0) return undefined;
+
+  const isIncomingCredit = incoming.type === 'income';
+  const isIncomingDebitOrTransfer = incoming.type === 'expense' || incoming.type === 'transfer';
+  const transferKeywords = /\b(?:transfer|transferencia|ach|lbtr|pago\s+al\s+instante|pago\s*(?:de\s*)?tarjeta|pago\s*tc|card\s*payment|pago\s*(?:de\s*)?pr[eé]stamo|pago\s*recibido|pago\s*m[ií]nimo|pago\s*total|cuota|abono|deposit|dep[oó]sito|cr[eé]dito\s+recibido)\b/i;
+  const incomingText = `${incoming.title || ''} ${incoming.category || ''}`;
+  const incomingLooksTransfer = incoming.type === 'transfer' || transferKeywords.test(incomingText);
+  const incomingAccType = budgets?.find(b => b.id === incoming.budgetId)?.accountType;
+  const incomingIsDebtAcc = incomingAccType === 'credit_card' || incomingAccType === 'loan';
+
+  return existingTxs.find(tx => {
+    if (!tx || tx.emailOutcome === 'declined') return false;
+    if (!tx.budgetId || tx.budgetId === incoming.budgetId) return false;
+    if (tx.isTransfer && tx.transferToBudgetId) return false;
+
+    const txAmt = Math.abs(Number(tx.amount) || 0);
+    if (Math.abs(txAmt - amt) > Math.max(0.05, amt * 0.005)) return false;
+
+    const dayDiff = getDayDifference(tx.date, incoming.date);
+    if (dayDiff > 3) return false;
+
+    const txText = `${tx.title || ''} ${tx.category || ''} ${tx.notes || ''}`;
+    const txLooksTransfer = Boolean(tx.isTransfer) || Boolean(tx.isLoanPayment) || transferKeywords.test(txText);
+    if (!incomingLooksTransfer && !txLooksTransfer) return false;
+
+    const txAccType = budgets?.find(b => b.id === tx.budgetId)?.accountType;
+    const txIsDebtAcc = txAccType === 'credit_card' || txAccType === 'loan';
+
+    // Cross-account payment pairing: one side on liquid account, other side recorded as debt payment on card/loan
+    if ((tx.isLoanPayment || txIsDebtAcc || incomingIsDebtAcc) && (txIsDebtAcc !== incomingIsDebtAcc)) {
+      if (txIsDebtAcc && !incomingIsDebtAcc && isIncomingDebitOrTransfer) return true;
+      if (incomingIsDebtAcc && !txIsDebtAcc && tx.type === 'expense') return true;
+    }
+
+    if (isIncomingCredit && tx.type === 'expense') return true;
+    if (isIncomingDebitOrTransfer && tx.type === 'income') return true;
+    return false;
+  });
 }

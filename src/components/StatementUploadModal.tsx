@@ -30,9 +30,11 @@ export interface ExistingTransactionSummary {
   title: string;
   amount: number;
   date: string;
+  type?: 'income' | 'expense';
   budgetId?: string;
   transferToBudgetId?: string;
   isTransfer?: boolean;
+  isLoanPayment?: boolean;
 }
 
 export interface ImportedTransactionDraft {
@@ -99,16 +101,33 @@ function findMatchingTransferInDb(
   existingTransactions: ExistingTransactionSummary[],
   accountId: string,
   amount: number,
-  date: string
+  date: string,
+  rowTitle?: string,
+  rowIsLoanPayment?: boolean
 ): boolean {
   if (!accountId || amount <= 0) return false;
-  return existingTransactions.some(
-    et =>
-      Boolean(et.isTransfer) &&
-      (et.budgetId === accountId || et.transferToBudgetId === accountId) &&
-      Math.abs(Math.abs(Number(et.amount) || 0) - amount) < 0.01 &&
-      daysBetweenIso(et.date, date) <= 3
-  );
+  const paymentOrTransferRegex = /\b(?:transfer|transferencia|ach|lbtr|pago\s*(?:de\s*)?tarjeta|pago\s*tc|card\s*payment|pago\s*(?:de\s*)?pr[eé]stamo|pago\s*recibido|abono|cuota|deposit|dep[oó]sito)\b/i;
+  const rowLooksTransferOrPay = Boolean(rowIsLoanPayment) || paymentOrTransferRegex.test(rowTitle || '');
+
+  return existingTransactions.some(et => {
+    const closeAmt = Math.abs(Math.abs(Number(et.amount) || 0) - amount) <= Math.max(0.05, amount * 0.005);
+    if (!closeAmt || daysBetweenIso(et.date, date) > 3) return false;
+
+    if (Boolean(et.isTransfer) && (et.budgetId === accountId || et.transferToBudgetId === accountId)) {
+      return true;
+    }
+    if (Boolean(et.isLoanPayment) && et.budgetId === accountId) {
+      return true;
+    }
+    if (
+      et.budgetId &&
+      et.budgetId !== accountId &&
+      (rowLooksTransferOrPay || Boolean(et.isLoanPayment) || paymentOrTransferRegex.test(et.title || ''))
+    ) {
+      return true;
+    }
+    return false;
+  });
 }
 
 function parseCsvLine(line: string, delimiter: string): string[] {
@@ -438,7 +457,16 @@ export default function StatementUploadModal({
         if (isExactDup) {
           existingCounts.set(key, remaining - 1);
         }
-        const isMatchedTransfer = !isExactDup && findMatchingTransferInDb(existingTransactions, activeBudgetId, amount, date);
+        const isMatchedTransfer =
+          !isExactDup &&
+          findMatchingTransferInDb(
+            existingTransactions,
+            activeBudgetId,
+            amount,
+            date,
+            title,
+            Boolean(t.isLoanPayment)
+          );
         const isDuplicate = isExactDup || isMatchedTransfer;
         return {
           tempId: `draft_${Date.now()}_${idx}`,
@@ -509,10 +537,19 @@ export default function StatementUploadModal({
       setSelectedCycleKey('');
     }
     setDrafts(prev => {
-      const existingKeys = new Set(existingTransactions.map(et => makeTxDedupKey(et.title, et.amount, et.date)));
+      const existingCounts = new Map<string, number>();
+      existingTransactions.forEach(et => {
+        const k = makeTxDedupKey(et.title, et.amount, et.date);
+        existingCounts.set(k, (existingCounts.get(k) || 0) + 1);
+      });
       return prev.map(d => {
-        const isExactDup = existingKeys.has(makeTxDedupKey(d.title, d.amount, d.date));
-        const isMatchedTransfer = !isExactDup && findMatchingTransferInDb(existingTransactions, budgetId, d.amount, d.date);
+        const k = makeTxDedupKey(d.title, d.amount, d.date);
+        const rem = existingCounts.get(k) || 0;
+        const isExactDup = rem > 0;
+        if (isExactDup) existingCounts.set(k, rem - 1);
+        const isMatchedTransfer =
+          !isExactDup &&
+          findMatchingTransferInDb(existingTransactions, budgetId, d.amount, d.date, d.title, d.isLoanPayment);
         const nextDup = isExactDup || isMatchedTransfer;
         return {
           ...d,
@@ -1023,7 +1060,7 @@ export default function StatementUploadModal({
                                 : 'Exact match already exists in database'
                             }
                           >
-                            {row.isMatchedTransfer ? 'Transfer in DB' : 'Duplicate'}
+                            {row.isMatchedTransfer ? 'Transfer / Payment in DB' : 'Duplicate'}
                           </span>
                         )}
                       </div>

@@ -524,4 +524,64 @@ export function getRecentCreditCardCycles(
   return list;
 }
 
+export interface CleanTransactionDisplay {
+  displayTitle: string;
+  displayNotes: string;
+  isDebtPayment: boolean;
+}
+
+/**
+ * Strips auto-generated redundant phrasing (e.g. "Transfer: A -> B", "Payment: Card",
+ * "Internal transfer from A to B") when account badges already show From -> To.
+ */
+export function getCleanTransactionDisplay(
+  tx: {
+    title?: string;
+    notes?: string;
+    emailContext?: string;
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+  },
+  fromAccount?: { accountType?: string; name?: string; category?: string } | null,
+  toAccount?: { accountType?: string; name?: string; category?: string } | null
+): CleanTransactionDisplay {
+  const rawTitle = (tx.title || '').trim();
+  const rawNotes = (tx.notes || '').trim();
+  const isDebtPayment = Boolean(
+    tx.isLoanPayment || toAccount?.accountType === 'credit_card' || toAccount?.accountType === 'loan'
+  );
+  const debtLabel =
+    toAccount?.accountType === 'loan' || fromAccount?.accountType === 'loan'
+      ? 'Loan Payment'
+      : 'Card Payment';
+
+  const redundantTransferTitle = /^(?:transfer\s*:|payment\s*[:-]|pago\s*(?:de\s*)?(?:tarjeta|pr[eé]stamo)\s*[:-]|internal\s+transfer\b|self\s+transfer$)/i;
+  const redundantPaymentTitle = /^(?:payment\s*[:-]|pago\s*(?:de\s*)?(?:tarjeta|pr[eé]stamo)\s*[:-])/i;
+
+  let displayTitle = rawTitle;
+  if (tx.isTransfer) {
+    if (!rawTitle || redundantTransferTitle.test(rawTitle)) {
+      displayTitle = isDebtPayment ? debtLabel : 'Self Transfer';
+    }
+  } else if (tx.isLoanPayment) {
+    if (!rawTitle || redundantPaymentTitle.test(rawTitle)) {
+      displayTitle = debtLabel;
+    }
+  }
+
+  const normalizedNotes = rawNotes.toLowerCase();
+  const isRedundantNote =
+    !rawNotes ||
+    /^internal\s+transfer\s+from\s+/i.test(rawNotes) ||
+    normalizedNotes === rawTitle.toLowerCase() ||
+    normalizedNotes === displayTitle.toLowerCase() ||
+    (tx.emailContext ? normalizedNotes === tx.emailContext.trim().toLowerCase() : false);
+
+  return {
+    displayTitle: displayTitle || 'Transaction',
+    displayNotes: isRedundantNote ? '' : rawNotes,
+    isDebtPayment
+  };
+}
+
 

@@ -26,6 +26,7 @@ import {
   getApiBaseUrl,
   getApiUrl,
   isLikelyStaticHost,
+  isPrivateAiStudioDevUrl,
   setSavedApiBaseUrl
 } from '../utils/apiConfig';
 import { parseEmailFilesToAlerts } from '../utils/emlParser';
@@ -107,10 +108,11 @@ export default function EmailSyncModal({
   const [isTestingICloud, setIsTestingICloud] = useState(false);
   const [isSyncingICloud, setIsSyncingICloud] = useState(false);
   const [iCloudStatus, setICloudStatus] = useState<{ ok: boolean; msg: string } | null>(null);
-  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('connected');
-  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl() || 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app');
+  const [backendStatus, setBackendStatus] = useState<'checking' | 'connected' | 'unavailable'>('checking');
+  const [backendUrlInput, setBackendUrlInput] = useState(() => getApiBaseUrl() || '');
   const [showBackendConfig, setShowBackendConfig] = useState(false);
   const [isImportingEml, setIsImportingEml] = useState(false);
+  const [isDraggingEml, setIsDraggingEml] = useState(false);
   const emlFileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Gmail UI state
@@ -142,12 +144,22 @@ export default function EmailSyncModal({
 
   useEffect(() => {
     if (!isOpen) return;
-    setBackendStatus('connected');
+    const configuredBase = getApiBaseUrl();
+    setBackendUrlInput(configuredBase);
+    if (isLikelyStaticHost() && !configuredBase) {
+      setBackendStatus('unavailable');
+      setShowBackendConfig(true);
+      return;
+    }
+    setBackendStatus('checking');
     let cancelled = false;
-    checkBackendHealth().then(res => {
+    checkBackendHealth(configuredBase).then(res => {
       if (cancelled) return;
       if (res.available && res.imapSupported) {
         setBackendStatus('connected');
+      } else {
+        setBackendStatus('unavailable');
+        setShowBackendConfig(true);
       }
     });
     return () => {
@@ -245,10 +257,21 @@ export default function EmailSyncModal({
   };
 
   const handleSaveBackendUrl = async () => {
-    let targetUrl = backendUrlInput.trim();
-    if (/mail\.me\.com|gmail\.com|smtp|imap|outlook|yahoo/i.test(targetUrl)) {
-      targetUrl = 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app';
-      setBackendUrlInput(targetUrl);
+    const targetUrl = backendUrlInput.trim();
+    if (/mail\.me\.com|gmail\.com|smtp|outlook|yahoo/i.test(targetUrl)) {
+      setICloudStatus({
+        ok: false,
+        msg: 'Enter your deployed Node server URL (e.g. https://your-finance-api.onrender.com or http://localhost:3000), not an email provider host.'
+      });
+      return;
+    }
+    if (isPrivateAiStudioDevUrl(targetUrl) && isLikelyStaticHost()) {
+      setBackendStatus('unavailable');
+      setICloudStatus({
+        ok: false,
+        msg: 'AI Studio dev preview URLs (ais-dev-*) require login cookies and cannot accept cross-origin requests from GitHub Pages. Deploy server.ts to a public host (Render, Railway, Cloud Run) or use Import .eml/.mbox / Gmail Auto-Sync.'
+      });
+      return;
     }
     const normalized = setSavedApiBaseUrl(targetUrl);
     setBackendUrlInput(normalized);
@@ -260,10 +283,11 @@ export default function EmailSyncModal({
       setShowBackendConfig(false);
       setICloudStatus({
         ok: true,
-        msg: 'Connected directly to Cloud Run backend server! You can now test or scan your iCloud IMAP mail.'
+        msg: 'Connected to IMAP backend server! You can now test or scan your iCloud Mail.'
       });
     } else {
       setBackendStatus('unavailable');
+      setShowBackendConfig(true);
       setICloudStatus({
         ok: false,
         msg: res.reason || 'Could not reach backend server.'
@@ -303,6 +327,15 @@ export default function EmailSyncModal({
       setICloudStatus({ ok: false, msg: 'Please enter your iCloud email and App-Specific Password.' });
       return;
     }
+    if (isLikelyStaticHost() && !getApiBaseUrl()) {
+      setBackendStatus('unavailable');
+      setShowBackendConfig(true);
+      setICloudStatus({
+        ok: false,
+        msg: 'Live IMAP requires a public Node server URL on GitHub Pages. Connect your Server URL above, forward iCloud alerts to Gmail, or drag & drop .eml/.mbox files below.'
+      });
+      return;
+    }
     setIsTestingICloud(true);
     setICloudStatus(null);
     try {
@@ -327,8 +360,13 @@ export default function EmailSyncModal({
       });
     } catch (err: any) {
       const rawMsg = err?.message || '';
-      const msg = /failed to fetch|networkerror|cors|preflight/i.test(rawMsg)
-        ? 'Direct IMAP connection is blocked on GitHub Pages static hosting due to browser security/CORS. Please use "Import .eml/.mbox" below or Gmail Auto-Sync.'
+      const isNetworkOrCors = /failed to fetch|networkerror|cors|preflight/i.test(rawMsg);
+      if (isNetworkOrCors) {
+        setBackendStatus('unavailable');
+        setShowBackendConfig(true);
+      }
+      const msg = isNetworkOrCors
+        ? 'Could not reach live IMAP backend (blocked by CORS/network on static hosting). Enter a public Node Server URL above, forward iCloud alerts to Gmail, or import .eml/.mbox files below.'
         : rawMsg;
       setICloudStatus({ ok: false, msg });
     } finally {
@@ -339,6 +377,15 @@ export default function EmailSyncModal({
   const handleSyncICloud = async () => {
     if (!iCloudEmail.trim() || !iCloudPassword.trim()) {
       setICloudStatus({ ok: false, msg: 'Please enter your iCloud email and App-Specific Password.' });
+      return;
+    }
+    if (isLikelyStaticHost() && !getApiBaseUrl()) {
+      setBackendStatus('unavailable');
+      setShowBackendConfig(true);
+      setICloudStatus({
+        ok: false,
+        msg: 'Live IMAP requires a public Node server URL on GitHub Pages. Connect your Server URL above, forward iCloud alerts to Gmail, or drag & drop .eml/.mbox files below.'
+      });
       return;
     }
     setIsSyncingICloud(true);
@@ -372,8 +419,13 @@ export default function EmailSyncModal({
       });
     } catch (err: any) {
       const rawMsg = err?.message || '';
-      const msg = /failed to fetch|networkerror|cors|preflight/i.test(rawMsg)
-        ? 'Direct IMAP connection is blocked on GitHub Pages static hosting due to browser security/CORS. Please use "Import .eml/.mbox" below or Gmail Auto-Sync.'
+      const isNetworkOrCors = /failed to fetch|networkerror|cors|preflight/i.test(rawMsg);
+      if (isNetworkOrCors) {
+        setBackendStatus('unavailable');
+        setShowBackendConfig(true);
+      }
+      const msg = isNetworkOrCors
+        ? 'Could not reach live IMAP backend (blocked by CORS/network on static hosting). Enter a public Node Server URL above, forward iCloud alerts to Gmail, or import .eml/.mbox files below.'
         : rawMsg;
       setICloudStatus({ ok: false, msg });
     } finally {
@@ -711,11 +763,15 @@ export default function EmailSyncModal({
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25">
                       IMAP Bridge Ready
                     </span>
-                  ) : backendStatus === 'unavailable' ? (
+                  ) : backendStatus === 'checking' ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-black/[0.06] dark:bg-white/10 text-[#6E6E73] dark:text-zinc-300">
+                      Checking Server...
+                    </span>
+                  ) : (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
                       Static Host Mode
                     </span>
-                  ) : null}
+                  )}
                 </div>
                 <p className="text-[11px] text-[#86868B] mt-0.5">
                   Direct encrypted connection to <code className="text-[#0071E3] dark:text-blue-400">imap.mail.me.com</code> via backend server, or import <code className="text-[#0071E3] dark:text-blue-400">.eml / .mbox</code> files directly.
@@ -893,13 +949,31 @@ export default function EmailSyncModal({
             </div>
 
             {/* Direct Apple Mail / iCloud .eml & .mbox File Import (works 100% client-side with zero backend) */}
-            <div className="bg-white dark:bg-[#1C1C1E] border border-dashed border-black/[0.12] dark:border-white/15 rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div
+              onDragOver={e => {
+                e.preventDefault();
+                setIsDraggingEml(true);
+              }}
+              onDragLeave={() => setIsDraggingEml(false)}
+              onDrop={e => {
+                e.preventDefault();
+                setIsDraggingEml(false);
+                if (e.dataTransfer.files?.length) {
+                  handleImportEmlFiles(e.dataTransfer.files);
+                }
+              }}
+              className={`bg-white dark:bg-[#1C1C1E] border border-dashed rounded-2xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition ${
+                isDraggingEml
+                  ? 'border-[#0071E3] bg-[#0071E3]/5'
+                  : 'border-black/[0.12] dark:border-white/15'
+              }`}
+            >
               <div>
                 <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white">
                   Direct Apple Mail / iCloud File Import (.eml, .mbox)
                 </div>
                 <p className="text-[11px] text-[#86868B] mt-0.5">
-                  Works offline & on GitHub Pages without a server — select or drop saved bank alert emails.
+                  Works offline & on GitHub Pages without a server — select or drop saved bank alert emails here.
                 </p>
               </div>
               <input

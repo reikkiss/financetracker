@@ -1,5 +1,4 @@
 const API_BASE_STORAGE_KEY = 'finance_api_base_url';
-const DEFAULT_CLOUD_RUN_BACKEND = 'https://ais-dev-i3b3rzi3lz4mo7gzph232m-709789172815.us-east1.run.app';
 
 function normalizeBaseUrl(raw?: string | null): string {
   if (!raw) return '';
@@ -11,6 +10,25 @@ function normalizeBaseUrl(raw?: string | null): string {
   return trimmed;
 }
 
+export function isPrivateAiStudioDevUrl(url?: string | null): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(normalizeBaseUrl(url));
+    return /^ais-dev-/i.test(parsed.hostname);
+  } catch {
+    return /^https?:\/\/ais-dev-/i.test(url.trim());
+  }
+}
+
+function isCrossOriginUrl(url: string): boolean {
+  if (typeof window === 'undefined' || !url) return false;
+  try {
+    return new URL(normalizeBaseUrl(url)).hostname !== window.location.hostname;
+  } catch {
+    return false;
+  }
+}
+
 export function getEnvApiBaseUrl(): string {
   return normalizeBaseUrl((import.meta as any).env?.VITE_API_BASE_URL || '');
 }
@@ -18,7 +36,12 @@ export function getEnvApiBaseUrl(): string {
 export function getSavedApiBaseUrl(): string {
   if (typeof window === 'undefined') return '';
   try {
-    return normalizeBaseUrl(window.localStorage.getItem(API_BASE_STORAGE_KEY));
+    const saved = normalizeBaseUrl(window.localStorage.getItem(API_BASE_STORAGE_KEY));
+    if (saved && isPrivateAiStudioDevUrl(saved) && isCrossOriginUrl(saved)) {
+      window.localStorage.removeItem(API_BASE_STORAGE_KEY);
+      return '';
+    }
+    return saved;
   } catch {
     return '';
   }
@@ -45,9 +68,6 @@ export function getApiBaseUrl(): string {
   if (saved) return saved;
   const env = getEnvApiBaseUrl();
   if (env) return env;
-  if (isLikelyStaticHost()) {
-    return DEFAULT_CLOUD_RUN_BACKEND;
-  }
   return '';
 }
 
@@ -73,6 +93,25 @@ export async function checkBackendHealth(overrideBaseUrl?: string): Promise<{
   reason?: string;
 }> {
   const base = overrideBaseUrl !== undefined ? normalizeBaseUrl(overrideBaseUrl) : getApiBaseUrl();
+
+  if (base && isPrivateAiStudioDevUrl(base) && isCrossOriginUrl(base)) {
+    return {
+      available: false,
+      imapSupported: false,
+      reason:
+        'AI Studio dev preview URLs (ais-dev-*) require browser session login cookies and block cross-origin CORS requests from static sites like GitHub Pages. Point Server URL to a public Node backend or use Import .eml/.mbox / Gmail Auto-Sync.'
+    };
+  }
+
+  if (!base && isLikelyStaticHost()) {
+    return {
+      available: false,
+      imapSupported: false,
+      reason:
+        'Static hosting (GitHub Pages) does not run a Node IMAP server. Connect a public Server URL or use Import .eml/.mbox / Gmail Auto-Sync.'
+    };
+  }
+
   const healthUrl = base ? `${base}/api/health` : '/api/health';
 
   try {
