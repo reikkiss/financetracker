@@ -33,6 +33,8 @@ interface AddBudgetModalProps {
     items?: BudgetItem[];
     extraExpenses?: number;
     color: string;
+    cutoffDate?: string;
+    dueDate?: string;
   }) => Promise<void>;
 }
 
@@ -54,6 +56,8 @@ export default function AddBudgetModal({
   const [accountBalance, setAccountBalance] = useState('');
   const [apr, setApr] = useState('');
   const [overdraftPercentage, setOverdraftPercentage] = useState('');
+  const [cutoffDate, setCutoffDate] = useState('');
+  const [dueDate, setDueDate] = useState('');
   const [loanTermMonths, setLoanTermMonths] = useState('12');
   const [loanStartDate, setLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [loanCalcMethod, setLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
@@ -164,7 +168,9 @@ export default function AddBudgetModal({
         loanQuotas: computedLoanQuotas,
         items: accountType === 'standard' ? items : undefined,
         extraExpenses: accountType === 'standard' && extraExpenses ? parseFloat(extraExpenses) : undefined,
-        color
+        color,
+        cutoffDate: accountType === 'credit_card' ? cutoffDate.trim() || undefined : undefined,
+        dueDate: accountType === 'credit_card' ? dueDate.trim() || undefined : undefined
       });
       onClose();
     } catch (err) {
@@ -343,6 +349,29 @@ export default function AddBudgetModal({
                         value={apr}
                         onChange={e => setApr(e.target.value)}
                         className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <div>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Corte (Cutoff Date)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 15 de cada mes"
+                        value={cutoffDate}
+                        onChange={e => setCutoffDate(e.target.value)}
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Pago (Due Date)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 5 del siguiente mes"
+                        value={dueDate}
+                        onChange={e => setDueDate(e.target.value)}
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
                       />
                     </div>
                   </div>

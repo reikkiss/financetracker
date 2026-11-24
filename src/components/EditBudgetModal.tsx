@@ -37,6 +37,8 @@ export default function EditBudgetModal({
   const [accountBalance, setAccountBalance] = useState('');
   const [apr, setApr] = useState('');
   const [overdraftPercentage, setOverdraftPercentage] = useState('');
+  const [cutoffDate, setCutoffDate] = useState('');
+  const [dueDate, setDueDate] = useState('');
   const [loanTermMonths, setLoanTermMonths] = useState('12');
   const [loanStartDate, setLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [loanCalcMethod, setLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
@@ -83,6 +85,8 @@ export default function EditBudgetModal({
       setItemName('');
       setItemAmount('');
       setColor(budget.color || colors[0] || '#10b981');
+      setCutoffDate(budget.cutoffDate || '');
+      setDueDate(budget.dueDate || '');
     }
   }, [budget, availableCategories, colors]);
 
@@ -197,7 +201,9 @@ export default function EditBudgetModal({
         loanQuotas: computedLoanQuotas,
         items: accountType === 'standard' ? items : [],
         extraExpenses: accountType === 'standard' ? (parseFloat(extraExpenses) || 0) : 0,
-        color
+        color,
+        cutoffDate: accountType === 'credit_card' ? cutoffDate.trim() || undefined : undefined,
+        dueDate: accountType === 'credit_card' ? dueDate.trim() || undefined : undefined
       });
       onClose();
     } catch (err) {
@@ -358,6 +364,29 @@ export default function EditBudgetModal({
                   <p className="text-[10px] text-[#86868B] tabular-nums">
                     Used Balance ({currencySymbol}{(budget.actualUsedAmount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}) updates automatically from transactions and payments.
                   </p>
+
+                  <div className="grid grid-cols-2 gap-2.5 pt-1">
+                    <div>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Corte (Cutoff Date)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 15 de cada mes"
+                        value={cutoffDate}
+                        onChange={e => setCutoffDate(e.target.value)}
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Pago (Due Date)</label>
+                      <input
+                        type="text"
+                        placeholder="e.g. 5 del siguiente mes"
+                        value={dueDate}
+                        onChange={e => setDueDate(e.target.value)}
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                      />
+                    </div>
+                  </div>
                 </div>
 
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-center justify-between text-xs">

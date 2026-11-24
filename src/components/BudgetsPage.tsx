@@ -56,6 +56,9 @@ export interface Budget {
   loanRatePeriod?: LoanRatePeriod;
   monthlyQuota?: number;
   loanQuotas?: LoanQuota[];
+  cutoffDate?: string;
+  dueDate?: string;
+  order?: number;
 }
 
 interface BudgetsPageProps {
@@ -77,6 +80,7 @@ interface BudgetsPageProps {
   ) => Promise<void>;
   onDeleteLoanQuota?: (budgetId: string, quotaId: string) => Promise<void>;
   onGenerateLoanQuotas?: (budgetId: string) => Promise<void>;
+  onReorderBudget?: (budgetId: string, direction: 'up' | 'down') => void;
 }
 
 export default function BudgetsPage({
@@ -94,7 +98,8 @@ export default function BudgetsPage({
   onReconcileLoanPayments,
   onAddLoanQuota,
   onDeleteLoanQuota,
-  onGenerateLoanQuotas
+  onGenerateLoanQuotas,
+  onReorderBudget
 }: BudgetsPageProps) {
   const [expandedLoans, setExpandedLoans] = useState<Record<string, boolean>>({});
   const [addingQuotaLoanId, setAddingQuotaLoanId] = useState<string | null>(null);
@@ -484,6 +489,26 @@ export default function BudgetsPage({
                       <Pencil className="w-3.5 h-3.5 text-[#0071E3]" />
                       <span>Edit</span>
                     </button>
+                    {onReorderBudget && (
+                      <div className="flex items-center gap-0.5 bg-[#F2F2F7] dark:bg-[#282828] rounded-full p-0.5">
+                        <button
+                          onClick={() => onReorderBudget(b.id, 'up')}
+                          disabled={budgets.indexOf(b) === 0}
+                          className="px-1.5 py-0.5 text-[10px] text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white disabled:opacity-30 transition"
+                          title="Move Up"
+                        >
+                          ▲
+                        </button>
+                        <button
+                          onClick={() => onReorderBudget(b.id, 'down')}
+                          disabled={budgets.indexOf(b) === budgets.length - 1}
+                          className="px-1.5 py-0.5 text-[10px] text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white disabled:opacity-30 transition"
+                          title="Move Down"
+                        >
+                          ▼
+                        </button>
+                      </div>
+                    )}
                     <button
                       onClick={() => onDeleteBudget(b.id)}
                       className="p-1.5 hover:bg-[#F2F2F7] dark:hover:bg-[#333] rounded-full text-[#86868B] hover:text-[#D70015] dark:hover:text-rose-400 transition"
@@ -590,6 +615,13 @@ export default function BudgetsPage({
                       <div className="text-[11px] text-[#248A3D] dark:text-emerald-400 pt-1 flex items-center justify-between tabular-nums">
                         <span>Total Payments / Abonos recorded:</span>
                         <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+
+                    {(b.cutoffDate || b.dueDate) && (
+                      <div className="flex items-center justify-between text-[11px] text-[#86868B] pt-2 border-t border-black/[0.05] dark:border-[#262626] tabular-nums">
+                        {b.cutoffDate && <span>Fecha de Corte: <strong className="text-[#1D1D1F] dark:text-white">{b.cutoffDate}</strong></span>}
+                        {b.dueDate && <span>Fecha de Pago: <strong className="text-[#1D1D1F] dark:text-white">{b.dueDate}</strong></span>}
                       </div>
                     )}
                   </div>

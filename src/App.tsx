@@ -1720,6 +1720,30 @@ export default function App() {
     }
   };
 
+  const handleReorderBudget = async (budgetId: string, direction: 'up' | 'down') => {
+    const index = budgets.findIndex(b => b.id === budgetId);
+    if (index === -1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= budgets.length) return;
+
+    const newBudgets = [...budgets];
+    const temp = newBudgets[index];
+    newBudgets[index] = newBudgets[targetIndex];
+    newBudgets[targetIndex] = temp;
+
+    const updatedWithOrder = newBudgets.map((b, idx) => ({ ...b, order: idx }));
+    setBudgets(updatedWithOrder);
+
+    for (let i = 0; i < updatedWithOrder.length; i++) {
+      const b = updatedWithOrder[i];
+      try {
+        await setDoc(doc(db, 'budgets', b.id), stripUndefined(b));
+      } catch (err) {
+        console.error('Failed to update budget order:', err);
+      }
+    }
+  };
+
   const handleAskAi = async () => {
     if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
     setAiLoading(true);
@@ -2130,6 +2154,7 @@ export default function App() {
               onAddLoanQuota={handleAddLoanQuota}
               onDeleteLoanQuota={handleDeleteLoanQuota}
               onGenerateLoanQuotas={handleGenerateLoanQuotas}
+              onReorderBudget={handleReorderBudget}
             />
           )}
 
