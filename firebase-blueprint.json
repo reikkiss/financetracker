@@ -37,7 +37,8 @@
         "status": { "type": "string", "maxLength": 20 },
         "emailId": { "type": "string", "maxLength": 100 },
         "emailOutcome": { "type": "string", "maxLength": 20 },
-        "emailContext": { "type": "string", "maxLength": 240 }
+        "emailContext": { "type": "string", "maxLength": 240 },
+        "statementCycle": { "type": "string", "maxLength": 20 }
       }
     },
     "Budget": {
@@ -62,7 +63,10 @@
         "loanRatePeriod": { "type": "string", "maxLength": 20 },
         "monthlyQuota": { "type": "number" },
         "loanQuotas": { "type": "array" },
-        "accountBalance": { "type": "number" }
+        "accountBalance": { "type": "number" },
+        "cutoffDate": { "type": "string", "maxLength": 40 },
+        "dueDate": { "type": "string", "maxLength": 40 },
+        "order": { "type": "number" }
       }
     },
     "Goal": {

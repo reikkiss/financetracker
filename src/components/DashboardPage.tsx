@@ -24,6 +24,14 @@ import {
 } from 'recharts';
 import { Budget } from './BudgetsPage';
 import TransactionDetailDrawer from './TransactionDetailDrawer';
+import {
+  calculateCreditCardMonthlyLimit,
+  parseDayOfMonth,
+  getActiveCreditCardCycleKey,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  formatShortIsoDate
+} from '../utils/financeMath';
 
 export interface Transaction {
   id: string;
@@ -45,10 +53,12 @@ export interface Transaction {
   emailId?: string;
   emailOutcome?: 'approved' | 'declined' | 'reversed';
   emailContext?: string;
+  statementCycle?: string;
 }
 
 interface DashboardPageProps {
   transactions: Transaction[];
+  allTransactions?: Transaction[];
   budgets?: Budget[];
   chartMode: 'Expense' | 'Income' | 'Cashflow';
   setChartMode: (mode: 'Expense' | 'Income' | 'Cashflow') => void;
@@ -108,6 +118,7 @@ function CustomChartTooltip({ active, payload, label, displaySymbol }: any) {
 
 export default function DashboardPage({
   transactions,
+  allTransactions,
   budgets = [],
   chartMode,
   setChartMode,
@@ -122,8 +133,10 @@ export default function DashboardPage({
   onOpenAddBudget,
   onOpenEmailSync,
   onOpenUploadStatement,
-  onNavigateBudgets
+  onNavigateBudgets,
+  selectedMonth
 }: DashboardPageProps) {
+  const fullLedgerTransactions = allTransactions || transactions;
   const [currencySegment, setCurrencySegment] = useState<'All' | 'DOP' | 'USD'>('All');
   const [selectedTxForDetail, setSelectedTxForDetail] = useState<Transaction | null>(null);
   const [feedStatusFilter, setFeedStatusFilter] = useState<'all' | 'pending' | 'cleared'>('all');
@@ -397,7 +410,13 @@ export default function DashboardPage({
               const isDebit = b.accountType === 'debit_account';
               const isStandard = !isCredit && !isLoan && !isBank && !isDebit;
 
-              const limit = Number(b.creditLimit || b.limit || 0);
+              const baseLimit = Number(b.creditLimit || b.limit || 0);
+              const ccCalc = isCredit
+                ? calculateCreditCardMonthlyLimit(baseLimit, b.overdraftPercentage || 0)
+                : null;
+              const limit = isCredit
+                ? (ccCalc && ccCalc.monthlyLimit > 0 ? ccCalc.monthlyLimit : baseLimit)
+                : baseLimit;
               const used = Number(b.actualUsedAmount) || 0;
               const standardSpent = isStandard
                 ? transactions
@@ -411,6 +430,36 @@ export default function DashboardPage({
                     )
                     .reduce((s, t) => s + t.amount, 0)
                 : 0;
+
+              const cutoffDay = isCredit ? parseDayOfMonth(b.cutoffDate) : null;
+              const dueDay = isCredit ? parseDayOfMonth(b.dueDate) : null;
+              const cycleKey =
+                isCredit && cutoffDay
+                  ? selectedMonth && selectedMonth !== 'All' && /^\d{4}-\d{2}$/.test(selectedMonth)
+                    ? selectedMonth
+                    : getActiveCreditCardCycleKey(cutoffDay)
+                  : '';
+              const cycleInfo =
+                isCredit && cutoffDay && cycleKey
+                  ? getCreditCardCycleForMonth(cutoffDay, dueDay, cycleKey)
+                  : null;
+              const cardCycleCharges =
+                isCredit && cycleInfo
+                  ? fullLedgerTransactions
+                      .filter(t => {
+                        const belongs =
+                          t.budgetId === b.id ||
+                          (!t.budgetId &&
+                            (t.category || '').trim().toLowerCase() === (b.name || b.category || '').trim().toLowerCase());
+                        if (!belongs) return false;
+                        const isCharge =
+                          (!t.isTransfer && t.type === 'expense' && !t.isLoanPayment) ||
+                          (Boolean(t.isTransfer) && t.budgetId === b.id);
+                        if (!isCharge) return false;
+                        return getTransactionCreditCardCycleKey(t.date, cutoffDay, t.statementCycle) === cycleInfo.cycleKey;
+                      })
+                      .reduce((s, t) => s + (Number(t.amount) || 0), 0)
+                  : 0;
 
               const utilization = isCredit && limit > 0
                 ? Math.min(100, Math.round((used / limit) * 100))
@@ -479,6 +528,17 @@ export default function DashboardPage({
                     <div className="text-2xl font-extrabold text-[#1D1D1F] dark:text-white tabular-nums tracking-tight">
                       {formatAmt(isCredit || isLoan ? used : isStandard ? standardSpent : Number(b.accountBalance) || 0)}
                     </div>
+                    {isCredit && cycleInfo && (
+                      <div className="flex flex-wrap items-center justify-between gap-1 text-[11px] text-[#6E6E73] dark:text-zinc-300 tabular-nums pt-0.5">
+                        <span>
+                          Ciclo {cycleInfo.periodLabel}: <strong className="text-[#1D1D1F] dark:text-white">{formatAmt(cardCycleCharges)}</strong>
+                        </span>
+                        <span className="text-[10px] text-[#B25000] dark:text-[#FF9F0A] font-medium">
+                          Corte {formatShortIsoDate(cycleInfo.cutoffDate)}
+                          {cycleInfo.dueDate ? ` • Pago ${formatShortIsoDate(cycleInfo.dueDate)}` : ''}
+                        </span>
+                      </div>
+                    )}
                     {(isCredit || isStandard) && limit > 0 && (
                       <div className="flex items-center justify-between text-[11px] text-[#86868B] tabular-nums pt-1">
                         <span>Limit: {formatAmt(limit)}</span>

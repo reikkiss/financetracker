@@ -13,9 +13,18 @@ import {
   Mail,
   Filter,
   BookmarkCheck,
-  RotateCcw
+  RotateCcw,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
+import {
+  parseDayOfMonth,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  shiftMonthKey,
+  formatShortIsoDate
+} from '../utils/financeMath';
 
 interface TransactionsPageProps {
   transactions: any[];
@@ -55,6 +64,8 @@ export default function TransactionsPage({
 }: TransactionsPageProps) {
   const currentActualMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState<string>(() => selectedMonth || localStorage.getItem('saved_tx_filter_month') || currentActualMonth);
+  const [filterBudgetId, setFilterBudgetId] = useState<string>(() => localStorage.getItem('saved_tx_filter_budget') || 'All');
+  const [useCycleFilter, setUseCycleFilter] = useState<boolean>(true);
   const [filterCategory, setFilterCategory] = useState<string>(() => localStorage.getItem('saved_tx_filter_cat') || 'All');
   const [filterType, setFilterType] = useState<string>(() => localStorage.getItem('saved_tx_filter_type') || 'All');
   const [filterStatus, setFilterStatus] = useState<string>(() => localStorage.getItem('saved_tx_filter_status') || 'All');
@@ -81,6 +92,26 @@ export default function TransactionsPage({
     return map;
   }, [budgets]);
 
+  const selectedFilterBudget = useMemo(
+    () => (filterBudgetId !== 'All' ? budgetById[filterBudgetId] : undefined),
+    [filterBudgetId, budgetById]
+  );
+
+  const selectedCardCutoffDay = useMemo(
+    () => (selectedFilterBudget?.accountType === 'credit_card' ? parseDayOfMonth(selectedFilterBudget.cutoffDate) : null),
+    [selectedFilterBudget]
+  );
+
+  const selectedCardDueDay = useMemo(
+    () => (selectedFilterBudget?.accountType === 'credit_card' ? parseDayOfMonth(selectedFilterBudget.dueDate) : null),
+    [selectedFilterBudget]
+  );
+
+  const activeCycleInfo = useMemo(() => {
+    if (!selectedCardCutoffDay || !useCycleFilter || filterMonth === 'All') return null;
+    return getCreditCardCycleForMonth(selectedCardCutoffDay, selectedCardDueDay, filterMonth);
+  }, [selectedCardCutoffDay, selectedCardDueDay, useCycleFilter, filterMonth]);
+
   const categoriesList = useMemo(() => {
     const set = new Set<string>();
     transactions.forEach(t => { if (t.category) set.add(t.category); });
@@ -89,7 +120,17 @@ export default function TransactionsPage({
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter(t => {
-      if (filterMonth !== 'All' && t.date && !t.date.startsWith(filterMonth)) return false;
+      if (filterBudgetId !== 'All') {
+        if (t.budgetId !== filterBudgetId && t.transferToBudgetId !== filterBudgetId) return false;
+      }
+      if (filterMonth !== 'All') {
+        if (selectedCardCutoffDay && useCycleFilter) {
+          const txCycle = getTransactionCreditCardCycleKey(t.date || '', selectedCardCutoffDay, t.statementCycle);
+          if (txCycle !== filterMonth) return false;
+        } else if (t.date && !t.date.startsWith(filterMonth)) {
+          return false;
+        }
+      }
       if (filterCategory !== 'All' && t.category !== filterCategory) return false;
       if (filterType !== 'All') {
         if (filterType === 'transfer' && !t.isTransfer) return false;
@@ -102,10 +143,11 @@ export default function TransactionsPage({
       }
       return true;
     });
-  }, [transactions, filterMonth, filterCategory, filterType, filterStatus]);
+  }, [transactions, filterBudgetId, filterMonth, selectedCardCutoffDay, useCycleFilter, filterCategory, filterType, filterStatus]);
 
   const handleSaveFilters = () => {
     localStorage.setItem('saved_tx_filter_month', filterMonth);
+    localStorage.setItem('saved_tx_filter_budget', filterBudgetId);
     localStorage.setItem('saved_tx_filter_cat', filterCategory);
     localStorage.setItem('saved_tx_filter_type', filterType);
     localStorage.setItem('saved_tx_filter_status', filterStatus);
@@ -118,10 +160,13 @@ export default function TransactionsPage({
 
   const handleResetFilters = () => {
     handleMonthChange(currentActualMonth);
+    setFilterBudgetId('All');
+    setUseCycleFilter(true);
     setFilterCategory('All');
     setFilterType('All');
     setFilterStatus('All');
     localStorage.removeItem('saved_tx_filter_month');
+    localStorage.removeItem('saved_tx_filter_budget');
     localStorage.removeItem('saved_tx_filter_cat');
     localStorage.removeItem('saved_tx_filter_type');
     localStorage.removeItem('saved_tx_filter_status');
@@ -194,9 +239,11 @@ export default function TransactionsPage({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 text-xs">
           <div>
-            <label className="text-[10px] text-[#86868B] uppercase tracking-wider font-semibold block mb-1">Month</label>
+            <label className="text-[10px] text-[#86868B] uppercase tracking-wider font-semibold block mb-1">
+              {selectedCardCutoffDay && useCycleFilter && filterMonth !== 'All' ? 'Billing Cycle' : 'Month'}
+            </label>
             <input
               type="month"
               value={filterMonth === 'All' ? currentActualMonth : filterMonth}
@@ -210,6 +257,22 @@ export default function TransactionsPage({
             >
               {filterMonth === 'All' ? 'Switch to Current Month' : 'View All Months'}
             </button>
+          </div>
+
+          <div>
+            <label className="text-[10px] text-[#86868B] uppercase tracking-wider font-semibold block mb-1">Account / Card</label>
+            <select
+              value={filterBudgetId}
+              onChange={e => setFilterBudgetId(e.target.value)}
+              className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-1.5 text-xs text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+            >
+              <option value="All" className="bg-white dark:bg-[#1C1C1E]">All Accounts & Cards</option>
+              {budgets.map(b => (
+                <option key={b.id} value={b.id} className="bg-white dark:bg-[#1C1C1E]">
+                  {b.name || b.category}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
@@ -253,6 +316,51 @@ export default function TransactionsPage({
             </select>
           </div>
         </div>
+
+        {selectedCardCutoffDay && (
+          <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-black/[0.05] dark:border-white/10 text-[11px]">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setUseCycleFilter(v => !v)}
+                className={`px-2.5 py-1 rounded-full font-semibold transition border ${
+                  useCycleFilter
+                    ? 'bg-[#0071E3]/12 text-[#0071E3] dark:text-[#5AC8FA] border-[#0071E3]/30'
+                    : 'bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#86868B] border-transparent'
+                }`}
+              >
+                {useCycleFilter ? 'Filtrando por Ciclo de Corte' : 'Mes Calendario (Click para Ciclo)'}
+              </button>
+              {activeCycleInfo && (
+                <span className="text-[#1D1D1F] dark:text-zinc-200 font-medium tabular-nums">
+                  Ciclo <strong className="text-[#0071E3] dark:text-[#5AC8FA]">{activeCycleInfo.label}</strong>: {activeCycleInfo.periodLabel}
+                  {' • '}Corte {formatShortIsoDate(activeCycleInfo.cutoffDate)}
+                  {activeCycleInfo.dueDate ? ` • Pago ${formatShortIsoDate(activeCycleInfo.dueDate)}` : ''}
+                </span>
+              )}
+            </div>
+            {useCycleFilter && filterMonth !== 'All' && (
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => handleMonthChange(shiftMonthKey(filterMonth, -1))}
+                  className="p-1 rounded-full bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#1D1D1F] dark:text-white hover:bg-[#E5E5EA] dark:hover:bg-white/15 transition"
+                  title="Ciclo anterior"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleMonthChange(shiftMonthKey(filterMonth, 1))}
+                  className="p-1 rounded-full bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#1D1D1F] dark:text-white hover:bg-[#E5E5EA] dark:hover:bg-white/15 transition"
+                  title="Siguiente ciclo"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Grouped Inset Ledger */}
@@ -281,6 +389,16 @@ export default function TransactionsPage({
                 const linkedBudget = t.budgetId ? budgetById[t.budgetId] : undefined;
                 const transferToBudget = t.transferToBudgetId ? budgetById[t.transferToBudgetId] : undefined;
                 const isTransfer = Boolean(t.isTransfer);
+                const cardBudget =
+                  linkedBudget?.accountType === 'credit_card'
+                    ? linkedBudget
+                    : transferToBudget?.accountType === 'credit_card'
+                    ? transferToBudget
+                    : undefined;
+                const cardCutoffDay = cardBudget ? parseDayOfMonth(cardBudget.cutoffDate) : null;
+                const txCycleKey = cardBudget
+                  ? getTransactionCreditCardCycleKey(t.date || '', cardCutoffDay, t.statementCycle)
+                  : null;
                 return (
                   <tr key={t.id} className="hover:bg-[#F5F5F7]/75 dark:hover:bg-white/[0.03] transition group">
                     <td className="p-4 font-medium text-[#1D1D1F] dark:text-white">
@@ -294,6 +412,11 @@ export default function TransactionsPage({
                         {t.isLoanPayment && !isTransfer && (
                           <span className="inline-flex items-center gap-1 bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <CheckCircle2 className="w-2.5 h-2.5" /> Payment
+                          </span>
+                        )}
+                        {txCycleKey && (
+                          <span className="inline-flex items-center gap-1 bg-black/[0.04] dark:bg-white/10 text-[#6E6E73] dark:text-zinc-300 px-2 py-0.5 rounded-full text-[10px] font-medium tabular-nums">
+                            Ciclo {txCycleKey}
                           </span>
                         )}
                         {t.status === 'pending' && (

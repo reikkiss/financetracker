@@ -17,6 +17,14 @@ import {
 import { Budget } from './BudgetsPage';
 import { parsePdfStatementLocally, PdfPasswordError } from '../utils/pdfStatementParser';
 import { getApiUrl } from '../utils/apiConfig';
+import {
+  parseDayOfMonth,
+  getActiveCreditCardCycleKey,
+  getCreditCardCycleForMonth,
+  getRecentCreditCardCycles,
+  getTransactionCreditCardCycleKey,
+  formatShortIsoDate
+} from '../utils/financeMath';
 
 export interface ExistingTransactionSummary {
   title: string;
@@ -42,6 +50,27 @@ export interface ImportedTransactionDraft {
   isLoanPayment?: boolean;
   isTransfer?: boolean;
   transferToBudgetId?: string;
+  statementCycle?: string;
+}
+
+function inferMajorityCycleKey(rows: { date: string }[], cutoffDay: number): string {
+  if (!rows || rows.length === 0) {
+    return getActiveCreditCardCycleKey(cutoffDay);
+  }
+  const counts = new Map<string, number>();
+  rows.forEach(r => {
+    const key = getTransactionCreditCardCycleKey(r.date, cutoffDay);
+    counts.set(key, (counts.get(key) || 0) + 1);
+  });
+  let bestKey = getActiveCreditCardCycleKey(cutoffDay);
+  let bestCount = -1;
+  counts.forEach((cnt, key) => {
+    if (cnt > bestCount) {
+      bestCount = cnt;
+      bestKey = key;
+    }
+  });
+  return bestKey;
 }
 
 function getAccountTypeLabel(accountType?: Budget['accountType']): string {
@@ -240,6 +269,7 @@ export default function StatementUploadModal({
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [detectedInfo, setDetectedInfo] = useState<{ accountName: string; period: string } | null>(null);
   const [drafts, setDrafts] = useState<ImportedTransactionDraft[]>([]);
+  const [selectedCycleKey, setSelectedCycleKey] = useState<string>('');
 
   if (!isOpen) return null;
 
@@ -248,6 +278,7 @@ export default function StatementUploadModal({
     setDefaultBudgetId('');
     latestBudgetIdRef.current = '';
     setDrafts([]);
+    setSelectedCycleKey('');
     setErrorMsg(null);
     setIsPasswordRequired(false);
     setPdfPassword('');
@@ -433,6 +464,12 @@ export default function StatementUploadModal({
       });
       setDrafts(extracted);
 
+      const activeBudgetObj = budgets.find(b => b.id === activeBudgetId);
+      const activeCutoffDay = activeBudgetObj?.accountType === 'credit_card' ? parseDayOfMonth(activeBudgetObj.cutoffDate) : null;
+      if (activeCutoffDay) {
+        setSelectedCycleKey(inferMajorityCycleKey(extracted, activeCutoffDay));
+      }
+
       if (extracted.length === 0) {
         setErrorMsg('No transactions were found in this statement. Please try another file.');
       }
@@ -464,6 +501,13 @@ export default function StatementUploadModal({
     setDefaultBudgetId(budgetId);
     latestBudgetIdRef.current = budgetId;
     setErrorMsg(null);
+    const targetObj = budgets.find(b => b.id === budgetId);
+    const targetCutoffDay = targetObj?.accountType === 'credit_card' ? parseDayOfMonth(targetObj.cutoffDate) : null;
+    if (targetCutoffDay) {
+      setSelectedCycleKey(inferMajorityCycleKey(drafts, targetCutoffDay));
+    } else {
+      setSelectedCycleKey('');
+    }
     setDrafts(prev => {
       const existingKeys = new Set(existingTransactions.map(et => makeTxDedupKey(et.title, et.amount, et.date)));
       return prev.map(d => {
@@ -516,6 +560,9 @@ export default function StatementUploadModal({
     setIsImporting(true);
     setErrorMsg(null);
     try {
+      const isCreditCardTarget = selectedBudgetObj?.accountType === 'credit_card';
+      const cycleToAttach = isCreditCardTarget && selectedCycleKey ? selectedCycleKey : undefined;
+
       const normalizedRows = selectedDrafts.map(row => {
         const baseBudgetId = row.budgetId || defaultBudgetId;
         if (row.isTransfer && row.transferToBudgetId && baseBudgetId && row.transferToBudgetId !== baseBudgetId) {
@@ -525,17 +572,20 @@ export default function StatementUploadModal({
               ...row,
               type: 'expense' as const,
               budgetId: row.transferToBudgetId,
-              transferToBudgetId: baseBudgetId
+              transferToBudgetId: baseBudgetId,
+              ...(cycleToAttach ? { statementCycle: cycleToAttach } : {})
             };
           }
           return {
             ...row,
-            budgetId: baseBudgetId
+            budgetId: baseBudgetId,
+            ...(cycleToAttach ? { statementCycle: cycleToAttach } : {})
           };
         }
         return {
           ...row,
-          budgetId: baseBudgetId
+          budgetId: baseBudgetId,
+          ...(cycleToAttach ? { statementCycle: cycleToAttach } : {})
         };
       });
       await onImportTransactions(normalizedRows);
@@ -553,6 +603,21 @@ export default function StatementUploadModal({
   ).sort((a, b) => a.localeCompare(b));
 
   const selectedBudgetObj = budgets.find(b => b.id === defaultBudgetId);
+  const selectedCardCutoffDay = selectedBudgetObj?.accountType === 'credit_card' ? parseDayOfMonth(selectedBudgetObj.cutoffDate) : null;
+  const selectedCardDueDay = selectedBudgetObj?.accountType === 'credit_card' ? parseDayOfMonth(selectedBudgetObj.dueDate) : null;
+  const availableCycleOptions = selectedCardCutoffDay
+    ? getRecentCreditCardCycles(
+        selectedCardCutoffDay,
+        selectedCardDueDay,
+        selectedCycleKey || getActiveCreditCardCycleKey(selectedCardCutoffDay),
+        12,
+        2
+      )
+    : [];
+  const activeStatementCycleInfo =
+    selectedCardCutoffDay && selectedCycleKey
+      ? getCreditCardCycleForMonth(selectedCardCutoffDay, selectedCardDueDay, selectedCycleKey)
+      : null;
 
   return (
     <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
@@ -633,6 +698,42 @@ export default function StatementUploadModal({
                     ? `All imported transactions will be added to ${selectedBudgetObj.name || selectedBudgetObj.category}.`
                     : 'Choose the Bank, Debit, Credit Card, Loan, or Budget account to receive all extracted transactions.'}
                 </p>
+
+                {selectedBudgetObj?.accountType === 'credit_card' && (
+                  <div className="pt-1.5 border-t border-black/[0.06] dark:border-white/10 space-y-1.5">
+                    {selectedCardCutoffDay ? (
+                      <>
+                        <label className="text-[10px] font-semibold text-[#86868B] uppercase tracking-wider block">
+                          Ciclo del Estado (Corte día {selectedCardCutoffDay})
+                        </label>
+                        <select
+                          value={selectedCycleKey}
+                          onChange={e => setSelectedCycleKey(e.target.value)}
+                          className="w-full bg-white dark:bg-[#1C1C1E] border border-[#0071E3]/40 rounded-xl px-2.5 py-1.5 text-[11px] font-medium text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                        >
+                          <option value="">Auto por fecha de cada cargo</option>
+                          {availableCycleOptions.map(c => (
+                            <option key={c.cycleKey} value={c.cycleKey}>
+                              {c.label} ({c.periodLabel})
+                            </option>
+                          ))}
+                        </select>
+                        {activeStatementCycleInfo && (
+                          <p className="text-[10px] text-[#0071E3] dark:text-[#5AC8FA] tabular-nums leading-snug">
+                            Corte: {formatShortIsoDate(activeStatementCycleInfo.cutoffDate)}
+                            {activeStatementCycleInfo.dueDate
+                              ? ` • Pago límite: ${formatShortIsoDate(activeStatementCycleInfo.dueDate)}`
+                              : ''}
+                          </p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-[10px] text-[#B25000] dark:text-amber-300 leading-snug">
+                        Configura el Día de Corte en esta tarjeta para asociar el estado de cuenta a un ciclo exacto.
+                      </p>
+                    )}
+                  </div>
+                )}
               </>
             )}
           </div>

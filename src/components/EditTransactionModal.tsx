@@ -2,6 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import { Transaction } from '../App';
+import {
+  parseDayOfMonth,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  getRecentCreditCardCycles
+} from '../utils/financeMath';
 
 interface EditTransactionModalProps {
   tx: Transaction | null;
@@ -39,6 +45,7 @@ export default function EditTransactionModal({
   const [isTransfer, setIsTransfer] = useState(false);
   const [transferToBudgetId, setTransferToBudgetId] = useState('');
   const [status, setStatus] = useState<'pending' | 'cleared'>('cleared');
+  const [statementCycle, setStatementCycle] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -54,6 +61,7 @@ export default function EditTransactionModal({
       setIsTransfer(Boolean(tx.isTransfer));
       setTransferToBudgetId(tx.transferToBudgetId || '');
       setStatus(tx.status || 'cleared');
+      setStatementCycle(tx.statementCycle || '');
     }
   }, [tx, availableCategories]);
 
@@ -77,6 +85,7 @@ export default function EditTransactionModal({
         isLoanPayment: isLoanPayment || undefined,
         isTransfer: isTransfer || undefined,
         transferToBudgetId: isTransfer ? transferToBudgetId || undefined : undefined,
+        statementCycle: cardBudget ? statementCycle : '',
         status
       });
       onClose();
@@ -88,6 +97,21 @@ export default function EditTransactionModal({
   };
 
   const selectedBudget = budgets.find(b => b.id === budgetId);
+  const transferTargetBudget = isTransfer ? budgets.find(b => b.id === transferToBudgetId) : undefined;
+  const cardBudget =
+    selectedBudget?.accountType === 'credit_card'
+      ? selectedBudget
+      : transferTargetBudget?.accountType === 'credit_card'
+      ? transferTargetBudget
+      : undefined;
+  const cardCutoffDay = cardBudget ? parseDayOfMonth(cardBudget.cutoffDate) : null;
+  const cardDueDay = cardBudget ? parseDayOfMonth(cardBudget.dueDate) : null;
+  const autoCycleKey = cardCutoffDay ? getTransactionCreditCardCycleKey(date, cardCutoffDay) : null;
+  const autoCycleInfo =
+    cardCutoffDay && autoCycleKey ? getCreditCardCycleForMonth(cardCutoffDay, cardDueDay, autoCycleKey) : null;
+  const recentCycles = cardCutoffDay
+    ? getRecentCreditCardCycles(cardCutoffDay, cardDueDay, statementCycle || autoCycleKey || undefined, 8, 2)
+    : [];
 
   return (
     <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
@@ -266,6 +290,28 @@ export default function EditTransactionModal({
                     Payment / Abono to {selectedBudget.name || selectedBudget.category} (Reduces balance used)
                   </span>
                 </label>
+              )}
+
+              {cardBudget && cardCutoffDay && autoCycleInfo && (
+                <div className="pt-2 border-t border-black/[0.06] dark:border-white/10 space-y-1">
+                  <label className="text-[10px] font-semibold text-[#86868B] uppercase tracking-wider block">
+                    Statement Cycle / Ciclo (Corte día {cardCutoffDay})
+                  </label>
+                  <select
+                    value={statementCycle}
+                    onChange={e => setStatementCycle(e.target.value)}
+                    className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  >
+                    <option value="">
+                      Auto por fecha: {autoCycleInfo.label} ({autoCycleInfo.periodLabel})
+                    </option>
+                    {recentCycles.map(c => (
+                      <option key={c.cycleKey} value={c.cycleKey}>
+                        Ciclo {c.label} ({c.periodLabel})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
             </div>
           )}

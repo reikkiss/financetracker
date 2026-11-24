@@ -306,3 +306,222 @@ export function reverseLoanPaymentOnQuotas(
   });
 }
 
+// ============================================================================
+// Credit Card Billing Cycle Engine
+// ============================================================================
+
+export interface CreditCardCycleInfo {
+  cycleKey: string; // YYYY-MM (cutoff month)
+  startDate: string; // YYYY-MM-DD
+  cutoffDate: string; // YYYY-MM-DD
+  dueDate: string | null; // YYYY-MM-DD
+  cutoffDay: number;
+  dueDay: number | null;
+  label: string; // e.g. "Nov 2026"
+  periodLabel: string; // e.g. "Oct 16 – Nov 15"
+  daysUntilCutoff: number;
+  daysUntilDue: number | null;
+  status: 'open' | 'closed' | 'upcoming';
+  isPastDue: boolean;
+}
+
+export function getTodayIsoLocal(referenceDate: Date = new Date()): string {
+  const y = referenceDate.getFullYear();
+  const m = String(referenceDate.getMonth() + 1).padStart(2, '0');
+  const d = String(referenceDate.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+export function parseDayOfMonth(value?: string | number | null): number | null {
+  if (typeof value === 'number') {
+    const n = Math.floor(value);
+    return n >= 1 && n <= 31 ? n : null;
+  }
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (isoMatch) {
+    const day = Number(isoMatch[3]);
+    return day >= 1 && day <= 31 ? day : null;
+  }
+
+  const slashMatch = raw.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+  if (slashMatch) {
+    const p1 = Number(slashMatch[1]);
+    const p2 = Number(slashMatch[2]);
+    const day = p1 > 12 ? p1 : p2 > 12 ? p2 : p1;
+    return day >= 1 && day <= 31 ? day : null;
+  }
+
+  const numMatch = raw.match(/\b([1-9]|[12]\d|3[01])\b/);
+  if (numMatch) {
+    const day = Number(numMatch[1]);
+    return day >= 1 && day <= 31 ? day : null;
+  }
+
+  return null;
+}
+
+export function buildClampedIsoDate(year: number, monthIndex0: number, day: number): string {
+  const anchor = new Date(year, monthIndex0, 1);
+  const y = anchor.getFullYear();
+  const m0 = anchor.getMonth();
+  const daysInMonth = new Date(y, m0 + 1, 0).getDate();
+  const clampedDay = Math.min(Math.max(1, Math.floor(day)), daysInMonth);
+  return `${y}-${String(m0 + 1).padStart(2, '0')}-${String(clampedDay).padStart(2, '0')}`;
+}
+
+export function addDaysToIsoDate(isoDate: string, days: number): string {
+  const parts = (isoDate || '').slice(0, 10).split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) {
+    return getTodayIsoLocal();
+  }
+  const d = new Date(parts[0], parts[1] - 1, parts[2] + days);
+  return getTodayIsoLocal(d);
+}
+
+export function shiftMonthKey(monthKey: string, deltaMonths: number): string {
+  const parts = (monthKey || '').slice(0, 7).split('-').map(Number);
+  const now = new Date();
+  const y = parts.length === 2 && !isNaN(parts[0]) ? parts[0] : now.getFullYear();
+  const m0 = parts.length === 2 && !isNaN(parts[1]) ? parts[1] - 1 : now.getMonth();
+  const shifted = new Date(y, m0 + deltaMonths, 1);
+  return `${shifted.getFullYear()}-${String(shifted.getMonth() + 1).padStart(2, '0')}`;
+}
+
+export function diffDaysIso(fromIso: string, toIso: string): number {
+  const p1 = (fromIso || '').slice(0, 10).split('-').map(Number);
+  const p2 = (toIso || '').slice(0, 10).split('-').map(Number);
+  if (p1.length !== 3 || p2.length !== 3 || p1.some(isNaN) || p2.some(isNaN)) return 0;
+  const t1 = Date.UTC(p1[0], p1[1] - 1, p1[2]);
+  const t2 = Date.UTC(p2[0], p2[1] - 1, p2[2]);
+  return Math.round((t2 - t1) / (1000 * 60 * 60 * 24));
+}
+
+export function formatShortIsoDate(isoDate?: string | null): string {
+  if (!isoDate) return '';
+  const parts = isoDate.slice(0, 10).split('-').map(Number);
+  if (parts.length !== 3 || parts.some(isNaN)) return isoDate;
+  const d = new Date(parts[0], parts[1] - 1, parts[2]);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+export function formatMonthKeyLabel(monthKey: string): string {
+  const parts = (monthKey || '').slice(0, 7).split('-').map(Number);
+  if (parts.length !== 2 || parts.some(isNaN)) return monthKey;
+  const d = new Date(parts[0], parts[1] - 1, 1);
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+export function getCreditCardCycleForMonth(
+  cutoffDay: number,
+  dueDay: number | null,
+  cycleMonthKey: string,
+  referenceDate: Date = new Date()
+): CreditCardCycleInfo {
+  const cleanCutoffDay = Math.min(31, Math.max(1, Math.floor(cutoffDay)));
+  const cleanDueDay = dueDay !== null ? Math.min(31, Math.max(1, Math.floor(dueDay))) : null;
+
+  const parts = (cycleMonthKey || '').slice(0, 7).split('-').map(Number);
+  const y = parts.length === 2 && !isNaN(parts[0]) ? parts[0] : referenceDate.getFullYear();
+  const m0 = parts.length === 2 && !isNaN(parts[1]) ? parts[1] - 1 : referenceDate.getMonth();
+  const normalizedKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
+
+  const cutoffDate = buildClampedIsoDate(y, m0, cleanCutoffDay);
+  const prevCutoffDate = buildClampedIsoDate(y, m0 - 1, cleanCutoffDay);
+  const startDate = addDaysToIsoDate(prevCutoffDate, 1);
+
+  let dueDate: string | null = null;
+  if (cleanDueDay !== null) {
+    // If due day is on or before cutoff day (e.g. cutoff 15, due 5), payment is due the month AFTER cutoff.
+    // If due day is strictly after cutoff day (e.g. cutoff 5, due 25), payment is due the SAME month as cutoff.
+    dueDate =
+      cleanDueDay <= cleanCutoffDay
+        ? buildClampedIsoDate(y, m0 + 1, cleanDueDay)
+        : buildClampedIsoDate(y, m0, cleanDueDay);
+  }
+
+  const todayIso = getTodayIsoLocal(referenceDate);
+  const daysUntilCutoff = diffDaysIso(todayIso, cutoffDate);
+  const daysUntilDue = dueDate ? diffDaysIso(todayIso, dueDate) : null;
+
+  let status: CreditCardCycleInfo['status'] = 'open';
+  if (todayIso < startDate) {
+    status = 'upcoming';
+  } else if (todayIso > cutoffDate) {
+    status = 'closed';
+  }
+
+  return {
+    cycleKey: normalizedKey,
+    startDate,
+    cutoffDate,
+    dueDate,
+    cutoffDay: cleanCutoffDay,
+    dueDay: cleanDueDay,
+    label: formatMonthKeyLabel(normalizedKey),
+    periodLabel: `${formatShortIsoDate(startDate)} – ${formatShortIsoDate(cutoffDate)}`,
+    daysUntilCutoff,
+    daysUntilDue,
+    status,
+    isPastDue: Boolean(dueDate && todayIso > dueDate)
+  };
+}
+
+export function getActiveCreditCardCycleKey(cutoffDay: number, referenceDate: Date = new Date()): string {
+  const cleanCutoffDay = Math.min(31, Math.max(1, Math.floor(cutoffDay)));
+  const y = referenceDate.getFullYear();
+  const m0 = referenceDate.getMonth();
+  const todayIso = getTodayIsoLocal(referenceDate);
+  const thisMonthKey = `${y}-${String(m0 + 1).padStart(2, '0')}`;
+  const cutoffThisMonth = buildClampedIsoDate(y, m0, cleanCutoffDay);
+
+  return todayIso <= cutoffThisMonth ? thisMonthKey : shiftMonthKey(thisMonthKey, 1);
+}
+
+export function getTransactionCreditCardCycleKey(
+  txDate: string,
+  cutoffDay: number | null,
+  explicitCycle?: string | null
+): string {
+  if (explicitCycle && /^\d{4}-\d{2}$/.test(explicitCycle.trim())) {
+    return explicitCycle.trim();
+  }
+  const cleanDate = (txDate || '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(cleanDate)) {
+    return getTodayIsoLocal().slice(0, 7);
+  }
+  if (!cutoffDay || cutoffDay < 1 || cutoffDay > 31) {
+    return cleanDate.slice(0, 7);
+  }
+
+  const [y, m] = cleanDate.split('-').map(Number);
+  const monthKey = `${y}-${String(m).padStart(2, '0')}`;
+  const cutoffInTxMonth = buildClampedIsoDate(y, m - 1, cutoffDay);
+
+  return cleanDate <= cutoffInTxMonth ? monthKey : shiftMonthKey(monthKey, 1);
+}
+
+export function getRecentCreditCardCycles(
+  cutoffDay: number,
+  dueDay: number | null,
+  centerMonthKey?: string,
+  pastCount = 8,
+  futureCount = 2,
+  referenceDate: Date = new Date()
+): CreditCardCycleInfo[] {
+  const baseKey =
+    centerMonthKey && /^\d{4}-\d{2}$/.test(centerMonthKey)
+      ? centerMonthKey
+      : getActiveCreditCardCycleKey(cutoffDay, referenceDate);
+
+  const list: CreditCardCycleInfo[] = [];
+  for (let offset = futureCount; offset >= -pastCount; offset--) {
+    const key = shiftMonthKey(baseKey, offset);
+    list.push(getCreditCardCycleForMonth(cutoffDay, dueDay, key, referenceDate));
+  }
+  return list;
+}
+
+

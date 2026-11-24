@@ -10,6 +10,12 @@ import {
 } from 'lucide-react';
 import { Transaction } from '../App';
 import { Budget } from './BudgetsPage';
+import {
+  parseDayOfMonth,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  formatShortIsoDate
+} from '../utils/financeMath';
 
 interface TransactionDetailDrawerProps {
   tx: Transaction | null;
@@ -32,6 +38,17 @@ export default function TransactionDetailDrawer({
 
   const linkedBudget = budgets.find(b => b.id === tx.budgetId);
   const transferToBudget = tx.transferToBudgetId ? budgets.find(b => b.id === tx.transferToBudgetId) : null;
+  const cardBudget =
+    linkedBudget?.accountType === 'credit_card'
+      ? linkedBudget
+      : transferToBudget?.accountType === 'credit_card'
+      ? transferToBudget
+      : null;
+  const cardCutoffDay = cardBudget ? parseDayOfMonth(cardBudget.cutoffDate) : null;
+  const cardDueDay = cardBudget ? parseDayOfMonth(cardBudget.dueDate) : null;
+  const cardCycleKey = cardBudget ? getTransactionCreditCardCycleKey(tx.date, cardCutoffDay, tx.statementCycle) : null;
+  const cardCycleInfo =
+    cardCutoffDay && cardCycleKey ? getCreditCardCycleForMonth(cardCutoffDay, cardDueDay, cardCycleKey) : null;
   const isPending = tx.status === 'pending';
   const isIncome = tx.type === 'income';
 
@@ -127,6 +144,28 @@ export default function TransactionDetailDrawer({
                   <span className="font-medium text-[#1D1D1F] dark:text-white">
                     {transferToBudget.name || transferToBudget.category}
                   </span>
+                </div>
+              </>
+            )}
+
+            {cardBudget && cardCycleKey && (
+              <>
+                <div className="h-[0.5px] bg-black/[0.06] dark:bg-white/10" />
+                <div className="flex items-start justify-between text-xs gap-2">
+                  <span className="text-[#86868B] flex items-center gap-1.5 shrink-0">
+                    <Calendar className="w-3.5 h-3.5 text-[#FF9F0A]" /> Statement Cycle
+                  </span>
+                  <div className="text-right tabular-nums">
+                    <span className="font-semibold text-[#1D1D1F] dark:text-white block">
+                      {cardCycleInfo ? `Ciclo ${cardCycleInfo.label}` : `Ciclo ${cardCycleKey}`}
+                    </span>
+                    {cardCycleInfo && (
+                      <span className="text-[11px] text-[#86868B] block">
+                        {cardCycleInfo.periodLabel}
+                        {cardCycleInfo.dueDate ? ` • Pago ${formatShortIsoDate(cardCycleInfo.dueDate)}` : ''}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </>
             )}

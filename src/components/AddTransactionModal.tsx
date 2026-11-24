@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Budget } from './BudgetsPage';
+import {
+  parseDayOfMonth,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  getRecentCreditCardCycles
+} from '../utils/financeMath';
 
 interface AddTransactionModalProps {
   isOpen: boolean;
@@ -23,6 +29,7 @@ interface AddTransactionModalProps {
     notes?: string;
     budgetId?: string;
     isLoanPayment?: boolean;
+    statementCycle?: string;
   }) => Promise<void>;
 }
 
@@ -56,6 +63,7 @@ export default function AddTransactionModal({
   const [notes, setNotes] = useState('');
   const [budgetId, setBudgetId] = useState(prefillBudgetId || '');
   const [isLoanPayment, setIsLoanPayment] = useState(Boolean(prefillIsLoanPayment));
+  const [statementCycle, setStatementCycle] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -64,6 +72,7 @@ export default function AddTransactionModal({
       setDate(prefillDate || new Date().toISOString().split('T')[0]);
       setBudgetId(prefillBudgetId || '');
       setIsLoanPayment(Boolean(prefillIsLoanPayment));
+      setStatementCycle('');
       setTitle(prefillTitle || '');
       setAmount('');
       setNotes('');
@@ -88,7 +97,8 @@ export default function AddTransactionModal({
         date: date || new Date().toISOString().split('T')[0],
         notes: notes.trim() || undefined,
         budgetId: budgetId || undefined,
-        isLoanPayment: isLoanPayment || undefined
+        isLoanPayment: isLoanPayment || undefined,
+        statementCycle: selectedBudget?.accountType === 'credit_card' && statementCycle ? statementCycle : undefined
       });
       onClose();
     } catch (err) {
@@ -100,6 +110,16 @@ export default function AddTransactionModal({
 
   const selectedBudget = budgets.find(b => b.id === budgetId);
   const canBeLoanPayment = selectedBudget && (selectedBudget.accountType === 'credit_card' || selectedBudget.accountType === 'loan');
+  const selectedCardCutoffDay = selectedBudget?.accountType === 'credit_card' ? parseDayOfMonth(selectedBudget.cutoffDate) : null;
+  const selectedCardDueDay = selectedBudget?.accountType === 'credit_card' ? parseDayOfMonth(selectedBudget.dueDate) : null;
+  const autoCycleKey = selectedCardCutoffDay ? getTransactionCreditCardCycleKey(date, selectedCardCutoffDay) : null;
+  const autoCycleInfo =
+    selectedCardCutoffDay && autoCycleKey
+      ? getCreditCardCycleForMonth(selectedCardCutoffDay, selectedCardDueDay, autoCycleKey)
+      : null;
+  const recentCycles = selectedCardCutoffDay
+    ? getRecentCreditCardCycles(selectedCardCutoffDay, selectedCardDueDay, autoCycleKey || undefined, 6, 2)
+    : [];
 
   return (
     <div className="fixed inset-0 bg-black/40 dark:bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
@@ -222,6 +242,28 @@ export default function AddTransactionModal({
                     Payment / Abono to {selectedBudget.name || selectedBudget.category} (Reduces balance used)
                   </span>
                 </label>
+              )}
+
+              {selectedBudget?.accountType === 'credit_card' && selectedCardCutoffDay && autoCycleInfo && (
+                <div className="pt-2 border-t border-black/[0.06] dark:border-white/10 space-y-1">
+                  <label className="text-[10px] font-semibold text-[#86868B] uppercase tracking-wider block">
+                    Statement Cycle / Ciclo (Corte día {selectedCardCutoffDay})
+                  </label>
+                  <select
+                    value={statementCycle}
+                    onChange={e => setStatementCycle(e.target.value)}
+                    className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white focus:outline-none focus:border-[#0071E3]"
+                  >
+                    <option value="">
+                      Auto por fecha: {autoCycleInfo.label} ({autoCycleInfo.periodLabel})
+                    </option>
+                    {recentCycles.map(c => (
+                      <option key={c.cycleKey} value={c.cycleKey}>
+                        Ciclo {c.label} ({c.periodLabel})
+                      </option>
+                    ))}
+                  </select>
+                </div>
               )}
             </div>
           )}

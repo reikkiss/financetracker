@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Plus,
   Trash2,
@@ -13,7 +13,13 @@ import {
   Calendar,
   ChevronDown,
   ChevronUp,
-  Sparkles
+  ChevronLeft,
+  ChevronRight,
+  Sparkles,
+  Clock,
+  GripVertical,
+  ArrowUpDown,
+  Check
 } from 'lucide-react';
 import {
   LoanQuota,
@@ -22,7 +28,14 @@ import {
   addMonthsToIsoDate,
   calculateCreditCardMonthlyLimit,
   calculateLoanMonthlyQuota,
-  getMonthlyInterestRate
+  getMonthlyInterestRate,
+  parseDayOfMonth,
+  getActiveCreditCardCycleKey,
+  getCreditCardCycleForMonth,
+  getTransactionCreditCardCycleKey,
+  getRecentCreditCardCycles,
+  shiftMonthKey,
+  formatShortIsoDate
 } from '../utils/financeMath';
 
 export type { LoanQuota, LoanCalcMethod, LoanRatePeriod };
@@ -64,6 +77,7 @@ export interface Budget {
 interface BudgetsPageProps {
   budgets: Budget[];
   transactions: any[];
+  allTransactions?: any[];
   currencySymbol?: string;
   selectedMonth?: string;
   onOpenAddBudget: () => void;
@@ -81,11 +95,13 @@ interface BudgetsPageProps {
   onDeleteLoanQuota?: (budgetId: string, quotaId: string) => Promise<void>;
   onGenerateLoanQuotas?: (budgetId: string) => Promise<void>;
   onReorderBudget?: (budgetId: string, direction: 'up' | 'down') => void;
+  onReorderBudgetToIndex?: (budgetId: string, targetIndex: number) => void | Promise<void>;
 }
 
 export default function BudgetsPage({
   budgets,
   transactions,
+  allTransactions,
   currencySymbol = '$',
   selectedMonth,
   onOpenAddBudget,
@@ -99,14 +115,47 @@ export default function BudgetsPage({
   onAddLoanQuota,
   onDeleteLoanQuota,
   onGenerateLoanQuotas,
-  onReorderBudget
+  onReorderBudget,
+  onReorderBudgetToIndex
 }: BudgetsPageProps) {
   const [expandedLoans, setExpandedLoans] = useState<Record<string, boolean>>({});
+  const [expandedCardCycles, setExpandedCardCycles] = useState<Record<string, boolean>>({});
+  const [cardCycleOverrides, setCardCycleOverrides] = useState<Record<string, string>>({});
+  const [isReorganizeMode, setIsReorganizeMode] = useState(false);
+  const [draggedBudgetId, setDraggedBudgetId] = useState<string | null>(null);
+  const [dragOverBudgetId, setDragOverBudgetId] = useState<string | null>(null);
+  const [orderSavedBanner, setOrderSavedBanner] = useState(false);
   const [addingQuotaLoanId, setAddingQuotaLoanId] = useState<string | null>(null);
   const [newQuotaDueDate, setNewQuotaDueDate] = useState('');
   const [newQuotaAmount, setNewQuotaAmount] = useState('');
   const [newQuotaPrincipal, setNewQuotaPrincipal] = useState('');
   const [newQuotaInterest, setNewQuotaInterest] = useState('');
+
+  const triggerOrderSavedFeedback = () => {
+    setOrderSavedBanner(true);
+    setTimeout(() => setOrderSavedBanner(false), 1800);
+  };
+
+  const handleDropOnBudget = async (targetBudgetId: string) => {
+    if (!draggedBudgetId || draggedBudgetId === targetBudgetId) {
+      setDraggedBudgetId(null);
+      setDragOverBudgetId(null);
+      return;
+    }
+    const targetIdx = budgets.findIndex(item => item.id === targetBudgetId);
+    setDraggedBudgetId(null);
+    setDragOverBudgetId(null);
+    if (targetIdx !== -1 && onReorderBudgetToIndex) {
+      await onReorderBudgetToIndex(draggedBudgetId, targetIdx);
+      triggerOrderSavedFeedback();
+    }
+  };
+
+  useEffect(() => {
+    setCardCycleOverrides({});
+  }, [selectedMonth]);
+
+  const fullLedgerTransactions = allTransactions || transactions;
 
   // Aggregate debt metrics
   const debtAccounts = budgets.filter(b => b.accountType === 'credit_card' || b.accountType === 'loan');
@@ -190,7 +239,27 @@ export default function BudgetsPage({
             Manage bank & debit accounts, standard budgets, credit cards with overdraft limits, loans, and transfers.
           </p>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap">
+          {orderSavedBanner && (
+            <span className="inline-flex items-center gap-1 bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30 px-3 py-1.5 rounded-full text-[11px] font-semibold">
+              <Check className="w-3 h-3" /> Order saved
+            </span>
+          )}
+          {(onReorderBudget || onReorderBudgetToIndex) && budgets.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => setIsReorganizeMode(v => !v)}
+              className={`px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm border ${
+                isReorganizeMode
+                  ? 'bg-[#1D1D1F] text-white dark:bg-white dark:text-[#1D1D1F] border-transparent'
+                  : 'bg-white hover:bg-[#F2F2F7] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white border-black/[0.06] dark:border-white/10'
+              }`}
+              title="Drag and drop or reorder your accounts and budgets"
+            >
+              <ArrowUpDown className="w-3.5 h-3.5" />
+              {isReorganizeMode ? 'Done Reorganizing' : 'Reorganize'}
+            </button>
+          )}
           {onOpenTransfer && budgets.length >= 2 && (
             <button
               onClick={() => onOpenTransfer()}
@@ -207,6 +276,113 @@ export default function BudgetsPage({
           </button>
         </div>
       </div>
+
+      {isReorganizeMode && budgets.length >= 2 && (
+        <div className="bg-white dark:bg-[#1C1C1E] border border-[#0071E3]/30 rounded-[22px] p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-bold text-[#1D1D1F] dark:text-white flex items-center gap-2">
+                <ArrowUpDown className="w-4 h-4 text-[#0071E3]" /> Reorganize Accounts & Budgets
+              </h3>
+              <p className="text-[11px] text-[#86868B] mt-0.5">
+                Drag rows or use the arrows to set your preferred order. Changes are saved automatically to your database and reflected on the Dashboard.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsReorganizeMode(false)}
+              className="px-3.5 py-1.5 rounded-full bg-[#0071E3] hover:bg-[#0077ED] text-white text-xs font-semibold transition shrink-0"
+            >
+              Done
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {budgets.map((item, idx) => (
+              <div
+                key={item.id}
+                draggable
+                onDragStart={e => {
+                  setDraggedBudgetId(item.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragOver={e => {
+                  e.preventDefault();
+                  if (draggedBudgetId && draggedBudgetId !== item.id) {
+                    setDragOverBudgetId(item.id);
+                  }
+                }}
+                onDragLeave={() => {
+                  if (dragOverBudgetId === item.id) setDragOverBudgetId(null);
+                }}
+                onDrop={e => {
+                  e.preventDefault();
+                  handleDropOnBudget(item.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedBudgetId(null);
+                  setDragOverBudgetId(null);
+                }}
+                className={`flex items-center justify-between gap-3 px-3.5 py-2.5 rounded-2xl border transition cursor-grab active:cursor-grabbing ${
+                  dragOverBudgetId === item.id
+                    ? 'bg-[#0071E3]/10 border-[#0071E3] ring-1 ring-[#0071E3]'
+                    : draggedBudgetId === item.id
+                    ? 'opacity-50 bg-[#F5F5F7] dark:bg-[#2C2C2E] border-black/[0.08] dark:border-white/10'
+                    : 'bg-[#F5F5F7] dark:bg-[#2C2C2E]/70 border-black/[0.04] dark:border-white/5 hover:border-black/[0.1] dark:hover:border-white/15'
+                }`}
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <GripVertical className="w-4 h-4 text-[#86868B] shrink-0" />
+                  <span className="w-6 h-6 rounded-full bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 text-[11px] font-bold text-[#86868B] flex items-center justify-center tabular-nums shrink-0">
+                    {idx + 1}
+                  </span>
+                  <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate">
+                    {item.name || item.category}
+                  </span>
+                  <span className="text-[10px] text-[#86868B] uppercase tracking-wider shrink-0">
+                    {(item.accountType || 'standard').replace('_', ' ')}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    disabled={idx === 0}
+                    onClick={async () => {
+                      if (onReorderBudgetToIndex) {
+                        await onReorderBudgetToIndex(item.id, idx - 1);
+                        triggerOrderSavedFeedback();
+                      } else if (onReorderBudget) {
+                        onReorderBudget(item.id, 'up');
+                        triggerOrderSavedFeedback();
+                      }
+                    }}
+                    className="px-2 py-1 rounded-full bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 text-[11px] font-semibold text-[#1D1D1F] dark:text-white disabled:opacity-30 hover:bg-[#E5E5EA] dark:hover:bg-white/15 transition"
+                    title="Move up"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    type="button"
+                    disabled={idx === budgets.length - 1}
+                    onClick={async () => {
+                      if (onReorderBudgetToIndex) {
+                        await onReorderBudgetToIndex(item.id, idx + 1);
+                        triggerOrderSavedFeedback();
+                      } else if (onReorderBudget) {
+                        onReorderBudget(item.id, 'down');
+                        triggerOrderSavedFeedback();
+                      }
+                    }}
+                    className="px-2 py-1 rounded-full bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 text-[11px] font-semibold text-[#1D1D1F] dark:text-white disabled:opacity-30 hover:bg-[#E5E5EA] dark:hover:bg-white/15 transition"
+                    title="Move down"
+                  >
+                    ▼
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Liquid Accounts Overview Cards */}
       {liquidAccounts.length > 0 && (
@@ -331,6 +507,82 @@ export default function BudgetsPage({
             const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
             const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
 
+            // Credit Card Billing Cycle calculation
+            const cutoffDay = isCreditCard ? parseDayOfMonth(b.cutoffDate) : null;
+            const dueDay = isCreditCard ? parseDayOfMonth(b.dueDate) : null;
+            const defaultCycleKey =
+              isCreditCard && cutoffDay
+                ? selectedMonth && selectedMonth !== 'All' && /^\d{4}-\d{2}$/.test(selectedMonth)
+                  ? selectedMonth
+                  : getActiveCreditCardCycleKey(cutoffDay)
+                : '';
+            const activeCycleKey = isCreditCard ? cardCycleOverrides[b.id] || defaultCycleKey : '';
+            const cycleInfo =
+              isCreditCard && cutoffDay && activeCycleKey
+                ? getCreditCardCycleForMonth(cutoffDay, dueDay, activeCycleKey)
+                : null;
+            const cycleOptions =
+              isCreditCard && cutoffDay && activeCycleKey
+                ? getRecentCreditCardCycles(cutoffDay, dueDay, activeCycleKey, 8, 2)
+                : [];
+
+            const cardChargesInCycle =
+              isCreditCard && cycleInfo
+                ? fullLedgerTransactions.filter(t => {
+                    const belongsToCard =
+                      t.budgetId === b.id ||
+                      (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase());
+                    if (!belongsToCard) return false;
+                    const isCharge =
+                      (!t.isTransfer && t.type === 'expense' && !t.isLoanPayment) ||
+                      (Boolean(t.isTransfer) && t.budgetId === b.id);
+                    if (!isCharge) return false;
+                    return getTransactionCreditCardCycleKey(t.date, cutoffDay, t.statementCycle) === cycleInfo.cycleKey;
+                  })
+                : [];
+
+            const cardPaymentsInCycle =
+              isCreditCard && cycleInfo
+                ? fullLedgerTransactions.filter(t => {
+                    const isDirectPayment =
+                      (t.budgetId === b.id ||
+                        (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())) &&
+                      (Boolean(t.isLoanPayment) || t.type === 'income') &&
+                      !t.isTransfer;
+                    const isTransferPayment = Boolean(t.isTransfer) && t.transferToBudgetId === b.id;
+                    if (!isDirectPayment && !isTransferPayment) return false;
+                    return getTransactionCreditCardCycleKey(t.date, cutoffDay, t.statementCycle) === cycleInfo.cycleKey;
+                  })
+                : [];
+
+            const postCutoffPaymentsTowardDue =
+              isCreditCard && cycleInfo && cycleInfo.dueDate && cycleInfo.dueDate > cycleInfo.cutoffDate
+                ? fullLedgerTransactions.filter(t => {
+                    if (t.statementCycle && t.statementCycle !== cycleInfo.cycleKey) return false;
+                    const isDirectPayment =
+                      (t.budgetId === b.id ||
+                        (!t.budgetId && (t.category || '').trim().toLowerCase() === budgetCatName.toLowerCase())) &&
+                      (Boolean(t.isLoanPayment) || t.type === 'income') &&
+                      !t.isTransfer;
+                    const isTransferPayment = Boolean(t.isTransfer) && t.transferToBudgetId === b.id;
+                    if (!isDirectPayment && !isTransferPayment) return false;
+                    const d = String(t.date || '').slice(0, 10);
+                    return d > cycleInfo.cutoffDate && d <= (cycleInfo.dueDate as string);
+                  })
+                : [];
+
+            const cycleChargesTotal = cardChargesInCycle.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            const cyclePendingChargesTotal = cardChargesInCycle
+              .filter(t => t.status === 'pending')
+              .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            const cyclePaymentsTotal = cardPaymentsInCycle.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            const gracePaymentsTotal = postCutoffPaymentsTowardDue.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+            const cycleNetRemaining = Math.max(0, cycleChargesTotal - cyclePaymentsTotal - gracePaymentsTotal);
+            const cycleAllTxs = [...cardChargesInCycle, ...cardPaymentsInCycle].sort((a, x) =>
+              String(x.date || '').localeCompare(String(a.date || ''))
+            );
+            const isCycleLedgerExpanded = Boolean(expandedCardCycles[b.id]);
+
             // Loan calculations & Quotas
             const loanPrincipal = Number(b.creditLimit || b.limit) || 0;
             const loanRatePeriod: LoanRatePeriod = b.loanRatePeriod || 'annual';
@@ -414,11 +666,47 @@ export default function BudgetsPage({
             return (
               <div
                 key={b.id}
-                className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[22px] space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl hover:border-black/[0.1] dark:hover:border-white/20 transition"
+                draggable={Boolean(onReorderBudgetToIndex && budgets.length >= 2)}
+                onDragStart={e => {
+                  if (!onReorderBudgetToIndex) return;
+                  setDraggedBudgetId(b.id);
+                  e.dataTransfer.effectAllowed = 'move';
+                }}
+                onDragOver={e => {
+                  if (!draggedBudgetId || draggedBudgetId === b.id) return;
+                  e.preventDefault();
+                  setDragOverBudgetId(b.id);
+                }}
+                onDragLeave={() => {
+                  if (dragOverBudgetId === b.id) setDragOverBudgetId(null);
+                }}
+                onDrop={e => {
+                  e.preventDefault();
+                  handleDropOnBudget(b.id);
+                }}
+                onDragEnd={() => {
+                  setDraggedBudgetId(null);
+                  setDragOverBudgetId(null);
+                }}
+                className={`bg-white dark:bg-[#1C1C1E] border p-5 rounded-[22px] space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl transition ${
+                  dragOverBudgetId === b.id
+                    ? 'border-[#0071E3] ring-2 ring-[#0071E3]/40'
+                    : draggedBudgetId === b.id
+                    ? 'opacity-50 border-black/[0.08] dark:border-white/20'
+                    : 'border-black/[0.04] dark:border-white/10 hover:border-black/[0.1] dark:hover:border-white/20'
+                }`}
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
                   <div className="flex items-start gap-3 truncate">
+                    {onReorderBudgetToIndex && budgets.length >= 2 && (
+                      <div
+                        className="mt-2.5 text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white cursor-grab active:cursor-grabbing shrink-0"
+                        title="Drag to reorder"
+                      >
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+                    )}
                     <div className="w-9 h-9 rounded-xl bg-[#F2F2F7] dark:bg-[#191919] border border-black/[0.05] dark:border-[#2c2c2c] flex items-center justify-center shrink-0 mt-0.5">
                       {isCreditCard ? (
                         <CreditCard className="w-4 h-4 text-[#FF9F0A]" />
@@ -492,7 +780,10 @@ export default function BudgetsPage({
                     {onReorderBudget && (
                       <div className="flex items-center gap-0.5 bg-[#F2F2F7] dark:bg-[#282828] rounded-full p-0.5">
                         <button
-                          onClick={() => onReorderBudget(b.id, 'up')}
+                          onClick={() => {
+                            onReorderBudget(b.id, 'up');
+                            triggerOrderSavedFeedback();
+                          }}
                           disabled={budgets.indexOf(b) === 0}
                           className="px-1.5 py-0.5 text-[10px] text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white disabled:opacity-30 transition"
                           title="Move Up"
@@ -500,7 +791,10 @@ export default function BudgetsPage({
                           ▲
                         </button>
                         <button
-                          onClick={() => onReorderBudget(b.id, 'down')}
+                          onClick={() => {
+                            onReorderBudget(b.id, 'down');
+                            triggerOrderSavedFeedback();
+                          }}
                           disabled={budgets.indexOf(b) === budgets.length - 1}
                           className="px-1.5 py-0.5 text-[10px] text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white disabled:opacity-30 transition"
                           title="Move Down"
@@ -558,32 +852,204 @@ export default function BudgetsPage({
                   </div>
                 )}
 
-                {/* CREDIT CARD VIEW */}
+                {/* CREDIT CARD VIEW (Cycle-Based) */}
                 {isCreditCard && (
-                  <div className="space-y-2.5 bg-[#F5F5F7] dark:bg-[#171717] p-3 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
+                  <div className="space-y-3 bg-[#F5F5F7] dark:bg-[#171717] p-3.5 rounded-2xl border border-black/[0.04] dark:border-[#262626]">
+                    {/* Billing Cycle Selector & Dates Header */}
+                    {cycleInfo ? (
+                      <div className="bg-white dark:bg-[#1f1f1f] border border-black/[0.05] dark:border-white/10 rounded-xl p-3 space-y-2">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <span
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${
+                                cycleInfo.status === 'open'
+                                  ? 'bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759]'
+                                  : cycleInfo.status === 'upcoming'
+                                  ? 'bg-[#0071E3]/15 text-[#0071E3] dark:text-[#5AC8FA]'
+                                  : 'bg-black/[0.06] dark:bg-white/10 text-[#6E6E73] dark:text-zinc-300'
+                              }`}
+                            >
+                              {cycleInfo.status === 'open'
+                                ? 'Ciclo Abierto'
+                                : cycleInfo.status === 'upcoming'
+                                ? 'Próximo Ciclo'
+                                : 'Ciclo Cerrado'}
+                            </span>
+                            <span className="text-xs font-bold text-[#1D1D1F] dark:text-white tabular-nums">
+                              {cycleInfo.periodLabel}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCardCycleOverrides(prev => ({
+                                  ...prev,
+                                  [b.id]: shiftMonthKey(cycleInfo.cycleKey, -1)
+                                }))
+                              }
+                              className="w-6 h-6 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 flex items-center justify-center text-[#1D1D1F] dark:text-white transition"
+                              title="Ciclo anterior"
+                            >
+                              <ChevronLeft className="w-3.5 h-3.5" />
+                            </button>
+                            <select
+                              value={cycleInfo.cycleKey}
+                              onChange={e =>
+                                setCardCycleOverrides(prev => ({
+                                  ...prev,
+                                  [b.id]: e.target.value
+                                }))
+                              }
+                              className="bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-full px-2.5 py-0.5 text-[11px] font-semibold text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none cursor-pointer"
+                            >
+                              {cycleOptions.map(c => (
+                                <option key={c.cycleKey} value={c.cycleKey} className="bg-white dark:bg-[#1C1C1E]">
+                                  {c.label} ({c.periodLabel})
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setCardCycleOverrides(prev => ({
+                                  ...prev,
+                                  [b.id]: shiftMonthKey(cycleInfo.cycleKey, 1)
+                                }))
+                              }
+                              className="w-6 h-6 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 flex items-center justify-center text-[#1D1D1F] dark:text-white transition"
+                              title="Siguiente ciclo"
+                            >
+                              <ChevronRight className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] pt-1.5 border-t border-black/[0.05] dark:border-white/10 tabular-nums">
+                          <span className="text-[#6E6E73] dark:text-zinc-300 flex items-center gap-1">
+                            <Calendar className="w-3 h-3 text-[#FF9F0A]" />
+                            Corte: <strong className="text-[#1D1D1F] dark:text-white">{formatShortIsoDate(cycleInfo.cutoffDate)}</strong>
+                            {cycleInfo.daysUntilCutoff > 0 && (
+                              <span className="text-[10px] text-[#0071E3] dark:text-[#5AC8FA] ml-1">
+                                (en {cycleInfo.daysUntilCutoff}d)
+                              </span>
+                            )}
+                            {cycleInfo.daysUntilCutoff === 0 && (
+                              <span className="text-[10px] text-[#B25000] dark:text-[#FF9F0A] font-semibold ml-1">
+                                (Hoy)
+                              </span>
+                            )}
+                          </span>
+
+                          {cycleInfo.dueDate ? (
+                            <span className="text-[#6E6E73] dark:text-zinc-300 flex items-center gap-1">
+                              <Clock className="w-3 h-3 text-[#34C759]" />
+                              Pago límite: <strong className="text-[#1D1D1F] dark:text-white">{formatShortIsoDate(cycleInfo.dueDate)}</strong>
+                              {cycleInfo.daysUntilDue !== null && cycleInfo.daysUntilDue > 0 && (
+                                <span className="text-[10px] text-[#248A3D] dark:text-[#34C759] ml-1">
+                                  (en {cycleInfo.daysUntilDue}d)
+                                </span>
+                              )}
+                              {cycleInfo.daysUntilDue === 0 && (
+                                <span className="text-[10px] text-[#B25000] dark:text-[#FF9F0A] font-semibold ml-1">
+                                  (Vence hoy)
+                                </span>
+                              )}
+                              {cycleInfo.isPastDue && cycleNetRemaining > 0 && (
+                                <span className="text-[10px] text-[#D70015] dark:text-[#FF3B30] font-semibold ml-1">
+                                  (Vencido)
+                                </span>
+                              )}
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => onOpenEditBudget(b)}
+                              className="text-[10px] text-[#0071E3] hover:underline font-medium"
+                            >
+                              + Agregar Día de Pago
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="bg-[#FF9F0A]/10 border border-[#FF9F0A]/30 rounded-xl px-3 py-2 flex items-center justify-between gap-2 text-[11px]">
+                        <span className="text-[#B25000] dark:text-amber-300">
+                          Configura el Día de Corte y Día de Pago para operar por ciclo de facturación.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onOpenEditBudget(b)}
+                          className="px-2.5 py-1 rounded-full bg-[#FF9F0A] text-black font-semibold text-[10px] shrink-0"
+                        >
+                          Configurar Fechas
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Cycle Charges, Payments & Card Limits */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
-                        <span className="text-[10px] text-[#86868B] block">APR</span>
-                        <span className="text-xs font-bold tabular-nums text-[#B25000] dark:text-amber-400 block mt-0.5">{b.apr || 0}%</span>
-                      </div>
-                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
-                        <span className="text-[10px] text-[#86868B] block">Credit Limit</span>
-                        <span className="text-xs font-bold tabular-nums text-[#1D1D1F] dark:text-white block mt-0.5">{currencySymbol}{ccCalc.baseCreditLimit.toLocaleString()}</span>
-                      </div>
-                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
-                        <span className="text-[10px] text-[#86868B] block">Overdraft Allowed</span>
-                        <span className="text-xs font-bold tabular-nums text-[#0071E3] dark:text-blue-400 block mt-0.5">
-                          {ccCalc.overdraftPct}% {ccCalc.overdraftBuffer > 0 ? `(+${currencySymbol}${ccCalc.overdraftBuffer.toLocaleString()})` : ''}
+                        <span className="text-[10px] text-[#86868B] block">
+                          {cycleInfo ? 'Cargos del Ciclo' : 'Credit Limit'}
                         </span>
+                        <span className="text-xs font-bold tabular-nums text-[#D70015] dark:text-rose-400 block mt-0.5">
+                          {cycleInfo
+                            ? `${currencySymbol}${cycleChargesTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : `${currencySymbol}${ccCalc.baseCreditLimit.toLocaleString()}`}
+                        </span>
+                        {cycleInfo && cyclePendingChargesTotal > 0 && (
+                          <span className="text-[9px] text-[#B25000] dark:text-[#FF9F0A] block tabular-nums">
+                            Flotante: {currencySymbol}{cyclePendingChargesTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
                       </div>
                       <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
-                        <span className="text-[10px] text-[#86868B] block">Used Balance</span>
-                        <span className="text-xs font-bold tabular-nums text-[#D70015] dark:text-rose-400 block mt-0.5">{currencySymbol}{usedBalance.toLocaleString()}</span>
+                        <span className="text-[10px] text-[#86868B] block">
+                          {cycleInfo ? 'Pagos del Ciclo' : 'Overdraft Allowed'}
+                        </span>
+                        <span className="text-xs font-bold tabular-nums text-[#248A3D] dark:text-emerald-400 block mt-0.5">
+                          {cycleInfo
+                            ? `${currencySymbol}${(cyclePaymentsTotal + gracePaymentsTotal).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : `${ccCalc.overdraftPct}%`}
+                        </span>
+                        {cycleInfo && gracePaymentsTotal > 0 && (
+                          <span className="text-[9px] text-[#86868B] block tabular-nums">
+                            Incl. {currencySymbol}{gracePaymentsTotal.toFixed(2)} post-corte
+                          </span>
+                        )}
+                      </div>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">
+                          {cycleInfo ? 'Neto del Ciclo' : 'APR'}
+                        </span>
+                        <span className="text-xs font-bold tabular-nums text-[#1D1D1F] dark:text-white block mt-0.5">
+                          {cycleInfo
+                            ? `${currencySymbol}${cycleNetRemaining.toLocaleString('en-US', { minimumFractionDigits: 2 })}`
+                            : `${b.apr || 0}%`}
+                        </span>
+                        {cycleInfo && (
+                          <span className="text-[9px] text-[#86868B] block tabular-nums">
+                            {cardChargesInCycle.length} cargos • {cardPaymentsInCycle.length + postCutoffPaymentsTowardDue.length} pagos
+                          </span>
+                        )}
+                      </div>
+                      <div className="bg-white dark:bg-[#1f1f1f] p-2.5 rounded-xl text-center border border-black/[0.03] dark:border-transparent">
+                        <span className="text-[10px] text-[#86868B] block">Balance Total Usado</span>
+                        <span className="text-xs font-bold tabular-nums text-[#B25000] dark:text-amber-400 block mt-0.5">
+                          {currencySymbol}{usedBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </span>
+                        <span className="text-[9px] text-[#86868B] block tabular-nums">
+                          Límite: {currencySymbol}{ccCalc.baseCreditLimit.toLocaleString()}
+                        </span>
                       </div>
                     </div>
 
                     <div className="bg-[#FF9F0A]/10 border border-[#FF9F0A]/25 rounded-xl px-3 py-2 flex items-center justify-between text-xs">
-                      <span className="text-[#B25000] dark:text-amber-300 font-medium">Calculated Monthly Limit (Credit + Overdraft)</span>
+                      <span className="text-[#B25000] dark:text-amber-300 font-medium">
+                        Monthly Limit (Credit + {ccCalc.overdraftPct}% Overdraft) • APR {b.apr || 0}%
+                      </span>
                       <span className="text-[#1D1D1F] dark:text-white font-bold tabular-nums">
                         {currencySymbol}{effectiveLimit.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                       </span>
@@ -611,17 +1077,82 @@ export default function BudgetsPage({
                       )}
                     </div>
 
-                    {totalPaymentsMade > 0 && (
-                      <div className="text-[11px] text-[#248A3D] dark:text-emerald-400 pt-1 flex items-center justify-between tabular-nums">
-                        <span>Total Payments / Abonos recorded:</span>
-                        <span className="font-semibold">{currencySymbol}{totalPaymentsMade.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
-                      </div>
-                    )}
+                    {/* Expandable Cycle Charges & Payments List */}
+                    {cycleInfo && (
+                      <div className="pt-1 border-t border-black/[0.05] dark:border-[#262626] space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setExpandedCardCycles(prev => ({ ...prev, [b.id]: !prev[b.id] }))}
+                            className="text-[11px] text-[#1D1D1F] dark:text-zinc-300 flex items-center gap-1 bg-white dark:bg-[#222] border border-black/[0.06] dark:border-transparent px-2.5 py-1 rounded-full font-medium transition"
+                          >
+                            {isCycleLedgerExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                            <span>
+                              {isCycleLedgerExpanded ? 'Ocultar' : 'Ver'} Cargos y Pagos del Ciclo ({cycleAllTxs.length})
+                            </span>
+                          </button>
+                          {(b.cutoffDate || b.dueDate) && (
+                            <span className="text-[10px] text-[#86868B] tabular-nums">
+                              Día Corte: <strong className="text-[#1D1D1F] dark:text-white">{cutoffDay || b.cutoffDate}</strong>
+                              {dueDay || b.dueDate ? (
+                                <> • Día Pago: <strong className="text-[#1D1D1F] dark:text-white">{dueDay || b.dueDate}</strong></>
+                              ) : null}
+                            </span>
+                          )}
+                        </div>
 
-                    {(b.cutoffDate || b.dueDate) && (
-                      <div className="flex items-center justify-between text-[11px] text-[#86868B] pt-2 border-t border-black/[0.05] dark:border-[#262626] tabular-nums">
-                        {b.cutoffDate && <span>Fecha de Corte: <strong className="text-[#1D1D1F] dark:text-white">{b.cutoffDate}</strong></span>}
-                        {b.dueDate && <span>Fecha de Pago: <strong className="text-[#1D1D1F] dark:text-white">{b.dueDate}</strong></span>}
+                        {isCycleLedgerExpanded && (
+                          <div className="space-y-1 max-h-56 overflow-y-auto pr-1 scrollbar-thin">
+                            {cycleAllTxs.length === 0 ? (
+                              <div className="bg-white dark:bg-[#1f1f1f] rounded-xl p-3 text-center text-[11px] text-[#86868B]">
+                                No hay cargos ni pagos registrados en el ciclo {cycleInfo.periodLabel}.
+                              </div>
+                            ) : (
+                              cycleAllTxs.map(txItem => {
+                                const isPayment =
+                                  Boolean(txItem.isLoanPayment) ||
+                                  txItem.type === 'income' ||
+                                  (Boolean(txItem.isTransfer) && txItem.transferToBudgetId === b.id);
+                                const isPending = txItem.status === 'pending';
+                                return (
+                                  <div
+                                    key={txItem.id}
+                                    className="flex items-center justify-between gap-2 py-1.5 px-2.5 rounded-xl bg-white dark:bg-[#1f1f1f] border border-black/[0.03] dark:border-transparent text-xs"
+                                  >
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex items-center gap-1.5">
+                                        <span className="font-medium text-[#1D1D1F] dark:text-zinc-200 truncate">
+                                          {txItem.title}
+                                        </span>
+                                        {isPending && (
+                                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] shrink-0">
+                                            Flotante
+                                          </span>
+                                        )}
+                                        {isPayment && (
+                                          <span className="px-1.5 py-0.5 rounded-full text-[9px] font-semibold bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] shrink-0">
+                                            Abono
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-[#86868B] block tabular-nums">
+                                        {txItem.date} • {txItem.category}
+                                        {txItem.statementCycle ? ` • Estado ${txItem.statementCycle}` : ''}
+                                      </span>
+                                    </div>
+                                    <span
+                                      className={`font-semibold tabular-nums shrink-0 ${
+                                        isPayment ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'
+                                      }`}
+                                    >
+                                      {isPayment ? '+' : '-'}{currencySymbol}{Number(txItem.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                    </span>
+                                  </div>
+                                );
+                              })
+                            )}
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -935,20 +1466,29 @@ export default function BudgetsPage({
                   </div>
                 )}
 
-                {/* Monthly Spending / Quota Progress */}
+                {/* Monthly Spending / Cycle / Quota Progress */}
                 {(!isLiquidAccount || effectiveLimit > 0) && (() => {
                   const progressTarget = isLoan ? computedQuota : effectiveLimit;
-                  const progressCurrent = isLoan ? currentMonthLoanPaid : spent;
+                  const progressCurrent = isLoan
+                    ? currentMonthLoanPaid
+                    : isCreditCard && cycleInfo
+                    ? cycleChargesTotal
+                    : spent;
                   const progressPct = progressTarget > 0 ? Math.min(Math.round((progressCurrent / progressTarget) * 100), 100) : 0;
                   const isBarOver = !isLoan && progressTarget > 0 && progressCurrent > progressTarget;
                   return (
                     <div className="space-y-1.5">
                       <div className="flex justify-between text-xs text-[#6E6E73] dark:text-[#9b9b9b] tabular-nums">
                         <span>
-                          {isLoan ? 'This Month Paid' : 'Current Month Spent'}: {currencySymbol}{progressCurrent.toFixed(2)}
+                          {isLoan
+                            ? 'This Month Paid'
+                            : isCreditCard && cycleInfo
+                            ? `Cargos del Ciclo (${cycleInfo.label})`
+                            : 'Current Month Spent'}
+                          : {currencySymbol}{progressCurrent.toFixed(2)}
                         </span>
                         <span className={isBarOver ? 'text-[#D70015] dark:text-rose-400 font-bold' : 'text-[#1D1D1F] dark:text-white font-semibold'}>
-                          {isLoan ? 'Monthly Quota' : 'Monthly Limit'}: {currencySymbol}{progressTarget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          {isLoan ? 'Monthly Quota' : isCreditCard ? 'Cycle Limit' : 'Monthly Limit'}: {currencySymbol}{progressTarget.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                         </span>
                       </div>
                       <div className="w-full bg-[#E5E5EA] dark:bg-[#191919] h-2 rounded-full overflow-hidden border border-black/[0.04] dark:border-[#2d2d2d]">
@@ -962,7 +1502,7 @@ export default function BudgetsPage({
                       </div>
                       <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
                         <span>
-                          {progressPct}% of {isLoan ? 'monthly quota paid' : 'monthly limit used'}
+                          {progressPct}% of {isLoan ? 'monthly quota paid' : isCreditCard && cycleInfo ? 'cycle limit used' : 'monthly limit used'}
                         </span>
                         {isBarOver && <span className="text-[#D70015] dark:text-rose-400 font-semibold">Over limit!</span>}
                       </div>

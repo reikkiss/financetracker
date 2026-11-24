@@ -25,7 +25,9 @@ import {
   getDocFromServer,
   doc,
   setDoc,
+  updateDoc,
   deleteDoc,
+  writeBatch,
   query,
   where
 } from 'firebase/firestore';
@@ -175,6 +177,7 @@ export interface Transaction {
   emailId?: string;
   emailOutcome?: 'approved' | 'declined' | 'reversed';
   emailContext?: string;
+  statementCycle?: string;
 }
 
 const CATEGORIES = [
@@ -317,7 +320,30 @@ export default function App() {
       const fetchedTxs = txSnap.docs.map(d => ({ id: d.id, ...d.data() } as Transaction));
       fetchedTxs.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       setTransactions(fetchedTxs);
-      setBudgets(budgetSnap.docs.map(d => ({ id: d.id, ...d.data() } as Budget)));
+      const fetchedBudgets = budgetSnap.docs.map(d => ({ id: d.id, ...d.data() } as Budget));
+      let savedOrderIds: string[] = [];
+      try {
+        const rawOrder = localStorage.getItem(`seashore_budget_order_${userId}`);
+        if (rawOrder) savedOrderIds = JSON.parse(rawOrder);
+      } catch {
+        // ignore
+      }
+      fetchedBudgets.sort((a, b) => {
+        const aHasOrder = typeof a.order === 'number' && !isNaN(a.order);
+        const bHasOrder = typeof b.order === 'number' && !isNaN(b.order);
+        if (aHasOrder && bHasOrder && a.order !== b.order) {
+          return (a.order as number) - (b.order as number);
+        }
+        if (aHasOrder && !bHasOrder) return -1;
+        if (!aHasOrder && bHasOrder) return 1;
+        const aIdx = savedOrderIds.indexOf(a.id);
+        const bIdx = savedOrderIds.indexOf(b.id);
+        if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+        if (aIdx !== -1) return -1;
+        if (bIdx !== -1) return 1;
+        return (a.name || a.category || '').localeCompare(b.name || b.category || '');
+      });
+      setBudgets(fetchedBudgets);
     } catch (err) {
       handleFirestoreError(err, OperationType.LIST, 'transactions/budgets');
     }
@@ -680,6 +706,7 @@ export default function App() {
       if (existingKeys.has(key)) continue;
 
       existingKeys.add(key);
+      const maxOrder = currentBudgets.reduce((m, b) => Math.max(m, typeof b.order === 'number' ? b.order : -1), -1);
       const id = `b_${baseTs}_${idx}`;
       const created: Budget = {
         id,
@@ -691,7 +718,8 @@ export default function App() {
         color: COLORS[(currentBudgets.length + idx) % COLORS.length],
         accountType: 'standard',
         extraExpenses: 0,
-        items: []
+        items: [],
+        order: maxOrder + 1 + idx
       };
       idx++;
 
@@ -1220,7 +1248,8 @@ export default function App() {
           amount: stmtAmt,
           status: 'cleared' as const,
           date: (r.date || matchedPending.date).slice(0, 20),
-          ...(r.category ? { category: r.category.slice(0, 50) } : {})
+          ...(r.category ? { category: r.category.slice(0, 50) } : {}),
+          ...(r.statementCycle ? { statementCycle: r.statementCycle.slice(0, 20) } : {})
         });
         updatedTxsMap.set(updatedPending.id, updatedPending);
         try {
@@ -1244,7 +1273,8 @@ export default function App() {
           isLoanPayment: Boolean(r.isLoanPayment),
           isTransfer: isTransferTx,
           status: 'cleared' as const,
-          ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {})
+          ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {}),
+          ...(r.statementCycle ? { statementCycle: r.statementCycle.slice(0, 20) } : {})
         });
 
         const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, workingBudgets);
@@ -1714,34 +1744,73 @@ export default function App() {
   const handleDeleteBudget = async (id: string) => {
     try {
       await deleteDoc(doc(db, 'budgets', id));
-      setBudgets(prev => prev.filter(b => b.id !== id));
+      const remaining = budgetsRef.current
+        .filter(b => b.id !== id)
+        .map((b, idx) => ({ ...b, order: idx }));
+      budgetsRef.current = remaining;
+      setBudgets(remaining);
+      if (remaining.length > 0) {
+        await persistBudgetsOrder(remaining);
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `budgets/${id}`);
     }
   };
 
-  const handleReorderBudget = async (budgetId: string, direction: 'up' | 'down') => {
-    const index = budgets.findIndex(b => b.id === budgetId);
-    if (index === -1) return;
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= budgets.length) return;
-
-    const newBudgets = [...budgets];
-    const temp = newBudgets[index];
-    newBudgets[index] = newBudgets[targetIndex];
-    newBudgets[targetIndex] = temp;
-
-    const updatedWithOrder = newBudgets.map((b, idx) => ({ ...b, order: idx }));
-    setBudgets(updatedWithOrder);
-
-    for (let i = 0; i < updatedWithOrder.length; i++) {
-      const b = updatedWithOrder[i];
+  const persistBudgetsOrder = async (orderedBudgets: Budget[]) => {
+    if (firebaseUser) {
       try {
-        await setDoc(doc(db, 'budgets', b.id), stripUndefined(b));
-      } catch (err) {
-        console.error('Failed to update budget order:', err);
+        localStorage.setItem(
+          `seashore_budget_order_${firebaseUser.uid}`,
+          JSON.stringify(orderedBudgets.map(b => b.id))
+        );
+      } catch {
+        // ignore
       }
     }
+    try {
+      const batch = writeBatch(db);
+      orderedBudgets.forEach((b, idx) => {
+        batch.update(doc(db, 'budgets', b.id), { order: idx });
+      });
+      await batch.commit();
+    } catch (err) {
+      console.warn('Batch budget order update failed, falling back to individual updates:', err);
+      for (let i = 0; i < orderedBudgets.length; i++) {
+        const b = orderedBudgets[i];
+        try {
+          await updateDoc(doc(db, 'budgets', b.id), { order: i });
+        } catch (innerErr) {
+          console.error('Failed to update budget order for', b.id, innerErr);
+        }
+      }
+    }
+  };
+
+  const handleMoveBudgetToIndex = async (budgetId: string, targetIndex: number) => {
+    const current = [...budgetsRef.current];
+    const fromIndex = current.findIndex(b => b.id === budgetId);
+    if (fromIndex === -1) return;
+    const clampedTarget = Math.max(0, Math.min(current.length - 1, targetIndex));
+    if (fromIndex === clampedTarget) return;
+
+    const [moved] = current.splice(fromIndex, 1);
+    current.splice(clampedTarget, 0, moved);
+
+    const updatedWithOrder = current.map((b, idx) => ({ ...b, order: idx }));
+    budgetsRef.current = updatedWithOrder;
+    setBudgets(updatedWithOrder);
+
+    await persistBudgetsOrder(updatedWithOrder);
+  };
+
+  const handleReorderBudget = async (budgetId: string, direction: 'up' | 'down') => {
+    const current = budgetsRef.current;
+    const index = current.findIndex(b => b.id === budgetId);
+    if (index === -1) return;
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= current.length) return;
+    await handleMoveBudgetToIndex(budgetId, targetIndex);
   };
 
   const handleAskAi = async () => {
@@ -2095,6 +2164,7 @@ export default function App() {
           {activeTab === 'dashboard' && (
             <DashboardPage
               transactions={displayTransactions}
+              allTransactions={transactions}
               budgets={budgets}
               chartMode={chartMode}
               setChartMode={setChartMode}
@@ -2141,6 +2211,7 @@ export default function App() {
             <BudgetsPage
               budgets={budgets}
               transactions={displayTransactions}
+              allTransactions={transactions}
               currencySymbol={currencySymbol}
               selectedMonth={globalSelectedMonth}
               onOpenAddBudget={() => setIsAddBudgetOpen(true)}
@@ -2155,12 +2226,13 @@ export default function App() {
               onDeleteLoanQuota={handleDeleteLoanQuota}
               onGenerateLoanQuotas={handleGenerateLoanQuotas}
               onReorderBudget={handleReorderBudget}
+              onReorderBudgetToIndex={handleMoveBudgetToIndex}
             />
           )}
 
           {activeTab === 'transactions' && (
             <TransactionsPage
-              transactions={displayTransactions}
+              transactions={transactions}
               budgets={budgets}
               currencySymbol={currencySymbol}
               selectedMonth={globalSelectedMonth}
@@ -2223,6 +2295,7 @@ export default function App() {
             date: (txData.date || new Date().toISOString().split('T')[0]).slice(0, 20),
             notes: (txData.notes || '').slice(0, 500),
             ...(txData.budgetId ? { budgetId: txData.budgetId.slice(0, 50) } : {}),
+            ...(txData.statementCycle ? { statementCycle: txData.statementCycle.slice(0, 20) } : {}),
             isLoanPayment: Boolean(txData.isLoanPayment),
             status: 'cleared' as const
           });
@@ -2270,6 +2343,12 @@ export default function App() {
             isLoanPayment: Boolean(updated.isLoanPayment),
             isTransfer: isTransferTx,
             transferToBudgetId: isTransferTx && updated.transferToBudgetId ? updated.transferToBudgetId.slice(0, 50) : undefined,
+            statementCycle:
+              updated.statementCycle !== undefined
+                ? updated.statementCycle
+                  ? updated.statementCycle.slice(0, 20)
+                  : undefined
+                : editingTx.statementCycle,
             status: updated.status || editingTx.status || 'cleared'
           });
           const latestBudgets = isTransferTx
@@ -2331,7 +2410,15 @@ export default function App() {
             monthlyQuota: data.accountType === 'loan' ? data.limit : undefined,
             loanQuotas: data.loanQuotas,
             items: data.accountType === 'standard' ? (data.items || []) : [],
-            extraExpenses: data.accountType === 'standard' ? (data.extraExpenses || 0) : 0
+            extraExpenses: data.accountType === 'standard' ? (data.extraExpenses || 0) : 0,
+            order:
+              budgetsRef.current.reduce((m, b) => Math.max(m, typeof b.order === 'number' ? b.order : -1), -1) + 1,
+            ...(data.accountType === 'credit_card'
+              ? {
+                  ...(data.cutoffDate ? { cutoffDate: data.cutoffDate.trim().slice(0, 40) } : {}),
+                  ...(data.dueDate ? { dueDate: data.dueDate.trim().slice(0, 40) } : {})
+                }
+              : {})
           });
           try {
             await setDoc(doc(db, 'budgets', id), newBudget);
@@ -2369,6 +2456,10 @@ export default function App() {
             limit: updated.limit !== undefined ? updated.limit : editingBudget.limit,
             color: updated.color || editingBudget.color || COLORS[0],
             accountType: nextAccountType,
+            order:
+              typeof editingBudget.order === 'number'
+                ? editingBudget.order
+                : Math.max(0, budgetsRef.current.findIndex(b => b.id === budgetId)),
             extraExpenses: isStandard ? (updated.extraExpenses || 0) : 0,
             items: isStandard ? (updated.items || []) : [],
             ...(isLiquid
@@ -2382,7 +2473,9 @@ export default function App() {
                   apr: updated.apr ?? 0,
                   creditLimit: updated.creditLimit ?? 0,
                   overdraftPercentage: updated.overdraftPercentage ?? 0,
-                  actualUsedAmount: updated.actualUsedAmount ?? editingBudget.actualUsedAmount ?? 0
+                  actualUsedAmount: updated.actualUsedAmount ?? editingBudget.actualUsedAmount ?? 0,
+                  ...(updated.cutoffDate ? { cutoffDate: updated.cutoffDate.trim().slice(0, 40) } : {}),
+                  ...(updated.dueDate ? { dueDate: updated.dueDate.trim().slice(0, 40) } : {})
                 }
               : {}),
             ...(isLoan

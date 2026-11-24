@@ -6,7 +6,11 @@ import {
   LoanCalcMethod,
   LoanRatePeriod,
   calculateCreditCardMonthlyLimit,
-  generateLoanQuotasSchedule
+  generateLoanQuotasSchedule,
+  parseDayOfMonth,
+  getActiveCreditCardCycleKey,
+  getCreditCardCycleForMonth,
+  formatShortIsoDate
 } from '../utils/financeMath';
 
 interface AddBudgetModalProps {
@@ -169,8 +173,20 @@ export default function AddBudgetModal({
         items: accountType === 'standard' ? items : undefined,
         extraExpenses: accountType === 'standard' && extraExpenses ? parseFloat(extraExpenses) : undefined,
         color,
-        cutoffDate: accountType === 'credit_card' ? cutoffDate.trim() || undefined : undefined,
-        dueDate: accountType === 'credit_card' ? dueDate.trim() || undefined : undefined
+        cutoffDate:
+          accountType === 'credit_card'
+            ? (() => {
+                const day = parseDayOfMonth(cutoffDate);
+                return day ? String(day) : cutoffDate.trim() || undefined;
+              })()
+            : undefined,
+        dueDate:
+          accountType === 'credit_card'
+            ? (() => {
+                const day = parseDayOfMonth(dueDate);
+                return day ? String(day) : dueDate.trim() || undefined;
+              })()
+            : undefined
       });
       onClose();
     } catch (err) {
@@ -355,26 +371,48 @@ export default function AddBudgetModal({
 
                   <div className="grid grid-cols-2 gap-2.5 pt-1">
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Corte (Cutoff Date)</label>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Día de Corte (Cutoff Day 1–31)</label>
                       <input
-                        type="text"
-                        placeholder="e.g. 15 de cada mes"
+                        type="number"
+                        min={1}
+                        max={31}
+                        placeholder="Ej. 15"
                         value={cutoffDate}
                         onChange={e => setCutoffDate(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] tabular-nums focus:outline-none focus:border-amber-500"
                       />
                     </div>
                     <div>
-                      <label className="text-[11px] text-[#86868B] block mb-1">Fecha de Pago (Due Date)</label>
+                      <label className="text-[11px] text-[#86868B] block mb-1">Día de Pago (Due Day 1–31)</label>
                       <input
-                        type="text"
-                        placeholder="e.g. 5 del siguiente mes"
+                        type="number"
+                        min={1}
+                        max={31}
+                        placeholder="Ej. 5"
                         value={dueDate}
                         onChange={e => setDueDate(e.target.value)}
-                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-amber-500"
+                        className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] tabular-nums focus:outline-none focus:border-amber-500"
                       />
                     </div>
                   </div>
+                  {(() => {
+                    const cDay = parseDayOfMonth(cutoffDate);
+                    const dDay = parseDayOfMonth(dueDate);
+                    if (!cDay) return null;
+                    const activeKey = getActiveCreditCardCycleKey(cDay);
+                    const preview = getCreditCardCycleForMonth(cDay, dDay, activeKey);
+                    return (
+                      <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3 py-2 text-[11px] flex flex-wrap items-center justify-between gap-2 tabular-nums">
+                        <span className="text-[#86868B]">
+                          Ciclo actual: <strong className="text-[#1D1D1F] dark:text-white">{preview.periodLabel}</strong>
+                        </span>
+                        <span className="text-[#B25000] dark:text-amber-300 font-medium">
+                          Corte: {formatShortIsoDate(preview.cutoffDate)}
+                          {preview.dueDate ? ` • Pago: ${formatShortIsoDate(preview.dueDate)}` : ''}
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-center justify-between text-xs">
