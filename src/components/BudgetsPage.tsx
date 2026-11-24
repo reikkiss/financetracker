@@ -20,12 +20,16 @@ import {
   GripVertical,
   ArrowUpDown,
   Check,
-  RefreshCw
+  RefreshCw,
+  AlertTriangle,
+  ShieldCheck,
+  Layers
 } from 'lucide-react';
 import {
   LoanQuota,
   LoanCalcMethod,
   LoanRatePeriod,
+  CardInstallment,
   addMonthsToIsoDate,
   calculateCreditCardMonthlyLimit,
   calculateLoanMonthlyQuota,
@@ -36,10 +40,13 @@ import {
   getTransactionCreditCardCycleKey,
   getRecentCreditCardCycles,
   shiftMonthKey,
-  formatShortIsoDate
+  formatShortIsoDate,
+  evaluateCreditCardSoftCap,
+  getCreditCardGoldenRuleStatus,
+  calculateCardInstallmentsSummary
 } from '../utils/financeMath';
 
-export type { LoanQuota, LoanCalcMethod, LoanRatePeriod };
+export type { LoanQuota, LoanCalcMethod, LoanRatePeriod, CardInstallment };
 
 export interface BudgetItem {
   id: string;
@@ -72,6 +79,9 @@ export interface Budget {
   loanQuotas?: LoanQuota[];
   cutoffDate?: string;
   dueDate?: string;
+  softCap?: number;
+  softCapUsd?: number;
+  installments?: CardInstallment[];
   order?: number;
 }
 
@@ -99,6 +109,7 @@ interface BudgetsPageProps {
   onReorderBudgetToIndex?: (budgetId: string, targetIndex: number) => void | Promise<void>;
   onRecalculateLiquidBalance?: (budgetId: string) => Promise<void>;
   onRecalculateAccountBalance?: (budgetId: string) => Promise<void>;
+  onUpdateCardInstallments?: (budgetId: string, installments: CardInstallment[]) => Promise<void>;
 }
 
 export default function BudgetsPage({
@@ -121,7 +132,8 @@ export default function BudgetsPage({
   onReorderBudget,
   onReorderBudgetToIndex,
   onRecalculateLiquidBalance,
-  onRecalculateAccountBalance
+  onRecalculateAccountBalance,
+  onUpdateCardInstallments
 }: BudgetsPageProps) {
   const [expandedLoans, setExpandedLoans] = useState<Record<string, boolean>>({});
   const [expandedCardCycles, setExpandedCardCycles] = useState<Record<string, boolean>>({});
@@ -549,11 +561,20 @@ export default function BudgetsPage({
             const isLiquidLedgerExpanded = Boolean(expandedLiquidLedgers[b.id]);
 
             const usedBalance = Number(b.actualUsedAmount) || 0;
+            const installmentsSummary = isCreditCard
+              ? calculateCardInstallmentsSummary(b.installments)
+              : { activeCount: 0, monthlyQuotaTotal: 0, remainingCommittedTotal: 0 };
             const availableCredit = isCreditCard
-              ? Math.max(0, ccCalc.monthlyLimit - usedBalance)
+              ? Math.max(0, ccCalc.monthlyLimit - usedBalance - installmentsSummary.remainingCommittedTotal)
               : Math.max(0, baseCreditLimit - usedBalance);
             const utilizationDenom = isCreditCard ? ccCalc.monthlyLimit : baseCreditLimit;
-            const utilizationPct = utilizationDenom > 0 ? Math.min(Math.round((usedBalance / utilizationDenom) * 100), 100) : 0;
+            const utilizationPct =
+              utilizationDenom > 0
+                ? Math.min(
+                    Math.round(((usedBalance + installmentsSummary.remainingCommittedTotal) / utilizationDenom) * 100),
+                    100
+                  )
+                : 0;
 
             // Credit Card Billing Cycle calculation
             const cutoffDay = isCreditCard ? parseDayOfMonth(b.cutoffDate) : null;
@@ -748,6 +769,22 @@ export default function BudgetsPage({
               unlinkedLoanPayments.reduce((s, t) => s + (Number(t.amount) || 0), 0).toFixed(2)
             );
 
+            const softCapEval = isCreditCard
+              ? evaluateCreditCardSoftCap(cycleInfo ? cycleChargesTotal : usedBalance, b.softCap)
+              : { hasSoftCap: false, softCap: 0, cycleSpent: 0, pct: 0, level: 'none' as const, remainingToCap: 0, label: '' };
+            const goldenRule = isCreditCard && cutoffDay ? getCreditCardGoldenRuleStatus(cutoffDay, dueDay) : null;
+
+            const cardAlertStyle =
+              dragOverBudgetId === b.id
+                ? 'bg-white dark:bg-[#1C1C1E] border-[#0071E3] ring-2 ring-[#0071E3]/40'
+                : draggedBudgetId === b.id
+                ? 'bg-white dark:bg-[#1C1C1E] opacity-50 border-black/[0.08] dark:border-white/20'
+                : softCapEval.level === 'critical'
+                ? 'bg-[#FFF5F5] dark:bg-[#2A1618] border-[#FF3B30]/55 hover:border-[#FF3B30]'
+                : softCapEval.level === 'warning'
+                ? 'bg-[#FFFBF2] dark:bg-[#292114] border-[#FF9F0A]/55 hover:border-[#FF9F0A]'
+                : 'bg-white dark:bg-[#1C1C1E] border-black/[0.04] dark:border-white/10 hover:border-black/[0.1] dark:hover:border-white/20';
+
             return (
               <div
                 key={b.id}
@@ -773,13 +810,7 @@ export default function BudgetsPage({
                   setDraggedBudgetId(null);
                   setDragOverBudgetId(null);
                 }}
-                className={`bg-white dark:bg-[#1C1C1E] border p-5 rounded-[22px] space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl transition ${
-                  dragOverBudgetId === b.id
-                    ? 'border-[#0071E3] ring-2 ring-[#0071E3]/40'
-                    : draggedBudgetId === b.id
-                    ? 'opacity-50 border-black/[0.08] dark:border-white/20'
-                    : 'border-black/[0.04] dark:border-white/10 hover:border-black/[0.1] dark:hover:border-white/20'
-                }`}
+                className={`border p-5 rounded-[22px] space-y-4 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl transition ${cardAlertStyle}`}
               >
                 {/* Header */}
                 <div className="flex items-start justify-between gap-3">
@@ -1238,10 +1269,148 @@ export default function BudgetsPage({
                       </span>
                     </div>
 
+                    {/* Layer 2: Regla de Oro de la Fecha de Corte */}
+                    {goldenRule && (
+                      <div
+                        className={`rounded-xl px-3 py-2 border text-[11px] flex items-start gap-2 ${
+                          goldenRule.status === 'good'
+                            ? 'bg-[#34C759]/10 border-[#34C759]/30 text-[#248A3D] dark:text-[#34C759]'
+                            : goldenRule.status === 'avoid'
+                            ? 'bg-[#FF3B30]/10 border-[#FF3B30]/30 text-[#D70015] dark:text-[#FF3B30]'
+                            : 'bg-white dark:bg-[#1f1f1f] border-black/[0.06] dark:border-white/10 text-[#6E6E73] dark:text-zinc-300'
+                        }`}
+                      >
+                        {goldenRule.status === 'good' ? (
+                          <ShieldCheck className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        ) : goldenRule.status === 'avoid' ? (
+                          <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        ) : (
+                          <Calendar className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        )}
+                        <div className="min-w-0">
+                          <span className="font-bold block">{goldenRule.headline}</span>
+                          <span className="text-[10px] opacity-85 block">{goldenRule.detail}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Layer 2: Tope Personal del Ciclo (Soft Cap 75% Ámbar / 90% Rojo) */}
+                    {softCapEval.hasSoftCap ? (
+                      <div
+                        className={`rounded-xl px-3 py-2.5 border space-y-1.5 ${
+                          softCapEval.level === 'critical'
+                            ? 'bg-[#FF3B30]/12 border-[#FF3B30]/40'
+                            : softCapEval.level === 'warning'
+                            ? 'bg-[#FF9F0A]/14 border-[#FF9F0A]/40'
+                            : 'bg-white dark:bg-[#1f1f1f] border-black/[0.05] dark:border-white/10'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] tabular-nums">
+                          <span
+                            className={`font-bold flex items-center gap-1 ${
+                              softCapEval.level === 'critical'
+                                ? 'text-[#D70015] dark:text-[#FF3B30]'
+                                : softCapEval.level === 'warning'
+                                ? 'text-[#B25000] dark:text-[#FF9F0A]'
+                                : 'text-[#1D1D1F] dark:text-white'
+                            }`}
+                          >
+                            {softCapEval.level !== 'safe' && <AlertTriangle className="w-3.5 h-3.5 shrink-0" />}
+                            Tope Personal del Ciclo: {softCapEval.label}
+                          </span>
+                          <span className="text-[#6E6E73] dark:text-zinc-300 font-semibold">
+                            {currencySymbol}{softCapEval.cycleSpent.toLocaleString('en-US', { minimumFractionDigits: 2 })} / {currencySymbol}{softCapEval.softCap.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                            {b.softCapUsd ? ` (Ref. US$${b.softCapUsd})` : ''}
+                          </span>
+                        </div>
+                        <div className="w-full bg-black/[0.08] dark:bg-white/10 h-1.5 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{
+                              width: `${Math.min(100, softCapEval.pct)}%`,
+                              backgroundColor:
+                                softCapEval.level === 'critical'
+                                  ? '#FF3B30'
+                                  : softCapEval.level === 'warning'
+                                  ? '#FF9F0A'
+                                  : '#34C759'
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between text-[10px] text-[#86868B] px-1">
+                        <span>Sin tope personal por ciclo configurado</span>
+                        <button
+                          type="button"
+                          onClick={() => onOpenEditBudget(b)}
+                          className="text-[#0071E3] font-semibold hover:underline"
+                        >
+                          + Configurar Soft Cap
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Layer 2: Cuotas / Diferidos (Extracrédito o 0% Interés) */}
+                    {(b.installments && b.installments.length > 0) && (
+                      <div className="bg-white dark:bg-[#1f1f1f] border border-black/[0.05] dark:border-white/10 rounded-xl p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2 text-[11px] tabular-nums">
+                          <span className="font-bold text-[#1D1D1F] dark:text-white flex items-center gap-1.5">
+                            <Layers className="w-3.5 h-3.5 text-[#0071E3]" />
+                            Cuotas / Diferidos ({installmentsSummary.activeCount} activos)
+                          </span>
+                          <span className="text-[#B25000] dark:text-[#FF9F0A] font-semibold">
+                            Comprometido: {currencySymbol}{installmentsSummary.remainingCommittedTotal.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        </div>
+                        <div className="space-y-1">
+                          {b.installments.map(inst => (
+                            <div
+                              key={inst.id}
+                              className="flex items-center justify-between gap-2 text-[11px] bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 px-2.5 py-1.5 rounded-lg tabular-nums"
+                            >
+                              <div className="min-w-0 flex-1">
+                                <span className={`font-medium truncate block ${inst.isActive ? 'text-[#1D1D1F] dark:text-white' : 'line-through text-[#86868B]'}`}>
+                                  {inst.title} ({inst.monthsPaid}/{inst.termMonths} cuotas)
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-2 shrink-0">
+                                <span className="font-semibold text-[#1D1D1F] dark:text-white">
+                                  {currencySymbol}{inst.monthlyQuota.toLocaleString('en-US', { minimumFractionDigits: 2 })}/mes
+                                </span>
+                                {onUpdateCardInstallments && inst.isActive && inst.monthsPaid < inst.termMonths && (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const nextList = (b.installments || []).map(x => {
+                                        if (x.id !== inst.id) return x;
+                                        const nextPaid = Math.min(x.termMonths, (x.monthsPaid || 0) + 1);
+                                        return { ...x, monthsPaid: nextPaid, isActive: nextPaid < x.termMonths };
+                                      });
+                                      onUpdateCardInstallments(b.id, nextList);
+                                    }}
+                                    className="px-2 py-0.5 rounded-full bg-[#34C759]/15 text-[#248A3D] dark:text-[#34C759] font-semibold text-[10px]"
+                                    title="Marcar +1 cuota pagada"
+                                  >
+                                    +1 Cuota
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Credit Utilization Bar + Ledger Drift Explanation */}
                     <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-[11px] text-[#86868B] tabular-nums">
-                        <span>Total Capacity Used: {utilizationPct}%</span>
+                        <span>
+                          Total Capacity Used: {utilizationPct}%
+                          {installmentsSummary.remainingCommittedTotal > 0
+                            ? ` (incl. cuotas)`
+                            : ''}
+                        </span>
                         <span className="text-[#248A3D] dark:text-emerald-400 font-semibold">Available: {currencySymbol}{availableCredit.toLocaleString()}</span>
                       </div>
                       <div className="w-full bg-[#E5E5EA] dark:bg-[#121212] h-2 rounded-full overflow-hidden border border-black/[0.04] dark:border-[#292929]">

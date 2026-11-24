@@ -5,6 +5,7 @@ import {
   LoanQuota,
   LoanCalcMethod,
   LoanRatePeriod,
+  CardInstallment,
   calculateCreditCardMonthlyLimit,
   calculateLoanMonthlyQuota,
   generateLoanQuotasSchedule,
@@ -43,6 +44,14 @@ export default function EditBudgetModal({
   const [overdraftPercentage, setOverdraftPercentage] = useState('');
   const [cutoffDate, setCutoffDate] = useState('');
   const [dueDate, setDueDate] = useState('');
+  const [softCap, setSoftCap] = useState('');
+  const [softCapUsd, setSoftCapUsd] = useState('');
+  const [installments, setInstallments] = useState<CardInstallment[]>([]);
+  const [instTitle, setInstTitle] = useState('');
+  const [instTotalAmount, setInstTotalAmount] = useState('');
+  const [instTermMonths, setInstTermMonths] = useState('12');
+  const [instMonthsPaid, setInstMonthsPaid] = useState('0');
+  const [instChargeDay, setInstChargeDay] = useState('');
   const [loanTermMonths, setLoanTermMonths] = useState('12');
   const [loanStartDate, setLoanStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [loanCalcMethod, setLoanCalcMethod] = useState<LoanCalcMethod>('amortized');
@@ -93,10 +102,43 @@ export default function EditBudgetModal({
       const parsedDue = parseDayOfMonth(budget.dueDate);
       setCutoffDate(parsedCutoff ? String(parsedCutoff) : budget.cutoffDate || '');
       setDueDate(parsedDue ? String(parsedDue) : budget.dueDate || '');
+      setSoftCap(budget.softCap && budget.softCap > 0 ? String(budget.softCap) : '');
+      setSoftCapUsd(budget.softCapUsd && budget.softCapUsd > 0 ? String(budget.softCapUsd) : '');
+      setInstallments(budget.installments ? [...budget.installments] : []);
+      setInstTitle('');
+      setInstTotalAmount('');
+      setInstMonthsPaid('0');
+      setInstChargeDay('');
     }
   }, [budget]);
 
   if (!budget) return null;
+
+  const handleAddInstallment = () => {
+    const total = parseFloat(instTotalAmount);
+    const term = Math.max(1, Math.floor(parseFloat(instTermMonths) || 12));
+    const paid = Math.min(term, Math.max(0, Math.floor(parseFloat(instMonthsPaid) || 0)));
+    if (!instTitle.trim() || isNaN(total) || total <= 0) return;
+    const quota = Number((total / term).toFixed(2));
+    const parsedDay = parseDayOfMonth(instChargeDay) || parseDayOfMonth(cutoffDate) || new Date().getDate();
+    setInstallments(prev => [
+      ...prev,
+      {
+        id: `inst_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        title: instTitle.trim().slice(0, 120),
+        totalAmount: Number(total.toFixed(2)),
+        termMonths: term,
+        monthsPaid: paid,
+        monthlyQuota: quota,
+        startDate: new Date().toISOString().split('T')[0],
+        chargeDay: parsedDay,
+        isActive: paid < term
+      }
+    ]);
+    setInstTitle('');
+    setInstTotalAmount('');
+    setInstMonthsPaid('0');
+  };
 
   const handleAddNewItem = () => {
     if (!itemName.trim() || !itemAmount) return;
@@ -221,7 +263,16 @@ export default function EditBudgetModal({
                 const day = parseDayOfMonth(dueDate);
                 return day ? String(day) : dueDate.trim() || undefined;
               })()
-            : undefined
+            : undefined,
+        softCap:
+          accountType === 'credit_card' && parseFloat(softCap) > 0
+            ? Number(parseFloat(softCap).toFixed(2))
+            : undefined,
+        softCapUsd:
+          accountType === 'credit_card' && parseFloat(softCapUsd) > 0
+            ? Number(parseFloat(softCapUsd).toFixed(2))
+            : undefined,
+        installments: accountType === 'credit_card' ? installments : undefined
       });
       onClose();
     } catch (err) {
@@ -427,6 +478,152 @@ export default function EditBudgetModal({
                       </div>
                     );
                   })()}
+
+                  {/* Soft Cap por Ciclo */}
+                  <div className="pt-2 border-t border-black/[0.06] dark:border-white/10 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-[#1D1D1F] dark:text-white">
+                        Tope Personal por Ciclo (Soft Cap)
+                      </span>
+                      <span className="text-[10px] text-[#86868B]">
+                        Alerta Ámbar 75% / Rojo 90%
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="text-[10px] text-[#86868B] block mb-1">Tope Máximo ({currencySymbol})</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Ej. 25000"
+                          value={softCap}
+                          onChange={e => setSoftCap(e.target.value)}
+                          className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-[#86868B] block mb-1">Tope Ref. US$ (Opcional)</label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          placeholder="Ej. 150"
+                          value={softCapUsd}
+                          onChange={e => setSoftCapUsd(e.target.value)}
+                          className="w-full bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cuotas / Diferidos */}
+                  <div className="pt-2 border-t border-black/[0.06] dark:border-white/10 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[11px] font-semibold text-[#1D1D1F] dark:text-white">
+                        Cuotas / Diferidos (Extracrédito o 0% Interés)
+                      </span>
+                      <span className="text-[10px] text-[#86868B]">Descuenta disponible</span>
+                    </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                      <input
+                        type="text"
+                        placeholder="Compra (ej. Laptop)"
+                        value={instTitle}
+                        onChange={e => setInstTitle(e.target.value)}
+                        className="col-span-2 sm:col-span-2 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white placeholder:text-[#86868B] focus:outline-none focus:border-[#0071E3]"
+                      />
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder={`Total (${currencySymbol})`}
+                        value={instTotalAmount}
+                        onChange={e => setInstTotalAmount(e.target.value)}
+                        className="bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                      />
+                      <div className="flex gap-1">
+                        <input
+                          type="number"
+                          min="1"
+                          max="120"
+                          placeholder="Meses"
+                          value={instTermMonths}
+                          onChange={e => setInstTermMonths(e.target.value)}
+                          title="Plazo en meses"
+                          className="w-1/2 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-1.5 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          placeholder="Pag."
+                          value={instMonthsPaid}
+                          onChange={e => setInstMonthsPaid(e.target.value)}
+                          title="Cuotas ya pagadas"
+                          className="w-1/2 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-1.5 py-1.5 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        placeholder="Día de cobro mensual (opc.)"
+                        value={instChargeDay}
+                        onChange={e => setInstChargeDay(e.target.value)}
+                        className="w-44 bg-white dark:bg-[#1C1C1E] border border-black/[0.08] dark:border-white/10 rounded-xl px-2.5 py-1 text-[11px] text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleAddInstallment}
+                        className="bg-[#0071E3] hover:bg-[#0077ED] text-white px-3 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 whitespace-nowrap shrink-0"
+                      >
+                        <Plus className="w-3 h-3" /> Agregar Cuota
+                      </button>
+                    </div>
+                    {installments.length > 0 && (
+                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {installments.map(inst => (
+                          <div key={inst.id} className="flex items-center justify-between gap-2 bg-white dark:bg-[#1C1C1E] px-2.5 py-1.5 rounded-xl text-[11px] tabular-nums">
+                            <div className="min-w-0 flex-1">
+                              <span className={`truncate font-medium block ${inst.isActive ? 'text-[#1D1D1F] dark:text-zinc-200' : 'line-through text-[#86868B]'}`}>
+                                {inst.title} ({inst.monthsPaid}/{inst.termMonths})
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span className="font-semibold text-[#1D1D1F] dark:text-white">
+                                {currencySymbol}{inst.monthlyQuota.toLocaleString('en-US', { minimumFractionDigits: 2 })}/mes
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setInstallments(prev =>
+                                    prev.map(x => {
+                                      if (x.id !== inst.id) return x;
+                                      const nextPaid = Math.min(x.termMonths, (x.monthsPaid || 0) + 1);
+                                      return { ...x, monthsPaid: nextPaid, isActive: nextPaid < x.termMonths };
+                                    })
+                                  )
+                                }
+                                className="px-2 py-0.5 rounded-full bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] font-semibold text-[10px]"
+                                title="Registrar +1 cuota pagada"
+                              >
+                                +1
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setInstallments(prev => prev.filter(x => x.id !== inst.id))}
+                                className="text-[#86868B] hover:text-[#FF3B30]"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="bg-amber-500/10 border border-amber-500/30 rounded-2xl p-3 flex items-center justify-between text-xs">

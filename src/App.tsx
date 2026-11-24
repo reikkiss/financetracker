@@ -10,7 +10,6 @@ import {
   Upload,
   ArrowRightLeft,
   Calendar,
-  Mail,
   Sun,
   Moon
 } from 'lucide-react';
@@ -40,34 +39,21 @@ import {
   LoanQuota,
   LoanCalcMethod,
   LoanRatePeriod,
+  CardInstallment,
   allocateLoanPayment,
   generateLoanQuotasSchedule,
-  reverseLoanPaymentOnQuotas
+  reverseLoanPaymentOnQuotas,
+  findFuzzyPendingMatch
 } from './utils/financeMath';
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
 import StatementUploadModal, { ImportedTransactionDraft } from './components/StatementUploadModal';
-import {
-  ParsedEmailTransaction,
-  findFuzzyPendingMatch,
-  findExistingTransactionForEmailAlert,
-  findOppositeTransferCandidate
-} from './utils/bankEmailParser';
 import AddTransactionModal from './components/AddTransactionModal';
 import EditTransactionModal from './components/EditTransactionModal';
 import AddBudgetModal from './components/AddBudgetModal';
 import EditBudgetModal from './components/EditBudgetModal';
 import TransferModal from './components/TransferModal';
 import AiAdvisorModal from './components/AiAdvisorModal';
-import EmailSyncModal, { PersistentGmailState, SessionICloudState } from './components/EmailSyncModal';
-import {
-  authorizeGmailAccess,
-  checkNewGmailAlertsSinceHistory,
-  clearMemoryGmailSession,
-  getMemoryGmailToken,
-  trySilentRefreshGmailToken,
-  GmailAuthError
-} from './services/gmailSyncService';
 import { getApiUrl } from './utils/apiConfig';
 
 const app = initializeApp(firebaseConfig);
@@ -150,12 +136,7 @@ interface UserProfile {
   avatar: string;
   currency: string;
   monthlyBudget: number;
-  gmailSyncEnabled?: boolean;
-  gmailConnectedEmail?: string;
-  gmailAutoScan?: boolean;
-  gmailLastHistoryId?: string;
-  gmailLastSyncedAt?: string;
-  processedEmailIds?: string[];
+  fxRateUsdToDop?: number;
 }
 
 export interface Transaction {
@@ -233,17 +214,11 @@ export default function App() {
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
 
   const [isUploadStatementOpen, setIsUploadStatementOpen] = useState(false);
-  const [isEmailParserOpen, setIsEmailParserOpen] = useState(false);
-
-  // Persistent Email Sync & Auto-Scan state (tokens kept strictly in memory, connection metadata in Firestore)
-  const [gmailToken, setGmailToken] = useState<string | null>(() => getMemoryGmailToken());
-  const [gmailTokenExpired, setGmailTokenExpired] = useState(false);
-  const [iCloudSession, setICloudSession] = useState<SessionICloudState | null>(null);
-  const [emailSyncToast, setEmailSyncToast] = useState<{ title: string; subtitle: string } | null>(null);
 
   const [isAiOpen, setIsAiOpen] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
   const [aiResult, setAiResult] = useState('');
+  const [aiError, setAiError] = useState<string | null>(null);
   const [aiLoading, setAiLoading] = useState(false);
 
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
@@ -275,10 +250,6 @@ export default function App() {
       if (user) {
         await loadOrCreateUserProfile(user);
       } else {
-        clearMemoryGmailSession();
-        setGmailToken(null);
-        setGmailTokenExpired(false);
-        setICloudSession(null);
         setCurrentUserProfile(null);
         setTransactions([]);
         setBudgets([]);
@@ -301,7 +272,8 @@ export default function App() {
           email: (user.email || '').slice(0, 100),
           avatar: '💳',
           currency: 'USD',
-          monthlyBudget: 5000
+          monthlyBudget: 5000,
+          fxRateUsdToDop: 60.5
         };
         await setDoc(userRef, newProfile);
         setCurrentUserProfile(newProfile);
@@ -373,10 +345,6 @@ export default function App() {
 
   const handleSignOut = async () => {
     try {
-      clearMemoryGmailSession();
-      setGmailToken(null);
-      setGmailTokenExpired(false);
-      setICloudSession(null);
       await signOut(auth);
     } catch (err) {
       console.error('Sign out error:', err);
@@ -384,6 +352,8 @@ export default function App() {
   };
 
   const currencySymbol = currentUserProfile ? (CURRENCIES[currentUserProfile.currency] || '$') : '$';
+  const baseCurrencyCode = currentUserProfile?.currency || 'USD';
+  const fxRateUsdToDop = currentUserProfile?.fxRateUsdToDop && currentUserProfile.fxRateUsdToDop > 0 ? currentUserProfile.fxRateUsdToDop : 60.5;
 
   const totalIncome = useMemo(
     () =>
@@ -780,594 +750,10 @@ export default function App() {
     setIsTransferOpen(true);
   };
 
-  const handleIngestParsedEmailTx = async (parsed: ParsedEmailTransaction & { budgetId?: string }) => {
-    if (!firebaseUser) return;
-    const targetBudgetId = parsed.budgetId?.trim() || '';
-    const existingHit = findExistingTransactionForEmailAlert(transactionsRef.current, {
-      ...parsed,
-      budgetId: targetBudgetId || undefined
-    });
-    if (existingHit) return;
-
-    const oppositeCandidate = targetBudgetId
-      ? findOppositeTransferCandidate(
-          transactionsRef.current,
-          {
-            budgetId: targetBudgetId,
-            amount: parsed.amount,
-            date: parsed.date,
-            type: parsed.type,
-            title: parsed.title,
-            category: parsed.category
-          },
-          budgetsRef.current
-        )
-      : undefined;
-
-    if (oppositeCandidate && oppositeCandidate.budgetId) {
-      const incomingAcc = budgetsRef.current.find(b => b.id === targetBudgetId);
-      const existingAcc = budgetsRef.current.find(b => b.id === oppositeCandidate.budgetId);
-      const incomingIsDebt = incomingAcc?.accountType === 'credit_card' || incomingAcc?.accountType === 'loan';
-      const existingIsDebt = existingAcc?.accountType === 'credit_card' || existingAcc?.accountType === 'loan';
-
-      let fromId = parsed.type === 'income' ? oppositeCandidate.budgetId : targetBudgetId;
-      let toId = parsed.type === 'income' ? targetBudgetId : oppositeCandidate.budgetId;
-      if (existingIsDebt && !incomingIsDebt) {
-        fromId = targetBudgetId;
-        toId = oppositeCandidate.budgetId;
-      } else if (incomingIsDebt && !existingIsDebt) {
-        fromId = oppositeCandidate.budgetId;
-        toId = targetBudgetId;
-      }
-
-      const toAcc = budgetsRef.current.find(b => b.id === toId);
-      const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
-      const cleanTitle = isPayingDebt
-        ? toAcc?.accountType === 'loan'
-          ? 'Loan Payment'
-          : 'Card Payment'
-        : 'Self Transfer';
-      const mergedTx: Transaction = stripUndefined({
-        ...oppositeCandidate,
-        title: cleanTitle,
-        type: 'expense' as const,
-        category: isPayingDebt ? 'Debt Payment' : 'Transfer',
-        budgetId: fromId.slice(0, 50),
-        transferToBudgetId: toId.slice(0, 50),
-        isTransfer: true,
-        isLoanPayment: isPayingDebt
-      });
-      const reverted = revertSingleTxInMemory(oppositeCandidate, budgetsRef.current);
-      const applied = applySingleTxInMemory(mergedTx, reverted.nextBudgets);
-      const touched = Array.from(new Set([...reverted.touchedIds, ...applied.touchedIds]));
-      try {
-        await setDoc(doc(db, 'transactions', oppositeCandidate.id), stripUndefined(applied.enrichedTx));
-        if (touched.length > 0) {
-          await persistTouchedBudgets(touched, applied.nextBudgets);
-        }
-        setTransactions(prev => prev.map(t => (t.id === oppositeCandidate.id ? applied.enrichedTx : t)));
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `transactions/${oppositeCandidate.id}`);
-      }
-      return;
-    }
-
-    const id = `tx_email_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-    const isTrans = parsed.type === 'transfer';
-    const newTx: Transaction = stripUndefined({
-      id,
-      userId: firebaseUser.uid,
-      title: (parsed.title || 'Bank Alert').slice(0, 200),
-      amount: Math.abs(Number(parsed.amount) || 0),
-      type: isTrans ? 'expense' : (parsed.type as 'income' | 'expense'),
-      category: (isTrans ? 'Transfer' : parsed.category || 'Other').slice(0, 50),
-      date: (parsed.date || new Date().toISOString().split('T')[0]).slice(0, 20),
-      notes: (parsed.notes || '').slice(0, 500),
-      ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
-      ...(parsed.emailId ? { emailId: parsed.emailId.slice(0, 100) } : {}),
-      ...(parsed.emailOutcome ? { emailOutcome: parsed.emailOutcome } : {}),
-      ...(parsed.contextSnippet ? { emailContext: parsed.contextSnippet.slice(0, 240) } : {}),
-      status: 'pending' as const,
-      ...(isTrans ? { isTransfer: true } : {})
-    });
-
-    const latestBudgets = isTrans
-      ? budgets
-      : await ensureBudgetsForCategories(
-          { [newTx.category]: newTx.type === 'expense' ? newTx.amount : 0 },
-          budgets
-        );
-
-    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, latestBudgets);
-
-    try {
-      await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-      return;
-    }
-
-    if (touchedIds.length > 0) {
-      await persistTouchedBudgets(touchedIds, nextBudgets);
-    }
-
-    setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-  };
-
-  const handleBatchIngestEmailTxs = async (
-    items: Array<ParsedEmailTransaction & { budgetId?: string }>
-  ): Promise<number> => {
-    if (!firebaseUser || items.length === 0) return 0;
-
-    const categoryTotals: Record<string, number> = {};
-    for (const item of items) {
-      if (item.type === 'transfer' || item.emailOutcome === 'declined') continue;
-      const cat = (item.category || 'Other').trim().slice(0, 50);
-      const amt = Math.abs(Number(item.amount) || 0);
-      categoryTotals[cat] = (categoryTotals[cat] || 0) + (item.type === 'expense' ? amt : 0);
-    }
-
-    let workingBudgets = await ensureBudgetsForCategories(categoryTotals, budgets);
-    const allTouchedIds = new Set<string>();
-    const createdTxs: Transaction[] = [];
-    const updatedTxsMap = new Map<string, Transaction>();
-    let workingTxs = [...transactionsRef.current];
-    const baseTs = Date.now();
-
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      const targetBudgetId = item.budgetId?.trim() || '';
-
-      const existingHit = findExistingTransactionForEmailAlert(workingTxs, {
-        ...item,
-        budgetId: targetBudgetId || undefined
-      });
-      if (existingHit) continue;
-
-      const oppositeCandidate = targetBudgetId
-        ? findOppositeTransferCandidate(
-            workingTxs,
-            {
-              budgetId: targetBudgetId,
-              amount: item.amount,
-              date: item.date,
-              type: item.type,
-              title: item.title,
-              category: item.category
-            },
-            workingBudgets
-          )
-        : undefined;
-
-      if (oppositeCandidate && oppositeCandidate.budgetId) {
-        const incomingAcc = workingBudgets.find(b => b.id === targetBudgetId);
-        const existingAcc = workingBudgets.find(b => b.id === oppositeCandidate.budgetId);
-        const incomingIsDebt = incomingAcc?.accountType === 'credit_card' || incomingAcc?.accountType === 'loan';
-        const existingIsDebt = existingAcc?.accountType === 'credit_card' || existingAcc?.accountType === 'loan';
-
-        let fromId = item.type === 'income' ? oppositeCandidate.budgetId : targetBudgetId;
-        let toId = item.type === 'income' ? targetBudgetId : oppositeCandidate.budgetId;
-        if (existingIsDebt && !incomingIsDebt) {
-          fromId = targetBudgetId;
-          toId = oppositeCandidate.budgetId;
-        } else if (incomingIsDebt && !existingIsDebt) {
-          fromId = oppositeCandidate.budgetId;
-          toId = targetBudgetId;
-        }
-
-        const toAcc = workingBudgets.find(b => b.id === toId);
-        const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
-        const cleanTitle = isPayingDebt
-          ? toAcc?.accountType === 'loan'
-            ? 'Loan Payment'
-            : 'Card Payment'
-          : 'Self Transfer';
-        const mergedTx: Transaction = stripUndefined({
-          ...oppositeCandidate,
-          title: cleanTitle,
-          type: 'expense' as const,
-          category: isPayingDebt ? 'Debt Payment' : 'Transfer',
-          budgetId: fromId.slice(0, 50),
-          transferToBudgetId: toId.slice(0, 50),
-          isTransfer: true,
-          isLoanPayment: isPayingDebt
-        });
-        const reverted = revertSingleTxInMemory(oppositeCandidate, workingBudgets);
-        const applied = applySingleTxInMemory(mergedTx, reverted.nextBudgets);
-        workingBudgets = applied.nextBudgets;
-        reverted.touchedIds.forEach(tid => allTouchedIds.add(tid));
-        applied.touchedIds.forEach(tid => allTouchedIds.add(tid));
-        try {
-          await setDoc(doc(db, 'transactions', oppositeCandidate.id), stripUndefined(applied.enrichedTx));
-          updatedTxsMap.set(oppositeCandidate.id, applied.enrichedTx);
-          workingTxs = workingTxs.map(t => (t.id === oppositeCandidate.id ? applied.enrichedTx : t));
-        } catch (err) {
-          handleFirestoreError(err, OperationType.UPDATE, `transactions/${oppositeCandidate.id}`);
-        }
-        continue;
-      }
-
-      const id = `tx_email_${baseTs}_${i}`;
-      const isTrans = item.type === 'transfer';
-      const newTx: Transaction = stripUndefined({
-        id,
-        userId: firebaseUser.uid,
-        title: (item.title || 'Bank Alert').slice(0, 200),
-        amount: Math.abs(Number(item.amount) || 0),
-        type: isTrans ? 'expense' : (item.type as 'income' | 'expense'),
-        category: (isTrans ? 'Transfer' : item.category || 'Other').slice(0, 50),
-        date: (item.date || new Date().toISOString().split('T')[0]).slice(0, 20),
-        notes: (item.notes || '').slice(0, 500),
-        ...(targetBudgetId ? { budgetId: targetBudgetId.slice(0, 50) } : {}),
-        ...(item.emailId ? { emailId: item.emailId.slice(0, 100) } : {}),
-        ...(item.emailOutcome ? { emailOutcome: item.emailOutcome } : {}),
-        ...(item.contextSnippet ? { emailContext: item.contextSnippet.slice(0, 240) } : {}),
-        status: 'pending' as const,
-        ...(isTrans ? { isTransfer: true } : {})
-      });
-
-      const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, workingBudgets);
-      workingBudgets = nextBudgets;
-      touchedIds.forEach(tid => allTouchedIds.add(tid));
-
-      try {
-        await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
-        createdTxs.push(enrichedTx);
-        workingTxs = [enrichedTx, ...workingTxs];
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-      }
-    }
-
-    if (allTouchedIds.size > 0) {
-      await persistTouchedBudgets(Array.from(allTouchedIds), workingBudgets);
-    }
-
-    if (createdTxs.length > 0 || updatedTxsMap.size > 0) {
-      setTransactions(prev => {
-        const merged = prev.map(t => updatedTxsMap.get(t.id) || t);
-        return [...createdTxs, ...merged].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-      });
-    }
-
-    return createdTxs.length;
-  };
-
-  // Persistent Gmail connection metadata & automatic real-time incoming email watcher
-  const updateProfileEmailMeta = useCallback(
-    async (patch: Partial<UserProfile>, appendProcessedIds?: string[]) => {
-      if (!firebaseUser) return;
-      setCurrentUserProfile(prev => {
-        if (!prev) return prev;
-        const mergedProcessed = appendProcessedIds?.length
-          ? Array.from(new Set([...(prev.processedEmailIds || []), ...appendProcessedIds])).slice(-250)
-          : prev.processedEmailIds;
-        const nextProfile = stripUndefined({
-          ...prev,
-          ...patch,
-          ...(mergedProcessed ? { processedEmailIds: mergedProcessed } : {})
-        });
-        setDoc(doc(db, 'users', firebaseUser.uid), nextProfile).catch(err =>
-          console.error('Failed to persist email sync metadata:', err)
-        );
-        return nextProfile;
-      });
-    },
-    [firebaseUser]
-  );
-
-  const handleAuthorizeGmail = useCallback(async () => {
-    const res = await authorizeGmailAccess(currentUserProfile?.gmailConnectedEmail);
-    setGmailToken(res.accessToken);
-    setGmailTokenExpired(false);
-    await updateProfileEmailMeta({
-      gmailSyncEnabled: true,
-      gmailConnectedEmail: res.emailAddress,
-      gmailAutoScan: currentUserProfile?.gmailAutoScan ?? true,
-      gmailLastHistoryId: res.historyId || currentUserProfile?.gmailLastHistoryId,
-      gmailLastSyncedAt: new Date().toISOString()
-    });
-    return res;
-  }, [
-    currentUserProfile?.gmailAutoScan,
-    currentUserProfile?.gmailConnectedEmail,
-    currentUserProfile?.gmailLastHistoryId,
-    updateProfileEmailMeta
-  ]);
-
-  const handleDisconnectGmail = useCallback(async () => {
-    clearMemoryGmailSession();
-    setGmailToken(null);
-    setGmailTokenExpired(false);
-    await updateProfileEmailMeta({
-      gmailSyncEnabled: false,
-      gmailAutoScan: false,
-      gmailLastHistoryId: ''
-    });
-  }, [updateProfileEmailMeta]);
-
-  const handleToggleGmailAutoScan = useCallback(
-    async (enabled: boolean) => {
-      await updateProfileEmailMeta({ gmailAutoScan: enabled });
-    },
-    [updateProfileEmailMeta]
-  );
-
-  const handleGmailScanComplete = useCallback(
-    async (meta: {
-      historyId?: string;
-      emailAddress?: string;
-      lastSyncedAt: string;
-      newProcessedIds?: string[];
-    }) => {
-      await updateProfileEmailMeta(
-        {
-          gmailSyncEnabled: true,
-          ...(meta.emailAddress ? { gmailConnectedEmail: meta.emailAddress } : {}),
-          ...(meta.historyId ? { gmailLastHistoryId: meta.historyId } : {}),
-          gmailLastSyncedAt: meta.lastSyncedAt
-        },
-        meta.newProcessedIds
-      );
-    },
-    [updateProfileEmailMeta]
-  );
-
-  const gmailState: PersistentGmailState = useMemo(
-    () => ({
-      enabled: Boolean(currentUserProfile?.gmailSyncEnabled),
-      email: currentUserProfile?.gmailConnectedEmail || '',
-      autoScan: currentUserProfile?.gmailAutoScan ?? true,
-      tokenActive: Boolean(gmailToken) && !gmailTokenExpired,
-      tokenExpired: gmailTokenExpired,
-      historyId: currentUserProfile?.gmailLastHistoryId,
-      lastSyncedAt: currentUserProfile?.gmailLastSyncedAt
-    }),
-    [currentUserProfile, gmailToken, gmailTokenExpired]
-  );
-
   const budgetsRef = useRef(budgets);
   budgetsRef.current = budgets;
   const transactionsRef = useRef(transactions);
   transactionsRef.current = transactions;
-  const profileRef = useRef(currentUserProfile);
-  profileRef.current = currentUserProfile;
-  const gmailAutoLockRef = useRef(false);
-  const icloudAutoLockRef = useRef(false);
-  const silentRefreshAttemptedRef = useRef(false);
-
-  // Attempt silent Gmail token renewal once on app reload if user previously enabled Gmail Auto-Sync
-  useEffect(() => {
-    if (!firebaseUser || !currentUserProfile?.gmailSyncEnabled || gmailToken || silentRefreshAttemptedRef.current) {
-      return;
-    }
-    silentRefreshAttemptedRef.current = true;
-    trySilentRefreshGmailToken(currentUserProfile.gmailConnectedEmail).then(refreshed => {
-      if (refreshed) {
-        setGmailToken(refreshed);
-        setGmailTokenExpired(false);
-      }
-    });
-  }, [firebaseUser, currentUserProfile?.gmailSyncEnabled, currentUserProfile?.gmailConnectedEmail, gmailToken]);
-
-  const filterUnprocessedAlerts = useCallback((alerts: ParsedEmailTransaction[]) => {
-    const processedSet = new Set(profileRef.current?.processedEmailIds || []);
-    transactionsRef.current.forEach(t => {
-      if (t.emailId) processedSet.add(t.emailId);
-    });
-
-    const latestBudgets = budgetsRef.current;
-    const claimedTxIds = new Set<string>();
-    const freshAlerts: Array<ParsedEmailTransaction & { budgetId?: string }> = [];
-    const declinedAlerts: ParsedEmailTransaction[] = [];
-    const seenEmailIds: string[] = [];
-
-    for (const alert of alerts) {
-      if (alert.emailId && processedSet.has(alert.emailId)) {
-        continue;
-      }
-
-      if (alert.emailId) {
-        seenEmailIds.push(alert.emailId);
-      }
-
-      let matched = latestBudgets.find(b => {
-        if (!alert.cardNumber) return false;
-        const haystack = `${b.name || ''} ${b.category || ''} ${b.description || ''}`;
-        return haystack.includes(alert.cardNumber);
-      });
-      if (!matched && alert.bankName) {
-        const cleanBank = alert.bankName.toLowerCase().replace('banco ', '').trim();
-        matched = latestBudgets.find(b =>
-          `${b.name || ''} ${b.category || ''}`.toLowerCase().includes(cleanBank)
-        );
-      }
-
-      const alertWithBudget = { ...alert, budgetId: matched?.id || undefined };
-
-      // Do NOT auto-add declined transactions to spending ledger
-      if (alert.emailOutcome === 'declined') {
-        declinedAlerts.push(alert);
-        continue;
-      }
-
-      // Fuzzy + multi-signal match against already-registered ledger transactions
-      const existingMatch = findExistingTransactionForEmailAlert(
-        transactionsRef.current,
-        alertWithBudget,
-        claimedTxIds
-      );
-      if (existingMatch) {
-        if (existingMatch.id) claimedTxIds.add(existingMatch.id);
-        continue;
-      }
-
-      freshAlerts.push(alertWithBudget);
-    }
-
-    return { freshAlerts, declinedAlerts, seenEmailIds };
-  }, []);
-
-  const showNewAlertToast = useCallback(
-    (items: ParsedEmailTransaction[], declined: ParsedEmailTransaction[] = []) => {
-      if (items.length === 1) {
-        const a = items[0];
-        const tag = a.emailOutcome === 'reversed' ? 'Reversed / Refund' : 'Flotante';
-        setEmailSyncToast({
-          title: `New bank alert synced: ${a.title}`,
-          subtitle: `${a.currency} ${a.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • ${a.bankName} (${tag})${a.contextSnippet ? ` — ${a.contextSnippet}` : ''}`
-        });
-      } else if (items.length > 1) {
-        setEmailSyncToast({
-          title: `Synced ${items.length} new bank alerts`,
-          subtitle: 'Added automatically to Pending Flotante ledger'
-        });
-      } else if (declined.length > 0) {
-        const d = declined[0];
-        setEmailSyncToast({
-          title: `Declined charge ignored: ${d.title}`,
-          subtitle: `${d.currency} ${d.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })} • Did not go through`
-        });
-      }
-    },
-    []
-  );
-
-  useEffect(() => {
-    if (!emailSyncToast) return;
-    const timer = window.setTimeout(() => setEmailSyncToast(null), 5500);
-    return () => window.clearTimeout(timer);
-  }, [emailSyncToast]);
-
-  // Automatic real-time Gmail watcher (15s incremental history.list poll + immediate on tab focus)
-  useEffect(() => {
-    if (!firebaseUser || !gmailToken || gmailTokenExpired || !gmailState.autoScan) return;
-
-    const runIncrementalGmailCheck = async () => {
-      if (gmailAutoLockRef.current) return;
-      let liveToken = getMemoryGmailToken() || gmailToken;
-      if (!liveToken) {
-        const refreshed = await trySilentRefreshGmailToken(profileRef.current?.gmailConnectedEmail);
-        if (refreshed) {
-          liveToken = refreshed;
-          setGmailToken(refreshed);
-          setGmailTokenExpired(false);
-        } else {
-          setGmailTokenExpired(true);
-          return;
-        }
-      }
-      gmailAutoLockRef.current = true;
-      try {
-        const currentHistoryId = profileRef.current?.gmailLastHistoryId;
-        const result = await checkNewGmailAlertsSinceHistory(liveToken, currentHistoryId);
-        const { freshAlerts, declinedAlerts, seenEmailIds } = filterUnprocessedAlerts(result.alerts);
-
-        if (freshAlerts.length > 0) {
-          await handleBatchIngestEmailTxs(freshAlerts);
-        }
-        if (freshAlerts.length > 0 || declinedAlerts.length > 0) {
-          showNewAlertToast(freshAlerts, declinedAlerts);
-        }
-
-        await updateProfileEmailMeta(
-          {
-            gmailSyncEnabled: true,
-            ...(result.emailAddress ? { gmailConnectedEmail: result.emailAddress } : {}),
-            ...(result.historyId ? { gmailLastHistoryId: result.historyId } : {}),
-            gmailLastSyncedAt: new Date().toISOString()
-          },
-          seenEmailIds
-        );
-      } catch (err: any) {
-        if (err instanceof GmailAuthError && err.code === 'GMAIL_TOKEN_EXPIRED') {
-          const refreshed = await trySilentRefreshGmailToken(profileRef.current?.gmailConnectedEmail);
-          if (refreshed) {
-            setGmailToken(refreshed);
-            setGmailTokenExpired(false);
-          } else {
-            setGmailToken(null);
-            setGmailTokenExpired(true);
-          }
-        }
-      } finally {
-        gmailAutoLockRef.current = false;
-      }
-    };
-
-    runIncrementalGmailCheck();
-    const intervalId = window.setInterval(runIncrementalGmailCheck, 15000);
-    const handleVisibilityOrFocus = () => {
-      if (document.visibilityState === 'visible') {
-        runIncrementalGmailCheck();
-      }
-    };
-    window.addEventListener('focus', handleVisibilityOrFocus);
-    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('focus', handleVisibilityOrFocus);
-      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
-    };
-  }, [
-    firebaseUser,
-    gmailToken,
-    gmailTokenExpired,
-    gmailState.autoScan,
-    filterUnprocessedAlerts,
-    handleBatchIngestEmailTxs,
-    showNewAlertToast,
-    updateProfileEmailMeta
-  ]);
-
-  // Automatic session iCloud watcher (45s poll when user connected iCloud & left Auto-Scan on)
-  useEffect(() => {
-    if (!firebaseUser || !iCloudSession?.connected || !iCloudSession.autoScan) return;
-
-    const runICloudCheck = async () => {
-      if (icloudAutoLockRef.current) return;
-      icloudAutoLockRef.current = true;
-      try {
-        const res = await fetch(getApiUrl('/api/email/sync-icloud'), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: iCloudSession.email,
-            password: iCloudSession.password,
-            limit: iCloudSession.limit || 25
-          })
-        });
-        const text = await res.text();
-        if (!res.ok || text.trim().startsWith('<')) return;
-        const data = JSON.parse(text);
-        const { freshAlerts, declinedAlerts, seenEmailIds } = filterUnprocessedAlerts(data.alerts || []);
-        if (freshAlerts.length > 0) {
-          await handleBatchIngestEmailTxs(freshAlerts);
-        }
-        if (freshAlerts.length > 0 || declinedAlerts.length > 0) {
-          showNewAlertToast(freshAlerts, declinedAlerts);
-        }
-        if (seenEmailIds.length > 0) {
-          await updateProfileEmailMeta({ gmailLastSyncedAt: new Date().toISOString() }, seenEmailIds);
-        }
-      } catch {
-        // Silent background retry next cycle
-      } finally {
-        icloudAutoLockRef.current = false;
-      }
-    };
-
-    const intervalId = window.setInterval(runICloudCheck, 45000);
-    return () => window.clearInterval(intervalId);
-  }, [
-    firebaseUser,
-    iCloudSession,
-    filterUnprocessedAlerts,
-    handleBatchIngestEmailTxs,
-    showNewAlertToast,
-    updateProfileEmailMeta
-  ]);
 
   const handleImportStatementTransactions = async (rows: ImportedTransactionDraft[]) => {
     if (!firebaseUser || rows.length === 0) return;
@@ -2046,24 +1432,97 @@ export default function App() {
     await handleMoveBudgetToIndex(budgetId, targetIndex);
   };
 
-  const handleAskAi = async () => {
-    if (!aiPrompt.trim() || !firebaseUser || aiLoading) return;
-    setAiLoading(true);
+  // Credit Card Installments (Cuotas / Diferidos) inline update
+  const handleUpdateCardInstallments = async (budgetId: string, nextInstallments: CardInstallment[]) => {
+    const target = budgetsRef.current.find(b => b.id === budgetId);
+    if (!target) return;
+    const updatedBudget: Budget = stripUndefined({
+      ...target,
+      installments: nextInstallments
+    });
     try {
+      await setDoc(doc(db, 'budgets', budgetId), updatedBudget);
+      setBudgets(prev => prev.map(b => (b.id === budgetId ? updatedBudget : b)));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `budgets/${budgetId}`);
+    }
+  };
+
+  const handleMarkTransactionCleared = async (txId: string) => {
+    const target = transactionsRef.current.find(t => t.id === txId);
+    if (!target) return;
+    try {
+      await updateDoc(doc(db, 'transactions', txId), { status: 'cleared' });
+      setTransactions(prev => prev.map(t => (t.id === txId ? { ...t, status: 'cleared' } : t)));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `transactions/${txId}`);
+    }
+  };
+
+  const handleAskAi = async (overridePrompt?: string) => {
+    const effectivePrompt = (overridePrompt ?? aiPrompt).trim();
+    if (!effectivePrompt || !firebaseUser || aiLoading) return;
+    setAiLoading(true);
+    setAiError(null);
+    setAiResult('');
+    try {
+      const financialContext = {
+        currency: baseCurrencyCode,
+        currencySymbol,
+        fxRateUsdToDop,
+        selectedMonth: globalSelectedMonth,
+        summary: {
+          totalIncome: Number(totalIncome.toFixed(2)),
+          totalExpense: Number(totalExpense.toFixed(2)),
+          netCashflow: Number((totalIncome - totalExpense).toFixed(2))
+        },
+        accountsAndBudgets: budgets.map(b => ({
+          name: b.name || b.category,
+          type: b.accountType || 'standard',
+          balance: b.accountBalance ?? null,
+          creditLimit: b.creditLimit ?? b.limit ?? null,
+          actualUsedAmount: b.actualUsedAmount ?? null,
+          softCap: b.softCap ?? null,
+          softCapUsd: b.softCapUsd ?? null,
+          cutoffDate: b.cutoffDate || null,
+          dueDate: b.dueDate || null,
+          apr: b.apr ?? null
+        })),
+        recentTransactions: displayTransactions
+          .filter(t => t.emailOutcome !== 'declined')
+          .slice(0, 60)
+          .map(t => ({
+            title: t.title,
+            amount: t.amount,
+            type: t.type,
+            category: t.category,
+            date: t.date,
+            status: t.status || 'cleared',
+            isTransfer: Boolean(t.isTransfer)
+          }))
+      };
+
       const res = await fetch(getApiUrl('/api/ai/advice'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: firebaseUser.uid, prompt: aiPrompt })
+        body: JSON.stringify({
+          prompt: effectivePrompt,
+          financialContext
+        })
       });
       const contentType = res.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        setAiResult('AI Financial Advisor is unavailable right now.');
+        setAiError('AI Financial Advisor returned an unexpected response.');
         return;
       }
       const data = await res.json();
-      setAiResult(data.advice || data.error || 'No response generated.');
-    } catch (err) {
-      setAiResult('Unable to reach the AI Advisor backend.');
+      if (!res.ok) {
+        setAiError(data.error || `AI request failed (${res.status}).`);
+        return;
+      }
+      setAiResult(data.advice || 'No response generated.');
+    } catch {
+      setAiError('Unable to reach the AI Advisor backend.');
     } finally {
       setAiLoading(false);
     }
@@ -2096,7 +1555,7 @@ export default function App() {
             </span>
             <h1 className="text-3xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Finance Tracker</h1>
             <p className="text-xs text-[#86868B] leading-relaxed">
-              Private multi-account ledger, real-time iCloud & Gmail bank alerts, and statement reconciliation.
+              Private multi-account ledger, credit cycle tracking, and statement reconciliation.
             </p>
           </div>
 
@@ -2132,7 +1591,7 @@ export default function App() {
     <div className="flex h-screen bg-[#F5F5F7] dark:bg-[#000000] text-[#1D1D1F] dark:text-[#F5F5F7] antialiased overflow-hidden select-none">
 
       {/* SIDEBAR / LEFT PANEL */}
-      <aside className="hidden md:flex w-64 bg-white/90 dark:bg-[#141416] border-r border-black/[0.06] dark:border-white/[0.08] flex-col p-4 z-10 overflow-y-auto shrink-0">
+      <aside className="hidden md:flex w-72 bg-white/90 dark:bg-[#141416] border-r border-black/[0.06] dark:border-white/[0.08] flex-col p-4 z-10 overflow-y-auto shrink-0">
         <div
           className="flex items-center justify-between pb-4 mb-4 border-b border-black/[0.06] dark:border-white/[0.08] cursor-pointer group"
           onClick={() => setActiveTab('settings')}
@@ -2154,7 +1613,7 @@ export default function App() {
         <div className="text-[11px] font-semibold text-[#86868B] uppercase tracking-[0.04em] mb-2 px-1">
           Views & Pages
         </div>
-        <div className="space-y-1 mb-6">
+        <div className="space-y-1 mb-5">
           <button
             onClick={() => setActiveTab('dashboard')}
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-medium transition ${
@@ -2210,7 +1669,7 @@ export default function App() {
         <div className="text-[11px] font-semibold text-[#86868B] uppercase tracking-[0.04em] mb-2 px-1">
           Quick Actions
         </div>
-        <div className="space-y-1.5 mb-6">
+        <div className="space-y-1.5 mb-5">
           <button
             onClick={() => {
               setDefaultTxType('expense');
@@ -2252,12 +1711,6 @@ export default function App() {
             className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#248A3D] dark:text-[#34C759] px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
           >
             <Upload className="w-3.5 h-3.5" /> Upload Statement
-          </button>
-          <button
-            onClick={() => setIsEmailParserOpen(true)}
-            className="w-full flex items-center gap-2 bg-[#F5F5F7] hover:bg-[#E8E8ED] dark:bg-[#1C1C1E] dark:hover:bg-[#2C2C2E] text-[#C93400] dark:text-[#FF9F0A] px-3 py-2 rounded-xl text-xs font-medium border border-black/[0.04] dark:border-white/[0.08] transition"
-          >
-            <Mail className="w-3.5 h-3.5" /> Sync Email Alerts
           </button>
         </div>
 
@@ -2331,26 +1784,6 @@ export default function App() {
               </div>
 
               <button
-                onClick={() => setIsEmailParserOpen(true)}
-                className="flex items-center gap-1.5 bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-white border border-black/[0.06] dark:border-white/10 px-3.5 py-1.5 rounded-full text-xs font-semibold transition active:scale-[0.98] whitespace-nowrap"
-              >
-                <Mail className="w-3.5 h-3.5 text-[#FF9F0A]" />
-                <span className="hidden sm:inline">
-                  {(gmailState.enabled && gmailState.tokenActive) || iCloudSession?.connected
-                    ? 'Email Auto-Sync'
-                    : gmailState.enabled
-                    ? 'Reconnect Gmail'
-                    : 'Sync Email'}
-                </span>
-                {((gmailState.enabled && gmailState.tokenActive) || iCloudSession?.connected) && (
-                  <span className="w-2 h-2 rounded-full bg-[#34C759]" />
-                )}
-                {gmailState.enabled && !gmailState.tokenActive && !iCloudSession?.connected && (
-                  <span className="w-2 h-2 rounded-full bg-[#FF9F0A]" />
-                )}
-              </button>
-
-              <button
                 type="button"
                 onClick={() => setTheme(prev => (prev === 'light' ? 'dark' : 'light'))}
                 title={theme === 'light' ? 'Switch to Dark Mode' : 'Switch to Light Mode'}
@@ -2408,7 +1841,8 @@ export default function App() {
               totalIncome={totalIncome}
               totalExpense={totalExpense}
               currencySymbol={currencySymbol}
-              currencyCode={currentUserProfile?.currency || 'USD'}
+              currencyCode={baseCurrencyCode}
+              fxRateUsdToDop={fxRateUsdToDop}
               colors={COLORS}
               selectedMonth={globalSelectedMonth}
               onOpenAddTx={(type, datePrefill) => {
@@ -2423,9 +1857,8 @@ export default function App() {
               onOpenEditTx={handleOpenEditTx}
               onDeleteTx={handleDeleteTx}
               onOpenAddBudget={() => setIsAddBudgetOpen(true)}
-              onOpenEmailSync={() => setIsEmailParserOpen(true)}
-              onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
               onNavigateBudgets={() => setActiveTab('budgets')}
+              onMarkCleared={handleMarkTransactionCleared}
             />
           )}
 
@@ -2462,6 +1895,7 @@ export default function App() {
               onReorderBudgetToIndex={handleMoveBudgetToIndex}
               onRecalculateLiquidBalance={handleRecalculateLiquidBalance}
               onRecalculateAccountBalance={handleRecalculateAccountBalance}
+              onUpdateCardInstallments={handleUpdateCardInstallments}
             />
           )}
 
@@ -2482,7 +1916,6 @@ export default function App() {
                 setIsAddTxOpen(true);
               }}
               onOpenUploadStatement={() => setIsUploadStatementOpen(true)}
-              onOpenEmailParser={() => setIsEmailParserOpen(true)}
               onOpenTransfer={() => handleOpenTransfer()}
               onOpenEditTx={handleOpenEditTx}
               onDeleteTx={handleDeleteTx}
@@ -2651,7 +2084,10 @@ export default function App() {
             ...(data.accountType === 'credit_card'
               ? {
                   ...(data.cutoffDate ? { cutoffDate: data.cutoffDate.trim().slice(0, 40) } : {}),
-                  ...(data.dueDate ? { dueDate: data.dueDate.trim().slice(0, 40) } : {})
+                  ...(data.dueDate ? { dueDate: data.dueDate.trim().slice(0, 40) } : {}),
+                  ...(data.softCap && data.softCap > 0 ? { softCap: Number(data.softCap) } : {}),
+                  ...(data.softCapUsd && data.softCapUsd > 0 ? { softCapUsd: Number(data.softCapUsd) } : {}),
+                  ...(data.installments && data.installments.length > 0 ? { installments: data.installments } : {})
                 }
               : {})
           });
@@ -2710,7 +2146,14 @@ export default function App() {
                   overdraftPercentage: updated.overdraftPercentage ?? 0,
                   actualUsedAmount: updated.actualUsedAmount ?? editingBudget.actualUsedAmount ?? 0,
                   ...(updated.cutoffDate ? { cutoffDate: updated.cutoffDate.trim().slice(0, 40) } : {}),
-                  ...(updated.dueDate ? { dueDate: updated.dueDate.trim().slice(0, 40) } : {})
+                  ...(updated.dueDate ? { dueDate: updated.dueDate.trim().slice(0, 40) } : {}),
+                  ...(updated.softCap !== undefined && updated.softCap > 0 ? { softCap: Number(updated.softCap) } : {}),
+                  ...(updated.softCapUsd !== undefined && updated.softCapUsd > 0 ? { softCapUsd: Number(updated.softCapUsd) } : {}),
+                  ...(updated.installments !== undefined
+                    ? { installments: updated.installments }
+                    : editingBudget.installments
+                    ? { installments: editingBudget.installments }
+                    : {})
                 }
               : {}),
             ...(isLoan
@@ -2792,33 +2235,10 @@ export default function App() {
         budgets={budgets}
         existingTransactions={transactions}
         availableCategories={availableCategories}
-        currencyCode={currentUserProfile?.currency || 'USD'}
+        currencyCode={baseCurrencyCode}
         currencySymbol={currencySymbol}
         onImportTransactions={handleImportStatementTransactions}
         onOpenCreateBudget={() => setIsAddBudgetOpen(true)}
-      />
-
-      <EmailSyncModal
-        isOpen={isEmailParserOpen}
-        onClose={() => setIsEmailParserOpen(false)}
-        budgets={budgets}
-        existingTransactions={transactions}
-        processedEmailIds={currentUserProfile?.processedEmailIds || []}
-        currencySymbol={currencySymbol}
-        gmailState={gmailState}
-        gmailToken={gmailToken}
-        onAuthorizeGmail={handleAuthorizeGmail}
-        onDisconnectGmail={handleDisconnectGmail}
-        onToggleGmailAutoScan={handleToggleGmailAutoScan}
-        onGmailScanComplete={handleGmailScanComplete}
-        onMarkGmailTokenExpired={() => {
-          setGmailToken(null);
-          setGmailTokenExpired(true);
-        }}
-        iCloudSession={iCloudSession}
-        onSetICloudSession={setICloudSession}
-        onIngestParsedTx={handleIngestParsedEmailTx}
-        onBatchIngestTxs={handleBatchIngestEmailTxs}
       />
 
       <AiAdvisorModal
@@ -2827,19 +2247,10 @@ export default function App() {
         aiPrompt={aiPrompt}
         setAiPrompt={setAiPrompt}
         aiResult={aiResult}
+        aiError={aiError}
         aiLoading={aiLoading}
         onAskAi={handleAskAi}
       />
-
-      {emailSyncToast && (
-        <div className="fixed bottom-5 right-5 z-50 bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-[#34C759]/35 rounded-2xl px-4 py-3 shadow-[0_8px_30px_rgba(0,0,0,0.12)] dark:shadow-2xl flex items-center gap-3 max-w-sm">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#34C759] shrink-0" />
-          <div className="min-w-0">
-            <div className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate">{emailSyncToast.title}</div>
-            <div className="text-[11px] text-[#86868B] truncate">{emailSyncToast.subtitle}</div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

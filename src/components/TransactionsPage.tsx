@@ -10,7 +10,6 @@ import {
   Building2,
   Wallet,
   ArrowRightLeft,
-  Mail,
   Filter,
   BookmarkCheck,
   RotateCcw,
@@ -36,7 +35,6 @@ interface TransactionsPageProps {
   onSelectMonth?: (month: string) => void;
   onOpenAddTx: (type: 'income' | 'expense') => void;
   onOpenUploadStatement: () => void;
-  onOpenEmailParser?: () => void;
   onOpenTransfer?: () => void;
   onOpenEditTx: (transaction: any) => void;
   onDeleteTx: (id: string) => void;
@@ -58,7 +56,6 @@ export default function TransactionsPage({
   onSelectMonth,
   onOpenAddTx,
   onOpenUploadStatement,
-  onOpenEmailParser,
   onOpenTransfer,
   onOpenEditTx,
   onDeleteTx
@@ -189,14 +186,6 @@ export default function TransactionsPage({
               className="bg-[#0071E3]/10 hover:bg-[#0071E3]/20 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
             >
               <ArrowRightLeft className="w-3.5 h-3.5" /> Transfer
-            </button>
-          )}
-          {onOpenEmailParser && (
-            <button
-              onClick={onOpenEmailParser}
-              className="bg-[#FF9F0A]/12 hover:bg-[#FF9F0A]/20 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30 px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5"
-            >
-              <Mail className="w-3.5 h-3.5" /> Sync Email Alerts
             </button>
           )}
           <button

@@ -8,8 +8,8 @@ import {
   Building2,
   Wallet,
   ArrowRightLeft,
-  Mail,
-  Upload
+  AlertTriangle,
+  CheckCircle2
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -31,7 +31,10 @@ import {
   getCreditCardCycleForMonth,
   getTransactionCreditCardCycleKey,
   formatShortIsoDate,
-  getCleanTransactionDisplay
+  getCleanTransactionDisplay,
+  evaluateCreditCardSoftCap,
+  getCreditCardGoldenRuleStatus,
+  calculateCardInstallmentsSummary
 } from '../utils/financeMath';
 
 export interface Transaction {
@@ -71,14 +74,14 @@ interface DashboardPageProps {
   totalExpense: number;
   currencySymbol: string;
   currencyCode?: string;
+  fxRateUsdToDop?: number;
   colors?: string[];
   onOpenAddTx: (type: 'income' | 'expense', datePrefill?: string) => void;
   onOpenEditTx: (transaction: Transaction) => void;
   onDeleteTx: (id: string) => void;
   onOpenAddBudget?: () => void;
-  onOpenEmailSync?: () => void;
-  onOpenUploadStatement?: () => void;
   onNavigateBudgets?: () => void;
+  onMarkCleared?: (txId: string) => void;
   selectedMonth?: string;
 }
 
@@ -92,8 +95,6 @@ const APPLE_PALETTE = [
   '#FF3B30', // Apple Red
   '#5856D6'  // Apple Indigo
 ];
-
-const FX_USD_TO_DOP = 60.5;
 
 function CustomChartTooltip({ active, payload, label, displaySymbol }: any) {
   if (active && payload && payload.length) {
@@ -128,16 +129,17 @@ export default function DashboardPage({
   totalExpense,
   currencySymbol,
   currencyCode = 'USD',
+  fxRateUsdToDop = 60.5,
   onOpenAddTx,
   onOpenEditTx,
   onDeleteTx,
   onOpenAddBudget,
-  onOpenEmailSync,
-  onOpenUploadStatement,
   onNavigateBudgets,
+  onMarkCleared,
   selectedMonth
 }: DashboardPageProps) {
   const fullLedgerTransactions = allTransactions || transactions;
+  const activeFxRate = fxRateUsdToDop > 0 ? fxRateUsdToDop : 60.5;
   const [currencySegment, setCurrencySegment] = useState<'All' | 'DOP' | 'USD'>('All');
   const [selectedTxForDetail, setSelectedTxForDetail] = useState<Transaction | null>(null);
   const [feedStatusFilter, setFeedStatusFilter] = useState<'all' | 'pending' | 'cleared'>('all');
@@ -152,14 +154,14 @@ export default function DashboardPage({
     if (currencySegment === 'DOP') {
       return {
         displaySymbol: 'RD$',
-        fxMultiplier: baseIsDop ? 1 : FX_USD_TO_DOP
+        fxMultiplier: baseIsDop ? 1 : activeFxRate
       };
     }
     return {
       displaySymbol: 'US$',
-      fxMultiplier: baseIsDop ? 1 / FX_USD_TO_DOP : 1
+      fxMultiplier: baseIsDop ? 1 / activeFxRate : 1
     };
-  }, [currencySegment, currencyCode, currencySymbol]);
+  }, [currencySegment, currencyCode, currencySymbol, activeFxRate]);
 
   const formatAmt = (val: number) =>
     `${displaySymbol}${(val * fxMultiplier).toLocaleString('en-US', {
@@ -334,7 +336,7 @@ export default function DashboardPage({
           </div>
 
           {/* Metric Eyebrows Grid */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-4 border-t border-black/[0.06] dark:border-white/10">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-black/[0.06] dark:border-white/10">
             <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/50 rounded-2xl p-4 border border-black/[0.03] dark:border-white/5">
               <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block mb-1">
                 TOTAL CREDIT & LOAN EXPOSURE
@@ -359,26 +361,6 @@ export default function DashboardPage({
               <span className="text-[11px] text-[#86868B] mt-0.5 block">
                 Awaiting statement reconciliation
               </span>
-            </div>
-
-            <div className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/50 rounded-2xl p-4 border border-black/[0.03] dark:border-white/5 flex items-center justify-between gap-3">
-              <div>
-                <span className="text-[11px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block mb-1">
-                  EMAIL BANK SYNC
-                </span>
-                <span className="text-xs text-[#1D1D1F] dark:text-white font-medium flex items-center gap-1.5">
-                  <Mail className="w-3.5 h-3.5 text-[#0071E3]" /> iCloud & Gmail
-                </span>
-              </div>
-              {onOpenEmailSync && (
-                <button
-                  type="button"
-                  onClick={onOpenEmailSync}
-                  className="px-3.5 py-1.5 rounded-full text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white transition active:scale-[0.98] shrink-0"
-                >
-                  Sync Alerts
-                </button>
-              )}
             </div>
           </div>
         </div>
@@ -521,35 +503,64 @@ export default function DashboardPage({
                 cardAllTimeNet = Math.max(0, Number((cCharges - cPays).toFixed(2)));
               }
 
+              const installmentSummary = isCredit
+                ? calculateCardInstallmentsSummary(b.installments)
+                : { activeCount: 0, monthlyQuotaTotal: 0, remainingCommittedTotal: 0 };
+              const softCapEval = isCredit
+                ? evaluateCreditCardSoftCap(cardCycleCharges, b.softCap)
+                : { hasSoftCap: false, softCap: 0, cycleSpent: 0, pct: 0, level: 'none' as const, remainingToCap: 0, label: '' };
+              const goldenRule =
+                isCredit && cutoffDay ? getCreditCardGoldenRuleStatus(cutoffDay, dueDay) : null;
+              const remainingCardLimit = isCredit
+                ? Math.max(0, limit - used - installmentSummary.remainingCommittedTotal)
+                : 0;
+
               const utilization = isCredit && limit > 0
-                ? Math.min(100, Math.round((used / limit) * 100))
+                ? Math.min(100, Math.round(((used + installmentSummary.remainingCommittedTotal) / limit) * 100))
                 : isStandard && limit > 0
                 ? Math.min(100, Math.round((standardSpent / limit) * 100))
                 : 0;
 
-              const cardGradient = isCredit
-                ? 'from-[#FFFFFF] via-[#FBFBFD] to-[#F2F2F7] dark:from-[#2A2B2E] dark:via-[#1E1F22] dark:to-[#121315]'
-                : isLoan
-                ? 'from-[#FFFFFF] via-[#F9F5FF] to-[#F1E8FE] dark:from-[#241E2F] dark:via-[#1B1624] dark:to-[#121018]'
-                : isBank
-                ? 'from-[#FFFFFF] via-[#F3F8FF] to-[#E6F0FF] dark:from-[#172535] dark:via-[#111C28] dark:to-[#0A121A]'
-                : 'from-[#FFFFFF] via-[#F3FBF6] to-[#E7F7ED] dark:from-[#1D2B26] dark:via-[#14201C] dark:to-[#0B1310]';
+              const cardGradient =
+                isCredit && softCapEval.level === 'critical'
+                  ? 'from-[#FFF5F5] via-[#FFEBEB] to-[#FFE0DE] dark:from-[#3A1718] dark:via-[#261112] dark:to-[#180B0C]'
+                  : isCredit && softCapEval.level === 'warning'
+                  ? 'from-[#FFFBF2] via-[#FFF4E0] to-[#FFECD0] dark:from-[#382913] dark:via-[#251B0E] dark:to-[#171109]'
+                  : isCredit
+                  ? 'from-[#FFFFFF] via-[#FBFBFD] to-[#F2F2F7] dark:from-[#2A2B2E] dark:via-[#1E1F22] dark:to-[#121315]'
+                  : isLoan
+                  ? 'from-[#FFFFFF] via-[#F9F5FF] to-[#F1E8FE] dark:from-[#241E2F] dark:via-[#1B1624] dark:to-[#121018]'
+                  : isBank
+                  ? 'from-[#FFFFFF] via-[#F3F8FF] to-[#E6F0FF] dark:from-[#172535] dark:via-[#111C28] dark:to-[#0A121A]'
+                  : 'from-[#FFFFFF] via-[#F3FBF6] to-[#E7F7ED] dark:from-[#1D2B26] dark:via-[#14201C] dark:to-[#0B1310]';
 
-              const accentColor = isCredit
-                ? '#FF9F0A'
-                : isLoan
-                ? '#AF52DE'
-                : isBank
-                ? '#0071E3'
-                : '#34C759';
+              const cardBorderClass =
+                isCredit && softCapEval.level === 'critical'
+                  ? 'border-[#FF3B30]/45'
+                  : isCredit && softCapEval.level === 'warning'
+                  ? 'border-[#FF9F0A]/45'
+                  : 'border-black/[0.05] dark:border-white/10';
+
+              const accentColor =
+                isCredit && softCapEval.level === 'critical'
+                  ? '#FF3B30'
+                  : isCredit && softCapEval.level === 'warning'
+                  ? '#FF9F0A'
+                  : isCredit
+                  ? '#FF9F0A'
+                  : isLoan
+                  ? '#AF52DE'
+                  : isBank
+                  ? '#0071E3'
+                  : '#34C759';
 
               return (
                 <div
                   key={b.id || idx}
                   onClick={() => onNavigateBudgets && onNavigateBudgets()}
-                  className={`bg-gradient-to-br ${cardGradient} border border-black/[0.05] dark:border-white/10 rounded-[22px] p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl relative overflow-hidden flex flex-col justify-between space-y-5 transition hover:scale-[1.015] duration-300 cursor-pointer`}
+                  className={`bg-gradient-to-br ${cardGradient} border ${cardBorderClass} rounded-[22px] p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl relative overflow-hidden flex flex-col justify-between space-y-4 transition hover:scale-[1.015] duration-300 cursor-pointer`}
                 >
-                  <div className="flex items-start justify-between">
+                  <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <span className="text-[11px] uppercase tracking-wider font-semibold text-[#86868B] block">
                         {isCredit
@@ -568,7 +579,11 @@ export default function DashboardPage({
                     </div>
                     <div className="w-10 h-10 rounded-2xl bg-black/[0.04] dark:bg-white/10 flex items-center justify-center shrink-0">
                       {isCredit ? (
-                        <CreditCard className="w-5 h-5 text-[#FF9F0A]" />
+                        <CreditCard
+                          className={`w-5 h-5 ${
+                            softCapEval.level === 'critical' ? 'text-[#FF3B30]' : 'text-[#FF9F0A]'
+                          }`}
+                        />
                       ) : isLoan ? (
                         <Building2 className="w-5 h-5 text-[#AF52DE]" />
                       ) : (
@@ -577,7 +592,7 @@ export default function DashboardPage({
                     </div>
                   </div>
 
-                  <div className="space-y-1">
+                  <div className="space-y-1.5">
                     <span className="text-[11px] text-[#86868B] block">
                       {isCredit || isLoan
                         ? 'Current Balance Used'
@@ -608,6 +623,44 @@ export default function DashboardPage({
                         </span>
                       </div>
                     )}
+                    {isCredit && softCapEval.hasSoftCap && (
+                      <div className="flex items-center justify-between gap-2 text-[10px] font-semibold tabular-nums">
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${
+                            softCapEval.level === 'critical'
+                              ? 'bg-[#FF3B30]/15 text-[#D70015] dark:text-[#FF3B30] border-[#FF3B30]/35'
+                              : softCapEval.level === 'warning'
+                              ? 'bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border-[#FF9F0A]/35'
+                              : 'bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border-[#34C759]/25'
+                          }`}
+                        >
+                          {softCapEval.level !== 'safe' && <AlertTriangle className="w-3 h-3" />}
+                          {softCapEval.label}
+                        </span>
+                        <span className="text-[#86868B]">Tope: {formatAmt(softCapEval.softCap)}</span>
+                      </div>
+                    )}
+                    {isCredit && goldenRule && (
+                      <div
+                        className={`text-[10px] font-semibold px-2.5 py-1 rounded-xl border leading-snug ${
+                          goldenRule.status === 'good'
+                            ? 'bg-[#34C759]/10 text-[#248A3D] dark:text-[#34C759] border-[#34C759]/25'
+                            : goldenRule.status === 'avoid'
+                            ? 'bg-[#FF3B30]/10 text-[#D70015] dark:text-[#FF3B30] border-[#FF3B30]/25'
+                            : 'bg-black/[0.03] dark:bg-white/5 text-[#6E6E73] dark:text-zinc-300 border-black/[0.05] dark:border-white/10'
+                        }`}
+                      >
+                        {goldenRule.headline}
+                      </div>
+                    )}
+                    {isCredit && installmentSummary.activeCount > 0 && (
+                      <div className="text-[10px] text-[#8944AB] dark:text-purple-300 tabular-nums flex items-center justify-between gap-2">
+                        <span>
+                          Diferidos ({installmentSummary.activeCount}): {formatAmt(installmentSummary.monthlyQuotaTotal)}/mes
+                        </span>
+                        <span>Comprometido: {formatAmt(installmentSummary.remainingCommittedTotal)}</span>
+                      </div>
+                    )}
                     {isCredit && used > 0 && cardCycleCharges === 0 && (
                       <span className="text-[10px] text-[#86868B] block">
                         {cardAllTimeChargesCount > 0 && cardAllTimeNet > 0
@@ -616,8 +669,10 @@ export default function DashboardPage({
                       </span>
                     )}
                     {(isCredit || isStandard) && limit > 0 && (
-                      <div className="flex items-center justify-between text-[11px] text-[#86868B] tabular-nums pt-1">
-                        <span>Limit: {formatAmt(limit)}</span>
+                      <div className="flex items-center justify-between text-[11px] text-[#86868B] tabular-nums pt-0.5">
+                        <span>
+                          {isCredit ? `Disp: ${formatAmt(remainingCardLimit)}` : `Limit: ${formatAmt(limit)}`}
+                        </span>
                         <span className={utilization > 80 ? 'text-[#D70015] dark:text-[#FF3B30] font-semibold' : 'text-[#6E6E73] dark:text-zinc-300'}>
                           {utilization}% used
                         </span>
@@ -631,7 +686,12 @@ export default function DashboardPage({
                         className="h-full rounded-full transition-all duration-500"
                         style={{
                           width: `${utilization}%`,
-                          backgroundColor: utilization > 80 ? '#FF3B30' : accentColor
+                          backgroundColor:
+                            softCapEval.level === 'critical' || utilization > 80
+                              ? '#FF3B30'
+                              : softCapEval.level === 'warning'
+                              ? '#FF9F0A'
+                              : accentColor
                         }}
                       />
                     </div>
@@ -660,57 +720,7 @@ export default function DashboardPage({
         )}
       </section>
 
-      {/* 3. APPLE STORE HORIZONTAL ACTION SHELF */}
-      <section className="space-y-3">
-        <span className="text-[12px] uppercase tracking-[0.04em] font-semibold text-[#86868B] block">
-          QUICK RECONCILIATION & TOOLS
-        </span>
-        <div className="flex gap-4 overflow-x-auto pb-2 scrollbar-none apple-shelf">
-          <button
-            type="button"
-            onClick={() => onOpenUploadStatement && onOpenUploadStatement()}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
-          >
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#0071E3] flex items-center gap-1.5">
-              <Upload className="w-3.5 h-3.5" /> STATEMENT RECONCILIATION
-            </span>
-            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Upload PDF / CSV Statement</h5>
-            <p className="text-xs text-[#86868B] leading-relaxed">
-              Fuzzy-match pending flotante alerts with your monthly bank statement to settle exact amounts.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onOpenEmailSync && onOpenEmailSync()}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
-          >
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#248A3D] dark:text-[#34C759] flex items-center gap-1.5">
-              <Mail className="w-3.5 h-3.5" /> LIVE EMAIL SYNC
-            </span>
-            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Connect iCloud & Gmail</h5>
-            <p className="text-xs text-[#86868B] leading-relaxed">
-              Fetch transaction alerts directly from your real inbox into your pending ledger.
-            </p>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => onOpenAddTx('expense')}
-            className="text-left apple-shelf-item shrink-0 w-72 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-2xl p-5 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-lg space-y-2 hover:scale-[1.015] transition duration-300"
-          >
-            <span className="text-[10px] font-semibold uppercase tracking-wider text-[#B25000] dark:text-[#FF9F0A] flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> QUICK ENTRY
-            </span>
-            <h5 className="text-sm font-bold text-[#1D1D1F] dark:text-white">Record Expense or Income</h5>
-            <p className="text-xs text-[#86868B] leading-relaxed">
-              Log transactions directly to your Firestore account and update linked card balances automatically.
-            </p>
-          </button>
-        </div>
-      </section>
-
-      {/* 4. CHARTS & SPENDING BREAKDOWN */}
+      {/* 3. CHARTS & SPENDING BREAKDOWN */}
       <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-3xl p-6 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -966,7 +976,7 @@ export default function DashboardPage({
                       </div>
 
                       <div className="min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white truncate">{displayTitle}</h5>
                           {isPending && (
                             <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF9F0A]/15 text-[#B25000] dark:text-[#FF9F0A] border border-[#FF9F0A]/30">
@@ -1015,8 +1025,14 @@ export default function DashboardPage({
                         >
                           {t.isTransfer ? '' : isIncome ? '+' : '-'} {formatAmt(t.amount)}
                         </div>
-                        <div className="text-[10px] text-[#86868B] tabular-nums">
-                          {isPending ? 'Pending alert' : 'Cleared'}
+                        <div className="text-[10px] text-[#86868B] tabular-nums flex items-center justify-end gap-1">
+                          {isPending ? (
+                            'Pending alert'
+                          ) : (
+                            <>
+                              <CheckCircle2 className="w-2.5 h-2.5 text-[#34C759]" /> Cleared
+                            </>
+                          )}
                         </div>
                       </div>
                       <ChevronRight className="w-4 h-4 text-[#86868B]" />
@@ -1030,7 +1046,7 @@ export default function DashboardPage({
               <CreditCard className="w-8 h-8 text-[#86868B] mx-auto opacity-40" />
               <h5 className="text-sm font-semibold text-[#1D1D1F] dark:text-white">No transactions found</h5>
               <p className="text-xs text-[#86868B]">
-                Add a transaction, sync your email alerts, or select another month filter to view activity.
+                Add a transaction, upload a statement, or select another month filter to view activity.
               </p>
             </div>
           )}
@@ -1045,6 +1061,8 @@ export default function DashboardPage({
         onDelete={onDeleteTx}
         budgets={budgets}
         currencySymbol={displaySymbol}
+        fxRateUsdToDop={activeFxRate}
+        onMarkCleared={onMarkCleared}
       />
     </div>
   );

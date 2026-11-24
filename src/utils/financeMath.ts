@@ -584,4 +584,168 @@ export function getCleanTransactionDisplay(
   };
 }
 
+export interface CardInstallment {
+  id: string;
+  title: string;
+  totalAmount: number;
+  termMonths: number;
+  monthsPaid: number;
+  monthlyQuota: number;
+  startDate: string; // YYYY-MM-DD
+  chargeDay?: number; // 1..31
+  isActive: boolean;
+  notes?: string;
+}
 
+// ============================================================================
+// Layer 2: Credit Card Soft Caps, Golden Cutoff Rule & Installments/Diferidos
+// ============================================================================
+
+export type SoftCapLevel = 'none' | 'safe' | 'warning' | 'critical';
+
+export interface SoftCapEvaluation {
+  hasSoftCap: boolean;
+  softCap: number;
+  cycleSpent: number;
+  pct: number;
+  level: SoftCapLevel;
+  remainingToCap: number;
+  label: string;
+}
+
+export function evaluateCreditCardSoftCap(cycleSpent: number, softCap?: number): SoftCapEvaluation {
+  const cap = Math.max(0, Number(softCap) || 0);
+  const spent = Math.max(0, Number(cycleSpent) || 0);
+  if (cap <= 0) {
+    return {
+      hasSoftCap: false,
+      softCap: 0,
+      cycleSpent: spent,
+      pct: 0,
+      level: 'none',
+      remainingToCap: 0,
+      label: ''
+    };
+  }
+  const pct = Math.round((spent / cap) * 100);
+  const remainingToCap = Number((cap - spent).toFixed(2));
+  let level: SoftCapLevel = 'safe';
+  let label = `${pct}% de tope personal`;
+  if (pct >= 90) {
+    level = 'critical';
+    label = pct >= 100 ? `Tope excedido (${pct}%)` : `Alerta crítica (${pct}% ≥ 90%)`;
+  } else if (pct >= 75) {
+    level = 'warning';
+    label = `Precaución (${pct}% ≥ 75%)`;
+  }
+  return {
+    hasSoftCap: true,
+    softCap: cap,
+    cycleSpent: spent,
+    pct,
+    level,
+    remainingToCap,
+    label
+  };
+}
+
+export interface GoldenRuleAdvisory {
+  status: 'good' | 'neutral' | 'avoid';
+  daysUntilCutoff: number;
+  headline: string;
+  detail: string;
+}
+
+export function getCreditCardGoldenRuleStatus(
+  cutoffDay: number,
+  dueDay: number | null,
+  referenceDate: Date = new Date()
+): GoldenRuleAdvisory {
+  const activeKey = getActiveCreditCardCycleKey(cutoffDay, referenceDate);
+  const info = getCreditCardCycleForMonth(cutoffDay, dueDay, activeKey, referenceDate);
+  const days = Math.max(0, info.daysUntilCutoff);
+
+  if (days >= 15) {
+    return {
+      status: 'good',
+      daysUntilCutoff: days,
+      headline: `Hoy es buen momento para usarla (corta en ${days} días)`,
+      detail: 'Obtendrás el máximo financiamiento sin intereses hasta el próximo mes.'
+    };
+  }
+  if (days <= 5) {
+    return {
+      status: 'avoid',
+      daysUntilCutoff: days,
+      headline:
+        days === 0
+          ? 'Evita usarla hoy (corta hoy — el pago te tocará este mismo ciclo)'
+          : `Evita usarla hoy (corta en ${days} ${days === 1 ? 'día' : 'días'} — el pago te tocará este mismo mes)`,
+      detail: 'Espera pasar la fecha de corte para ganar ~30 días adicionales de financiamiento.'
+    };
+  }
+  return {
+    status: 'neutral',
+    daysUntilCutoff: days,
+    headline: `Corta en ${days} días`,
+    detail: `Fecha de corte: ${formatShortIsoDate(info.cutoffDate)}${info.dueDate ? ` • Pago ${formatShortIsoDate(info.dueDate)}` : ''}`
+  };
+}
+
+export function calculateCardInstallmentsSummary(installments?: CardInstallment[]): {
+  activeCount: number;
+  monthlyQuotaTotal: number;
+  remainingCommittedTotal: number;
+} {
+  if (!installments || installments.length === 0) {
+    return { activeCount: 0, monthlyQuotaTotal: 0, remainingCommittedTotal: 0 };
+  }
+  let activeCount = 0;
+  let monthlyQuotaTotal = 0;
+  let remainingCommittedTotal = 0;
+
+  for (const inst of installments) {
+    if (!inst.isActive) continue;
+    const remMonths = Math.max(0, (Number(inst.termMonths) || 0) - (Number(inst.monthsPaid) || 0));
+    if (remMonths <= 0) continue;
+    const quota = Math.max(0, Number(inst.monthlyQuota) || 0);
+    activeCount += 1;
+    monthlyQuotaTotal += quota;
+    remainingCommittedTotal += quota * remMonths;
+  }
+
+  return {
+    activeCount,
+    monthlyQuotaTotal: Number(monthlyQuotaTotal.toFixed(2)),
+    remainingCommittedTotal: Number(remainingCommittedTotal.toFixed(2))
+  };
+}
+
+/**
+ * Fuzzy deduplication / reconciliation helper:
+ * Matches statement line items against pending flotante transactions.
+ * Criteria: Account matches, within ±15% amount tolerance, within ±4 days.
+ */
+export function findFuzzyPendingMatch(
+  pendingTxs: any[],
+  incoming: { budgetId?: string; amount: number; date: string; currency?: string }
+): any | undefined {
+  const incomingDate = new Date(incoming.date || Date.now()).getTime();
+  const incomingAmt = Math.abs(incoming.amount);
+
+  return pendingTxs.find(pt => {
+    if ((pt.status || 'pending') !== 'pending') return false;
+    if (incoming.budgetId && pt.budgetId && incoming.budgetId !== pt.budgetId) return false;
+
+    const ptAmt = Math.abs(pt.amount);
+    const amountDiff = Math.abs(ptAmt - incomingAmt);
+    const amountTolerance = Math.max(0.5, ptAmt * 0.15);
+    if (amountDiff > amountTolerance) return false;
+
+    const ptDate = new Date(pt.date || Date.now()).getTime();
+    const dayDiff = Math.abs(ptDate - incomingDate) / (1000 * 60 * 60 * 24);
+    if (dayDiff > 4) return false;
+
+    return true;
+  });
+}

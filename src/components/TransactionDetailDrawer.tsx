@@ -25,6 +25,8 @@ interface TransactionDetailDrawerProps {
   onDelete: (id: string) => void;
   budgets: Budget[];
   currencySymbol: string;
+  fxRateUsdToDop?: number;
+  onMarkCleared?: (txId: string) => void;
 }
 
 export default function TransactionDetailDrawer({
@@ -33,7 +35,9 @@ export default function TransactionDetailDrawer({
   onEdit,
   onDelete,
   budgets,
-  currencySymbol
+  currencySymbol,
+  fxRateUsdToDop = 60.5,
+  onMarkCleared
 }: TransactionDetailDrawerProps) {
   if (!tx) return null;
 
@@ -54,8 +58,7 @@ export default function TransactionDetailDrawer({
   const isIncome = tx.type === 'income';
   const { displayTitle, displayNotes } = getCleanTransactionDisplay(tx, linkedBudget, transferToBudget);
 
-  // Dominican FX estimation (USD <-> DOP ~ 60.50)
-  const fxRate = 60.50;
+  const fxRate = fxRateUsdToDop > 0 ? fxRateUsdToDop : 60.5;
   const isUSD = currencySymbol === '$' || currencySymbol === 'US$';
   const convertedAmount = isUSD
     ? `RD$ ${(tx.amount * fxRate).toLocaleString('en-US', { minimumFractionDigits: 2 })}`
@@ -71,7 +74,7 @@ export default function TransactionDetailDrawer({
       >
         {/* Header */}
         <div className="p-6 border-b border-black/[0.06] dark:border-white/10 flex items-center justify-between sticky top-0 bg-white/85 dark:bg-[#1C1C1E]/90 backdrop-blur-xl z-10">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="text-xs uppercase tracking-wider font-semibold text-[#86868B]">
               Transaction Details
             </span>
@@ -87,14 +90,14 @@ export default function TransactionDetailDrawer({
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition"
+            className="w-8 h-8 rounded-full bg-[#F2F2F7] hover:bg-[#E5E5EA] dark:bg-white/10 dark:hover:bg-white/20 flex items-center justify-center text-[#86868B] hover:text-[#1D1D1F] dark:hover:text-white transition shrink-0"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {/* Hero Section */}
-        <div className="p-6 space-y-6 flex-1">
+        <div className="p-6 space-y-5 flex-1">
           <div className="space-y-1">
             <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">{displayTitle}</h2>
             <div className="text-3xl font-extrabold tracking-tight tabular-nums mt-2">
@@ -103,7 +106,7 @@ export default function TransactionDetailDrawer({
               </span>
             </div>
             <p className="text-xs text-[#86868B] tabular-nums pt-0.5">
-              Approx. {convertedAmount} (Est. FX @ 1 USD = 60.50 DOP)
+              Approx. {convertedAmount} (Ref. FX @ 1 USD = {fxRate.toFixed(2)} DOP)
             </p>
           </div>
 
@@ -206,34 +209,51 @@ export default function TransactionDetailDrawer({
             </div>
           )}
 
-          {/* Reconciliation Status Callout */}
-          <div className="bg-[#F5F5F7] dark:bg-white/5 border border-black/[0.05] dark:border-white/10 rounded-2xl p-4 flex items-start gap-3">
-            {isPending ? (
-              <Clock className="w-5 h-5 text-[#FF9F0A] shrink-0 mt-0.5" />
-            ) : (
-              <CheckCircle2 className="w-5 h-5 text-[#248A3D] dark:text-[#34C759] shrink-0 mt-0.5" />
-            )}
-            <div className="text-xs space-y-1">
-              <strong className="text-[#1D1D1F] dark:text-white block font-semibold">
-                {isPending ? 'Pending Dominican Bank Flotante' : 'Fully Cleared with Statement'}
-              </strong>
-              <p className="text-[#86868B] leading-relaxed">
-                {isPending
-                  ? 'Captured via real-time Dominican bank alert email (e.g. Banreservas, Popular, BHD, or Qik). When your monthly statement is uploaded, it will automatically match and lock as cleared.'
-                  : 'This transaction has cleared against your monthly statement or was recorded directly to your seashore ledger.'}
-              </p>
+          {/* Reconciliation Status Callout + Flotante Actions */}
+          <div className="bg-[#F5F5F7] dark:bg-white/5 border border-black/[0.05] dark:border-white/10 rounded-2xl p-4 space-y-3">
+            <div className="flex items-start gap-3">
+              {isPending ? (
+                <Clock className="w-5 h-5 text-[#FF9F0A] shrink-0 mt-0.5" />
+              ) : (
+                <CheckCircle2 className="w-5 h-5 text-[#248A3D] dark:text-[#34C759] shrink-0 mt-0.5" />
+              )}
+              <div className="text-xs space-y-1">
+                <strong className="text-[#1D1D1F] dark:text-white block font-semibold">
+                  {isPending ? 'Pending Dominican Bank Flotante' : 'Fully Cleared with Statement'}
+                </strong>
+                <p className="text-[#86868B] leading-relaxed">
+                  {isPending
+                    ? 'Pending hold or flotante transaction. Mark as cleared once posted on your statement.'
+                    : 'This transaction has cleared against your monthly statement or was recorded directly to your seashore ledger.'}
+                </p>
+              </div>
             </div>
+
+            {isPending && onMarkCleared && (
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onMarkCleared(tx.id);
+                    onClose();
+                  }}
+                  className="px-3 py-1.5 rounded-full text-[11px] font-semibold bg-[#34C759]/15 hover:bg-[#34C759]/25 text-[#248A3D] dark:text-[#34C759] transition flex items-center gap-1"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" /> Liquidar Flotante
+                </button>
+              </div>
+            )}
           </div>
         </div>
 
         {/* Footer Actions */}
-        <div className="p-6 border-t border-black/[0.06] dark:border-white/10 bg-white dark:bg-[#1C1C1E] flex items-center gap-3">
+        <div className="p-6 border-t border-black/[0.06] dark:border-white/10 bg-white dark:bg-[#1C1C1E] flex flex-wrap items-center gap-2">
           <button
             onClick={() => {
               onEdit(tx);
               onClose();
             }}
-            className="flex-1 py-2.5 rounded-full text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white transition active:scale-[0.98]"
+            className="flex-1 min-w-[120px] py-2.5 rounded-full text-xs font-semibold bg-[#0071E3] hover:bg-[#0077ED] text-white transition active:scale-[0.98]"
           >
             Edit Transaction
           </button>
@@ -253,3 +273,4 @@ export default function TransactionDetailDrawer({
     </div>
   );
 }
+

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import {
   X,
   Upload,
@@ -27,14 +27,21 @@ import {
 } from '../utils/financeMath';
 
 export interface ExistingTransactionSummary {
+  id?: string;
   title: string;
   amount: number;
   date: string;
   type?: 'income' | 'expense';
+  category?: string;
+  notes?: string;
   budgetId?: string;
   transferToBudgetId?: string;
   isTransfer?: boolean;
   isLoanPayment?: boolean;
+  status?: 'pending' | 'cleared';
+  emailId?: string;
+  emailOutcome?: 'approved' | 'declined' | 'reversed';
+  emailContext?: string;
 }
 
 export interface ImportedTransactionDraft {

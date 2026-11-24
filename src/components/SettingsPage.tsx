@@ -26,6 +26,7 @@ export default function SettingsPage({
   const [name, setName] = useState(currentUserProfile?.name || firebaseUser.displayName || '');
   const [avatar, setAvatar] = useState(currentUserProfile?.avatar || '📊');
   const [currency, setCurrency] = useState(currentUserProfile?.currency || 'USD');
+  const [fxRateInput, setFxRateInput] = useState(String(currentUserProfile?.fxRateUsdToDop || 60.5));
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -36,10 +37,12 @@ export default function SettingsPage({
     setSuccessMsg('');
     try {
       const userRef = doc(db, 'users', firebaseUser.uid);
+      const parsedFx = parseFloat(fxRateInput);
       const updated = {
         name,
         avatar,
-        currency
+        currency,
+        fxRateUsdToDop: !isNaN(parsedFx) && parsedFx > 0 ? Number(parsedFx.toFixed(2)) : 60.5
       };
       await updateDoc(userRef, updated);
       setCurrentUserProfile({ ...currentUserProfile, ...updated });
@@ -78,7 +81,7 @@ export default function SettingsPage({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div>
               <label className="text-[11px] text-[#86868B] block mb-1">Avatar Emoji</label>
               <input
@@ -102,6 +105,17 @@ export default function SettingsPage({
                   </option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="text-[11px] text-[#86868B] block mb-1">Tasa Ref. US$ → RD$</label>
+              <input
+                type="number"
+                step="0.01"
+                min="1"
+                value={fxRateInput}
+                onChange={e => setFxRateInput(e.target.value)}
+                className="w-full bg-[#F5F5F7] dark:bg-[#2C2C2E] border border-black/[0.06] dark:border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-[#1D1D1F] dark:text-white tabular-nums focus:outline-none focus:border-[#0071E3]"
+              />
             </div>
           </div>
 
