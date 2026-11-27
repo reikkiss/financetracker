@@ -214,9 +214,15 @@ export default function TransferModal({
               {toIsDebt && (
                 <div>• {toAcc.name}: debt/used balance reduced by {currencySymbol}{amt.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
               )}
-              <div className="text-[10px] text-[#0071E3]/80 dark:text-blue-300/80 pt-0.5">
-                Excluded from monthly Expense and Income totals.
-              </div>
+              {toIsDebt ? (
+                <div className="text-[10px] text-[#248A3D] dark:text-[#34C759] pt-0.5 font-medium">
+                  • Counted as an Expense (Debt / Card Payment) in your monthly cashflow & spending totals.
+                </div>
+              ) : (
+                <div className="text-[10px] text-[#0071E3]/80 dark:text-blue-300/80 pt-0.5">
+                  • Internal transfer between liquid bank accounts (excluded from expense totals).
+                </div>
+              )}
             </div>
           )}
 

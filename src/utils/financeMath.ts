@@ -584,6 +584,104 @@ export function getCleanTransactionDisplay(
   };
 }
 
+/**
+ * Checks whether a transaction represents a debt or credit card payment (either a transfer to a credit card/loan,
+ * or an explicit loan/card payment).
+ */
+export function isDebtPaymentTransfer(
+  tx: {
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    budgetId?: string;
+    transferToBudgetId?: string;
+    type?: string;
+    category?: string;
+  },
+  budgets: Array<{ id: string; accountType?: string; name?: string; category?: string }>
+): boolean {
+  if (Boolean(tx.isLoanPayment)) return true;
+  if (!tx.isTransfer) return false;
+  if (!tx.transferToBudgetId) return false;
+  const target = budgets.find(b => b.id === tx.transferToBudgetId);
+  return target?.accountType === 'credit_card' || target?.accountType === 'loan';
+}
+
+/**
+ * Checks whether a transfer is a pure internal move between liquid bank/debit accounts (neither side is a debt account).
+ */
+export function isPureInternalTransfer(
+  tx: {
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    budgetId?: string;
+    transferToBudgetId?: string;
+    type?: string;
+    category?: string;
+  },
+  budgets: Array<{ id: string; accountType?: string; name?: string; category?: string }>
+): boolean {
+  if (!tx.isTransfer) return false;
+  return !isDebtPaymentTransfer(tx, budgets);
+}
+
+/**
+ * Returns true if the transaction is a real financial expense / cash outflow:
+ * - Direct expenses (type === 'expense' and not an internal transfer)
+ * - Transfers to pay loans or credit cards (debt service outflow)
+ * - Direct loan or card payments (isLoanPayment === true)
+ * Excludes declined transactions and pure internal self-transfers between liquid bank accounts.
+ */
+export function isRealExpenseTransaction(
+  tx: {
+    type?: string;
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    emailOutcome?: string;
+    budgetId?: string;
+    transferToBudgetId?: string;
+    category?: string;
+  },
+  budgets: Array<{ id: string; accountType?: string; name?: string; category?: string }>
+): boolean {
+  if (tx.emailOutcome === 'declined') return false;
+  if (isDebtPaymentTransfer(tx, budgets)) return true;
+  if (tx.isTransfer) return false;
+  return tx.type === 'expense';
+}
+
+/**
+ * Returns the effective spending category for an expense or debt payment.
+ */
+export function getTransactionExpenseCategory(
+  tx: {
+    category?: string;
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    budgetId?: string;
+    transferToBudgetId?: string;
+  },
+  budgets: Array<{ id: string; accountType?: string; name?: string; category?: string }>
+): string {
+  if (isDebtPaymentTransfer(tx, budgets)) {
+    const target = budgets.find(b => b.id === tx.transferToBudgetId);
+    if (target) {
+      if (target.accountType === 'loan') {
+        return target.name || target.category || 'Loan Payment';
+      }
+      if (target.accountType === 'credit_card') {
+        return target.name || target.category || 'Card Payment';
+      }
+    }
+    const source = budgets.find(b => b.id === tx.budgetId);
+    if (source && (source.accountType === 'loan' || source.accountType === 'credit_card')) {
+      return source.name || source.category || 'Debt Payment';
+    }
+    return tx.category && tx.category !== 'Transfer' ? tx.category : 'Debt Payment';
+  }
+  return tx.category || 'Other';
+}
+
+
 export interface CardInstallment {
   id: string;
   title: string;
@@ -749,3 +847,432 @@ export function findFuzzyPendingMatch(
     return true;
   });
 }
+
+// ============================================================================
+// Smart Bank Transfer Similarity & Auto-Pairing Engine
+// ============================================================================
+
+const TRANSFER_KEYWORD_RE =
+  /\b(?:transfer(?:encia)?|transf|traspaso|ach|lbtr|wire|interbanc|enviad[ao]|recibid[ao]|pago\s*(?:de\s*)?(?:tarjeta|tc|pr[eé]stamo|cuota|m[ií]nimo|contado)?|abono|payment|pay\s+thank\s+you)\b/i;
+
+function daysBetweenIsoDates(d1?: string, d2?: string): number {
+  const t1 = Date.parse((d1 || '').slice(0, 10));
+  const t2 = Date.parse((d2 || '').slice(0, 10));
+  if (isNaN(t1) || isNaN(t2)) return 999;
+  return Math.abs(t1 - t2) / (1000 * 60 * 60 * 24);
+}
+
+function isLiquidAccountType(accountType?: string): boolean {
+  return accountType === 'bank_account' || accountType === 'debit_account';
+}
+
+function isDebtAccountType(accountType?: string): boolean {
+  return accountType === 'credit_card' || accountType === 'loan';
+}
+
+function titleMentionsAccount(
+  title: string | undefined,
+  account?: { name?: string; category?: string } | null
+): boolean {
+  if (!title || !account) return false;
+  const hay = title.toLowerCase();
+  const candidates = [account.name, account.category]
+    .filter(Boolean)
+    .map(s => String(s).trim().toLowerCase())
+    .filter(s => s.length >= 3);
+  for (const label of candidates) {
+    if (hay.includes(label)) return true;
+    const words = label.split(/\s+/).filter(w => w.length >= 4);
+    if (words.some(w => hay.includes(w))) return true;
+  }
+  return false;
+}
+
+export interface SimilarCandidateResult<T = any> {
+  tx: T;
+  isSuggested: boolean;
+  score: number;
+  days: number;
+  diff: number;
+  reasons: string[];
+}
+
+/**
+ * Ranks potential counterpart transactions for a selected primary transaction
+ * (works both for unlinked entries and existing transfers that may have a duplicate mirror entry).
+ */
+export function findSimilarCandidatesForTransaction<
+  T extends {
+    id: string;
+    title?: string;
+    amount: number;
+    type?: string;
+    category?: string;
+    date?: string;
+    budgetId?: string;
+    transferToBudgetId?: string;
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    emailOutcome?: string;
+  },
+  B extends { id: string; name?: string; category?: string; accountType?: string }
+>(primaryTx: T, transactions: T[], budgets: B[]): SimilarCandidateResult<T>[] {
+  const primaryAmt = Math.abs(Number(primaryTx.amount) || 0);
+  const primaryDate = primaryTx.date || '';
+  const budgetById: Record<string, B> = {};
+  budgets.forEach(b => {
+    budgetById[b.id] = b;
+  });
+
+  const primaryAcc = primaryTx.budgetId ? budgetById[primaryTx.budgetId] : undefined;
+  const primaryDestAcc = primaryTx.transferToBudgetId ? budgetById[primaryTx.transferToBudgetId] : undefined;
+
+  return transactions
+    .filter(t => {
+      if (t.id === primaryTx.id) return false;
+      if (t.emailOutcome === 'declined') return false;
+
+      if (primaryTx.isTransfer) {
+        // When primary is already a transfer, allow pairing with an unlinked mirror entry
+        // in the destination or source account (or a partial transfer), but skip unrelated transfers
+        if (t.isTransfer && t.budgetId && t.transferToBudgetId) {
+          const isSameOrMirrorPair =
+            (t.budgetId === primaryTx.budgetId && t.transferToBudgetId === primaryTx.transferToBudgetId) ||
+            (t.budgetId === primaryTx.transferToBudgetId && t.transferToBudgetId === primaryTx.budgetId);
+          if (!isSameOrMirrorPair) return false;
+        }
+        return true;
+      }
+
+      // If primary is unlinked: skip complete transfers unless it connects to primary's account
+      if (t.isTransfer && t.budgetId && t.transferToBudgetId) {
+        if (
+          primaryTx.budgetId &&
+          t.budgetId !== primaryTx.budgetId &&
+          t.transferToBudgetId !== primaryTx.budgetId
+        ) {
+          return false;
+        }
+      }
+
+      // Usually counterparty is in a different account
+      if (primaryTx.budgetId && t.budgetId && t.budgetId === primaryTx.budgetId && !t.isTransfer) {
+        return false;
+      }
+      return true;
+    })
+    .map(t => {
+      const amt = Math.abs(Number(t.amount) || 0);
+      const diff = Math.abs(amt - primaryAmt);
+      const days = daysBetweenIsoDates(t.date, primaryDate);
+      const oppositeType = t.type !== primaryTx.type;
+      const exactAmount = diff <= 0.01 && primaryAmt > 0;
+      const closeAmount = diff <= Math.max(1, primaryAmt * 0.02);
+      const closeDate = days <= 5;
+      const candAcc = t.budgetId ? budgetById[t.budgetId] : undefined;
+
+      const liquidDebtPair =
+        (isLiquidAccountType(primaryAcc?.accountType) && isDebtAccountType(candAcc?.accountType)) ||
+        (isLiquidAccountType(candAcc?.accountType) && isDebtAccountType(primaryAcc?.accountType));
+
+      const mirrorOfExistingTransfer = Boolean(
+        primaryTx.isTransfer &&
+          ((primaryTx.transferToBudgetId && t.budgetId === primaryTx.transferToBudgetId) ||
+            (primaryTx.budgetId && t.budgetId === primaryTx.budgetId && t.type === 'expense'))
+      );
+
+      const keywordSignal =
+        TRANSFER_KEYWORD_RE.test(primaryTx.title || '') ||
+        TRANSFER_KEYWORD_RE.test(t.title || '') ||
+        Boolean(primaryTx.isLoanPayment) ||
+        Boolean(t.isLoanPayment);
+
+      const crossMention =
+        titleMentionsAccount(primaryTx.title, candAcc) ||
+        titleMentionsAccount(t.title, primaryAcc) ||
+        titleMentionsAccount(t.title, primaryDestAcc);
+
+      const isSuggested =
+        closeAmount &&
+        closeDate &&
+        (oppositeType || mirrorOfExistingTransfer || liquidDebtPair || Boolean(t.isTransfer));
+
+      const reasons: string[] = [];
+      if (exactAmount) reasons.push('Exact amount');
+      else if (closeAmount) reasons.push('~Amount');
+      if (days <= 0.5) reasons.push('Same day');
+      else if (days <= 5) reasons.push(`${Math.round(days)}d apart`);
+      if (mirrorOfExistingTransfer) reasons.push('Mirror entry');
+      if (liquidDebtPair) reasons.push('Bank → Card/Loan');
+      if (crossMention) reasons.push('Mentions bank');
+
+      const score =
+        (isSuggested ? 100 : 0) +
+        (exactAmount ? 50 : closeAmount ? 30 : 0) +
+        (oppositeType ? 25 : 0) +
+        (mirrorOfExistingTransfer ? 35 : 0) +
+        (liquidDebtPair ? 20 : 0) +
+        (crossMention ? 20 : 0) +
+        (keywordSignal ? 10 : 0) +
+        (days <= 7 ? Math.max(0, 25 - days * 3) : 0);
+
+      return { tx: t, isSuggested, score, days, diff, reasons };
+    })
+    .sort((a, b) => b.score - a.score || (b.tx.date || '').localeCompare(a.tx.date || ''));
+}
+
+export interface TransferMatchCandidate<T = any> {
+  id: string;
+  primaryTx: T;
+  partnerTx: T;
+  fromBudgetId: string;
+  toBudgetId: string;
+  amount: number;
+  date: string;
+  title: string;
+  confidence: 'exact' | 'high' | 'possible';
+  score: number;
+  reasons: string[];
+}
+
+/**
+ * Scans the entire transaction ledger and finds best 1-to-1 similar transfer pairs
+ * across accounts (both existing transfers with unattached mirror entries and
+ * unlinked opposing transfer pairs) so they can be attached & merged cleanly.
+ */
+export function findSimilarTransferPairs<
+  T extends {
+    id: string;
+    title?: string;
+    amount: number;
+    type?: string;
+    category?: string;
+    date?: string;
+    budgetId?: string;
+    transferToBudgetId?: string;
+    isTransfer?: boolean;
+    isLoanPayment?: boolean;
+    emailOutcome?: string;
+  },
+  B extends { id: string; name?: string; category?: string; accountType?: string }
+>(transactions: T[], budgets: B[]): TransferMatchCandidate<T>[] {
+  if (budgets.length < 2 || transactions.length < 2) return [];
+
+  const budgetById: Record<string, B> = {};
+  budgets.forEach(b => {
+    budgetById[b.id] = b;
+  });
+
+  const activeTxs = transactions.filter(
+    t => t.emailOutcome !== 'declined' && Math.abs(Number(t.amount) || 0) > 0
+  );
+
+  const candidates: TransferMatchCandidate<T>[] = [];
+
+  const inferBudgetFromTitle = (title?: string, excludeId?: string): string => {
+    if (!title) return '';
+    const match = budgets.find(b => b.id !== excludeId && titleMentionsAccount(title, b));
+    return match?.id || '';
+  };
+
+  for (let i = 0; i < activeTxs.length; i++) {
+    const a = activeTxs[i];
+    const amtA = Math.abs(Number(a.amount) || 0);
+
+    for (let j = i + 1; j < activeTxs.length; j++) {
+      const b = activeTxs[j];
+      const amtB = Math.abs(Number(b.amount) || 0);
+
+      // Must be within 1% or $0.50
+      const diff = Math.abs(amtA - amtB);
+      const maxTol = Math.max(0.5, Math.max(amtA, amtB) * 0.01);
+      if (diff > maxTol) continue;
+
+      // Must be within 5 days
+      const days = daysBetweenIsoDates(a.date, b.date);
+      if (days > 5) continue;
+
+      const aCompleteTransfer = Boolean(a.isTransfer && a.budgetId && a.transferToBudgetId);
+      const bCompleteTransfer = Boolean(b.isTransfer && b.budgetId && b.transferToBudgetId);
+
+      // Avoid merging two separate complete transfers unless they are true duplicates/mirrors within 2 days & exact amount
+      if (aCompleteTransfer && bCompleteTransfer) {
+        const isExactDuplicateOrMirror =
+          diff <= 0.01 &&
+          days <= 2 &&
+          ((a.budgetId === b.budgetId && a.transferToBudgetId === b.transferToBudgetId) ||
+            (a.budgetId === b.transferToBudgetId && a.transferToBudgetId === b.budgetId));
+        if (!isExactDuplicateOrMirror) continue;
+      }
+
+      const accA = a.budgetId ? budgetById[a.budgetId] : undefined;
+      const accB = b.budgetId ? budgetById[b.budgetId] : undefined;
+
+      let primaryTx: T = a;
+      let partnerTx: T = b;
+      let fromBudgetId = '';
+      let toBudgetId = '';
+
+      if (a.isTransfer || b.isTransfer) {
+        const tr = a.isTransfer ? a : b;
+        const other = a.isTransfer ? b : a;
+        primaryTx = tr;
+        partnerTx = other;
+
+        if (tr.budgetId && tr.transferToBudgetId && tr.budgetId !== tr.transferToBudgetId) {
+          // Verify `other` relates to either endpoint of `tr`
+          const relatesToEndpoint =
+            !other.budgetId ||
+            other.budgetId === tr.transferToBudgetId ||
+            (other.budgetId === tr.budgetId && other.type === 'expense') ||
+            (other.isTransfer &&
+              ((other.budgetId === tr.budgetId && other.transferToBudgetId === tr.transferToBudgetId) ||
+                (other.budgetId === tr.transferToBudgetId && other.transferToBudgetId === tr.budgetId)));
+          if (!relatesToEndpoint) continue;
+          fromBudgetId = tr.budgetId;
+          toBudgetId = tr.transferToBudgetId;
+        } else {
+          // Partial transfer without full endpoints
+          if (other.type === 'income' && other.budgetId && tr.budgetId !== other.budgetId) {
+            fromBudgetId = tr.budgetId || inferBudgetFromTitle(tr.title, other.budgetId);
+            toBudgetId = other.budgetId;
+          } else if (other.type === 'expense' && other.budgetId && tr.budgetId !== other.budgetId) {
+            fromBudgetId = other.budgetId;
+            toBudgetId = tr.budgetId || inferBudgetFromTitle(other.title, other.budgetId);
+          }
+        }
+      } else {
+        // Neither is marked as transfer yet
+        if (a.budgetId && b.budgetId && a.budgetId === b.budgetId) continue;
+
+        const oppositeType = a.type !== b.type;
+        const oneLiquidOneDebt =
+          (isLiquidAccountType(accA?.accountType) && isDebtAccountType(accB?.accountType)) ||
+          (isLiquidAccountType(accB?.accountType) && isDebtAccountType(accA?.accountType));
+        const hasKeyword =
+          TRANSFER_KEYWORD_RE.test(a.title || '') ||
+          TRANSFER_KEYWORD_RE.test(b.title || '') ||
+          TRANSFER_KEYWORD_RE.test(a.category || '') ||
+          TRANSFER_KEYWORD_RE.test(b.category || '') ||
+          Boolean(a.isLoanPayment) ||
+          Boolean(b.isLoanPayment);
+        const crossMention = titleMentionsAccount(a.title, accB) || titleMentionsAccount(b.title, accA);
+
+        const validSignal =
+          (oppositeType && Boolean(a.budgetId && b.budgetId)) ||
+          (oneLiquidOneDebt && (oppositeType || hasKeyword)) ||
+          (hasKeyword && Boolean(a.budgetId && b.budgetId)) ||
+          crossMention;
+
+        if (!validSignal) continue;
+
+        if (a.type === 'expense' && b.type === 'income') {
+          primaryTx = a;
+          partnerTx = b;
+          fromBudgetId = a.budgetId || inferBudgetFromTitle(a.title, b.budgetId);
+          toBudgetId = b.budgetId || inferBudgetFromTitle(b.title, a.budgetId);
+        } else if (b.type === 'expense' && a.type === 'income') {
+          primaryTx = b;
+          partnerTx = a;
+          fromBudgetId = b.budgetId || inferBudgetFromTitle(b.title, a.budgetId);
+          toBudgetId = a.budgetId || inferBudgetFromTitle(a.title, b.budgetId);
+        } else if (isLiquidAccountType(accA?.accountType) && isDebtAccountType(accB?.accountType)) {
+          primaryTx = a;
+          partnerTx = b;
+          fromBudgetId = a.budgetId || '';
+          toBudgetId = b.budgetId || '';
+        } else if (isLiquidAccountType(accB?.accountType) && isDebtAccountType(accA?.accountType)) {
+          primaryTx = b;
+          partnerTx = a;
+          fromBudgetId = b.budgetId || '';
+          toBudgetId = a.budgetId || '';
+        } else {
+          // Both same type & liquid: use keyword hints like "enviado" vs "recibido" or title mention
+          const aLooksOutgoing = /\b(?:enviad[ao]|sent|out|hacia|to\b|pago|payment)\b/i.test(a.title || '');
+          const bLooksOutgoing = /\b(?:enviad[ao]|sent|out|hacia|to\b|pago|payment)\b/i.test(b.title || '');
+          if (bLooksOutgoing && !aLooksOutgoing) {
+            primaryTx = b;
+            partnerTx = a;
+            fromBudgetId = b.budgetId || '';
+            toBudgetId = a.budgetId || '';
+          } else {
+            primaryTx = a;
+            partnerTx = b;
+            fromBudgetId = a.budgetId || '';
+            toBudgetId = b.budgetId || '';
+          }
+        }
+      }
+
+      if (!fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) continue;
+
+      const fromAcc = budgetById[fromBudgetId];
+      const toAcc = budgetById[toBudgetId];
+      const exactAmt = diff <= 0.01;
+      const oppositeTypes = primaryTx.type !== partnerTx.type;
+      const isDebtPair = isDebtAccountType(toAcc?.accountType);
+      const hasKeyword =
+        TRANSFER_KEYWORD_RE.test(primaryTx.title || '') ||
+        TRANSFER_KEYWORD_RE.test(partnerTx.title || '') ||
+        Boolean(primaryTx.isLoanPayment) ||
+        Boolean(partnerTx.isLoanPayment);
+      const crossMention =
+        titleMentionsAccount(primaryTx.title, toAcc) || titleMentionsAccount(partnerTx.title, fromAcc);
+
+      const reasons: string[] = [];
+      if (exactAmt) reasons.push('Exact amount');
+      else reasons.push('~Amount');
+      if (days <= 0.5) reasons.push('Same day');
+      else reasons.push(`${Math.round(days)}d apart`);
+      if (primaryTx.isTransfer) reasons.push('Mirror of transfer');
+      if (isDebtPair) reasons.push(toAcc?.accountType === 'loan' ? 'Bank → Loan' : 'Bank → Card');
+      else reasons.push('Bank ↔ Bank');
+      if (crossMention) reasons.push('Account name match');
+
+      let score = 0;
+      score += exactAmt ? 50 : 25;
+      score += days <= 0.5 ? 40 : days <= 2 ? 28 : 14;
+      score += primaryTx.isTransfer ? 30 : 0;
+      score += oppositeTypes ? 25 : 0;
+      score += isDebtPair ? 15 : 0;
+      score += hasKeyword ? 15 : 0;
+      score += crossMention ? 20 : 0;
+
+      const confidence: TransferMatchCandidate['confidence'] =
+        exactAmt && days <= 2 && (oppositeTypes || Boolean(primaryTx.isTransfer) || isDebtPair)
+          ? 'exact'
+          : score >= 105
+          ? 'high'
+          : 'possible';
+
+      candidates.push({
+        id: `${primaryTx.id}__${partnerTx.id}`,
+        primaryTx,
+        partnerTx,
+        fromBudgetId,
+        toBudgetId,
+        amount: Math.abs(Number(primaryTx.amount) || amtA),
+        date: primaryTx.date || partnerTx.date || '',
+        title: primaryTx.title || partnerTx.title || (isDebtPair ? 'Debt Payment' : 'Bank Transfer'),
+        confidence,
+        score,
+        reasons
+      });
+    }
+  }
+
+  // Greedy 1-to-1 optimal pairing so no transaction is used twice
+  candidates.sort((x, y) => y.score - x.score || (y.date || '').localeCompare(x.date || ''));
+  const usedIds = new Set<string>();
+  const matched: TransferMatchCandidate<T>[] = [];
+
+  for (const cand of candidates) {
+    if (usedIds.has(cand.primaryTx.id) || usedIds.has(cand.partnerTx.id)) continue;
+    usedIds.add(cand.primaryTx.id);
+    usedIds.add(cand.partnerTx.id);
+    matched.push(cand);
+  }
+
+  return matched;
+}
+

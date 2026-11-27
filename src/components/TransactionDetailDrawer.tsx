@@ -6,7 +6,8 @@ import {
   Tag,
   CheckCircle2,
   Clock,
-  ArrowRightLeft
+  ArrowRightLeft,
+  Link2
 } from 'lucide-react';
 import { Transaction } from '../App';
 import { Budget } from './BudgetsPage';
@@ -15,7 +16,9 @@ import {
   getCreditCardCycleForMonth,
   getTransactionCreditCardCycleKey,
   formatShortIsoDate,
-  getCleanTransactionDisplay
+  getCleanTransactionDisplay,
+  isDebtPaymentTransfer,
+  isPureInternalTransfer
 } from '../utils/financeMath';
 
 interface TransactionDetailDrawerProps {
@@ -27,6 +30,7 @@ interface TransactionDetailDrawerProps {
   currencySymbol: string;
   fxRateUsdToDop?: number;
   onMarkCleared?: (txId: string) => void;
+  onLinkTransfer?: (tx: Transaction) => void;
 }
 
 export default function TransactionDetailDrawer({
@@ -37,7 +41,8 @@ export default function TransactionDetailDrawer({
   budgets,
   currencySymbol,
   fxRateUsdToDop = 60.5,
-  onMarkCleared
+  onMarkCleared,
+  onLinkTransfer
 }: TransactionDetailDrawerProps) {
   if (!tx) return null;
 
@@ -56,6 +61,8 @@ export default function TransactionDetailDrawer({
     cardCutoffDay && cardCycleKey ? getCreditCardCycleForMonth(cardCutoffDay, cardDueDay, cardCycleKey) : null;
   const isPending = tx.status === 'pending';
   const isIncome = tx.type === 'income';
+  const isDebtPay = isDebtPaymentTransfer(tx, budgets);
+  const isPureTransfer = isPureInternalTransfer(tx, budgets);
   const { displayTitle, displayNotes } = getCleanTransactionDisplay(tx, linkedBudget, transferToBudget);
 
   const fxRate = fxRateUsdToDop > 0 ? fxRateUsdToDop : 60.5;
@@ -87,6 +94,11 @@ export default function TransactionDetailDrawer({
             >
               {isPending ? 'Pending Flotante' : 'Cleared / Reconciled'}
             </span>
+            {isDebtPay && (
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF3B30]/15 text-[#D70015] dark:text-[#FF453A] border border-[#FF3B30]/30">
+                {transferToBudget?.accountType === 'loan' || linkedBudget?.accountType === 'loan' ? 'Pago Préstamo (Gasto Real)' : 'Pago Tarjeta (Gasto Real)'}
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}
@@ -101,8 +113,8 @@ export default function TransactionDetailDrawer({
           <div className="space-y-1">
             <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">{displayTitle}</h2>
             <div className="text-3xl font-extrabold tracking-tight tabular-nums mt-2">
-              <span className={tx.isTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : isIncome ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}>
-                {tx.isTransfer ? '' : isIncome ? '+' : '-'} {currencySymbol}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+              <span className={isPureTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : isIncome ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}>
+                {isPureTransfer ? '' : isIncome ? '+' : '-'} {currencySymbol}{tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
               </span>
             </div>
             <p className="text-xs text-[#86868B] tabular-nums pt-0.5">
@@ -175,15 +187,15 @@ export default function TransactionDetailDrawer({
               </>
             )}
 
-            {tx.isLoanPayment && (
+            {(tx.isLoanPayment || isDebtPay) && (
               <>
                 <div className="h-[0.5px] bg-black/[0.06] dark:bg-white/10" />
                 <div className="flex items-center justify-between text-xs">
                   <span className="text-[#86868B] flex items-center gap-1.5">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#248A3D] dark:text-emerald-400" /> Payment Type
+                    <CheckCircle2 className="w-3.5 h-3.5 text-[#D70015] dark:text-[#FF3B30]" /> Impact on Cashflow
                   </span>
-                  <span className="font-medium text-[#248A3D] dark:text-emerald-400">
-                    Debt Abono / Balance Payment
+                  <span className="font-semibold text-[#D70015] dark:text-[#FF3B30]">
+                    Real Outflow Expense (Debt Service)
                   </span>
                 </div>
               </>
@@ -257,6 +269,20 @@ export default function TransactionDetailDrawer({
           >
             Edit Transaction
           </button>
+          {onLinkTransfer && budgets.length >= 2 && (
+            <button
+              type="button"
+              onClick={() => {
+                onLinkTransfer(tx);
+                onClose();
+              }}
+              className="px-3.5 py-2.5 rounded-full text-xs font-semibold bg-[#0071E3]/10 text-[#0071E3] dark:text-[#5AC8FA] hover:bg-[#0071E3]/20 border border-[#0071E3]/25 transition active:scale-[0.98] flex items-center gap-1.5"
+              title={tx.isTransfer ? 'Re-link or update bank transfer accounts' : 'Attach or pair as a bank transfer'}
+            >
+              <Link2 className="w-3.5 h-3.5" />
+              {tx.isTransfer ? 'Re-link Transfer' : 'Link Transfer'}
+            </button>
+          )}
           <button
             onClick={() => {
               if (window.confirm(`Delete transaction "${tx.title}"?`)) {

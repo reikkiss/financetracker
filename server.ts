@@ -21,13 +21,15 @@ function getAiClient() {
 
 function getAiErrorStatus(err: any): number {
   const status = Number(err?.status || err?.code);
-  if (status >= 400 && status < 600) return status;
+  // NEVER send 502, 503, or 504 because Nginx proxy_intercept_errors on converts them into warmup.html!
+  if (status === 502 || status === 503 || status === 504 || status >= 500) return 200;
+  if (status >= 400 && status < 500) return status;
   const msg = String(err?.message || '').toUpperCase();
   if (msg.includes('API_KEY_INVALID') || msg.includes('INVALID_ARGUMENT')) return 400;
   if (msg.includes('PERMISSION_DENIED')) return 403;
   if (msg.includes('NOT_FOUND')) return 404;
   if (msg.includes('RESOURCE_EXHAUSTED') || msg.includes('429')) return 429;
-  return 500;
+  return 200;
 }
 
 async function startServer() {
@@ -174,6 +176,7 @@ Instructions:
   app.post('/api/ai/advice', async (req, res) => {
     try {
       const { prompt, financialContext } = req.body || {};
+      const userName = financialContext?.user?.name || financialContext?.user?.displayName || 'User';
       const userQuestion = typeof prompt === 'string' && prompt.trim()
         ? prompt.trim()
         : 'Give me a comprehensive financial health review and 3 concrete recommendations based on my accounts, credit cards, budgets, and recent transactions.';
@@ -184,40 +187,57 @@ Instructions:
         ? JSON.stringify(financialContext, null, 2)
         : 'No ledger snapshot was provided.';
 
-      const systemInstruction = `You are a sharp, supportive, and practical personal finance advisor for the user's private multi-account ledger (bank accounts, debit cards, credit cards with cutoff/due cycles, loans, budgets, and transactions).
-Instructions:
-- Analyze ONLY the real numbers provided in the user's financial snapshot (never invent balances or transactions).
-- Reply in the same language as the user's question (Spanish if asked in Spanish, English if asked in English).
-- Highlight concrete cashflow, credit card utilization / cutoff timing, top spending categories, and 3 actionable next steps.
-- Keep the response concise, well-structured with clear headings and bullet points (max ~350 words).`;
+      const systemInstruction = `You are a Principal Financial Advisor tailored specifically for personal multi-account wealth and debt management (Dominican Republic RD$ and US$ dual-currency accounts, credit card cutoff/due cycles, loans, and cashflow).
+Tone: Direct, encouraging, highly analytical, human, and Apple-grade precision.
+Rules:
+1. ADDRESS THE USER PERSONALLY: Greet the user by their display name (e.g., "Hola ${userName}," or "Hello ${userName},").
+2. ADAPT LANGUAGE AUTOMATICALLY: If the prompt is in Spanish or the financial context is in RD$/Spanish, respond in crisp, professional Dominican/Latin-American Spanish. If in English, respond in English.
+3. GROUNDED IN ACTUAL DATA: Reference their EXACT numbers, account names, cards, limits, and categories from their snapshot. Never invent imaginary figures or placeholders. If the user has $0 or few transactions yet, warmly acknowledge their setup state and guide them on their first 3 personalized steps.
+4. STRUCTURED SECTIONS:
+   - 🎯 **Diagnóstico de Salud Financiera** (Cashflow, liquid cash vs debt exposure, savings rate)
+   - 💳 **Estrategia de Tarjetas y Crédito** (Specific card names, utilization %, golden rule cutoff/due dates, cuotas/diferidos)
+   - 📊 **Patrones de Gasto Clave** (Top spending categories, pending flotantes)
+   - 🚀 **Plan de Acción (3 Pasos Concretos)** (Specific, prioritized, numbered action items for this month)
+5. Keep the response crisp, highly readable with bullet points and bold amounts (max ~350-400 words).`;
 
-      const response = await ai.models.generateContent({
-        model: 'gemini-4-hydrogen',
-        contents: [
-          {
-            role: 'user',
-            parts: [
-              {
-                text: `User Financial Snapshot:\n${contextText}\n\nUser Question / Request:\n${userQuestion}`
-              }
-            ]
-          }
-        ],
-        config: {
-          systemInstruction,
-        }
-      });
+      const userContentText = `Financial Snapshot for ${userName}:\n${contextText}\n\nUser Question / Request:\n${userQuestion}`;
 
-      const adviceText = (response.text ?? '').trim();
-      if (!adviceText) {
-        return res.status(502).json({ error: 'The AI model returned an empty response. Please try again.' });
+      let adviceText = '';
+      const primaryModel = 'gemini-4-hydrogen';
+      const fallbackModel = 'gemini-3.1-flash-lite';
+
+      try {
+        const response = await ai.models.generateContent({
+          model: primaryModel,
+          contents: [{ role: 'user', parts: [{ text: userContentText }] }],
+          config: { systemInstruction }
+        });
+        adviceText = (response.text ?? '').trim();
+      } catch (primaryErr: any) {
+        console.warn(`Primary model ${primaryModel} failed (${primaryErr?.message}), trying fallback model ${fallbackModel}...`);
+        const fallbackResp = await ai.models.generateContent({
+          model: fallbackModel,
+          contents: [{ role: 'user', parts: [{ text: userContentText }] }],
+          config: { systemInstruction }
+        });
+        adviceText = (fallbackResp.text ?? '').trim();
       }
 
-      res.json({ advice: adviceText });
+      if (!adviceText) {
+        return res.status(200).json({
+          ok: false,
+          error: 'The AI model returned an empty response. Please try again with a specific question.'
+        });
+      }
+
+      res.json({ ok: true, advice: adviceText });
     } catch (err: any) {
       console.error('AI Advice Error:', err);
-      const status = getAiErrorStatus(err);
-      res.status(status).json({ error: err?.message || 'Failed to generate AI advice' });
+      // Send 200 with ok: false so Nginx proxy_intercept_errors on does not convert into warmup.html
+      res.status(200).json({
+        ok: false,
+        error: err?.message || 'Unable to generate financial insights at this moment. Please try again.'
+      });
     }
   });
 

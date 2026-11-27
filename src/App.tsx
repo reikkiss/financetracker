@@ -43,7 +43,11 @@ import {
   allocateLoanPayment,
   generateLoanQuotasSchedule,
   reverseLoanPaymentOnQuotas,
-  findFuzzyPendingMatch
+  findFuzzyPendingMatch,
+  isDebtPaymentTransfer,
+  isPureInternalTransfer,
+  isRealExpenseTransaction,
+  getTransactionExpenseCategory
 } from './utils/financeMath';
 import TransactionsPage from './components/TransactionsPage';
 import SettingsPage from './components/SettingsPage';
@@ -53,6 +57,8 @@ import EditTransactionModal from './components/EditTransactionModal';
 import AddBudgetModal from './components/AddBudgetModal';
 import EditBudgetModal from './components/EditBudgetModal';
 import TransferModal from './components/TransferModal';
+import LinkTransferModal from './components/LinkTransferModal';
+import AutoLinkTransfersModal from './components/AutoLinkTransfersModal';
 import AiAdvisorModal from './components/AiAdvisorModal';
 import { getApiUrl } from './utils/apiConfig';
 
@@ -209,6 +215,8 @@ export default function App() {
 
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [transferInitialFromId, setTransferInitialFromId] = useState<string | undefined>(undefined);
+  const [linkTransferState, setLinkTransferState] = useState<{ primary: Transaction; partner?: Transaction | null } | null>(null);
+  const [isAutoLinkOpen, setIsAutoLinkOpen] = useState(false);
 
   const [isAddBudgetOpen, setIsAddBudgetOpen] = useState(false);
   const [editingBudget, setEditingBudget] = useState<Budget | null>(null);
@@ -248,7 +256,12 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
       if (user) {
-        await loadOrCreateUserProfile(user);
+        try {
+          await loadOrCreateUserProfile(user);
+        } catch (err) {
+          console.error('Failed to initialize user session:', err);
+          setAuthError('Unable to load your profile data. Please refresh and try again.');
+        }
       } else {
         setCurrentUserProfile(null);
         setTransactions([]);
@@ -365,9 +378,9 @@ export default function App() {
   const totalExpense = useMemo(
     () =>
       displayTransactions
-        .filter(t => t.type === 'expense' && !t.isTransfer && t.emailOutcome !== 'declined')
+        .filter(t => isRealExpenseTransaction(t, budgets))
         .reduce((s, t) => s + t.amount, 0),
-    [displayTransactions]
+    [displayTransactions, budgets]
   );
 
   const availableCategories = useMemo(() => {
@@ -384,26 +397,35 @@ export default function App() {
 
   const breakdownData = useMemo(() => {
     const map: Record<string, number> = {};
-    displayTransactions
-      .filter(t => !t.isTransfer && t.emailOutcome !== 'declined' && t.type === breakdownMode.toLowerCase())
-      .forEach(t => {
-        map[t.category] = (map[t.category] || 0) + t.amount;
-      });
+    displayTransactions.forEach(t => {
+      if (breakdownMode === 'Expense') {
+        if (isRealExpenseTransaction(t, budgets)) {
+          const cat = getTransactionExpenseCategory(t, budgets);
+          map[cat] = (map[cat] || 0) + t.amount;
+        }
+      } else {
+        if (t.type === 'income' && !t.isTransfer && t.emailOutcome !== 'declined') {
+          const cat = t.category || 'Other';
+          map[cat] = (map[cat] || 0) + t.amount;
+        }
+      }
+    });
     return Object.entries(map).map(([name, value]) => ({ name, value }));
-  }, [displayTransactions, breakdownMode]);
+  }, [displayTransactions, breakdownMode, budgets]);
 
   const monthlyChartData = useMemo(() => {
     if (transactions.length === 0) return [];
     const map: Record<string, { income: number; expense: number }> = {};
     transactions.forEach(t => {
-      if (t.isTransfer || t.emailOutcome === 'declined') return;
+      if (t.emailOutcome === 'declined') return;
+      if (isPureInternalTransfer(t, budgets)) return;
       const monthKey = t.date ? t.date.slice(0, 7) : 'Unknown';
       if (!map[monthKey]) {
         map[monthKey] = { income: 0, expense: 0 };
       }
-      if (t.type === 'income') {
+      if (t.type === 'income' && !t.isTransfer) {
         map[monthKey].income += Number(t.amount) || 0;
-      } else {
+      } else if (isRealExpenseTransaction(t, budgets)) {
         map[monthKey].expense += Number(t.amount) || 0;
       }
     });
@@ -421,7 +443,7 @@ export default function App() {
           cashflow: Number((income - expense).toFixed(2))
         };
       });
-  }, [transactions]);
+  }, [transactions, budgets]);
 
   const currentMonthKey = useMemo(() => {
     const now = new Date();
@@ -436,11 +458,14 @@ export default function App() {
   }, [globalSelectedMonth]);
 
   const selectedMonthStats = useMemo(() => {
-    const mTransactions = displayTransactions.filter(t => !t.isTransfer && t.emailOutcome !== 'declined');
-    const income = mTransactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-    const expense = mTransactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+    const income = displayTransactions
+      .filter(t => t.type === 'income' && !t.isTransfer && t.emailOutcome !== 'declined')
+      .reduce((s, t) => s + t.amount, 0);
+    const expense = displayTransactions
+      .filter(t => isRealExpenseTransaction(t, budgets))
+      .reduce((s, t) => s + t.amount, 0);
     return { income, expense, cashflow: income - expense };
-  }, [displayTransactions]);
+  }, [displayTransactions, budgets]);
 
   // 18 months list with current actual month first
   const allMonthsList = useMemo(() => {
@@ -465,10 +490,14 @@ export default function App() {
   const filteredMonthsStats = useMemo(() => {
     const listWithStats = allMonthsList.map(m => {
       const monthTxs = transactions.filter(
-        t => !t.isTransfer && t.emailOutcome !== 'declined' && t.date && t.date.startsWith(m.key)
+        t => t.emailOutcome !== 'declined' && t.date && t.date.startsWith(m.key)
       );
-      const income = monthTxs.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
-      const expense = monthTxs.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0);
+      const income = monthTxs
+        .filter(t => t.type === 'income' && !t.isTransfer)
+        .reduce((s, t) => s + t.amount, 0);
+      const expense = monthTxs
+        .filter(t => isRealExpenseTransaction(t, budgets))
+        .reduce((s, t) => s + t.amount, 0);
       const cashflowVal = income - expense;
       const ratio = income > 0 ? Math.min(Math.round((expense / income) * 100), 100) : 0;
       return { ...m, income, expense, cashflow: cashflowVal, ratio };
@@ -476,7 +505,7 @@ export default function App() {
 
     if (statsQuarterFilter === 'All') return listWithStats;
     return listWithStats.filter(m => m.q === statsQuarterFilter);
-  }, [transactions, allMonthsList, statsQuarterFilter]);
+  }, [transactions, allMonthsList, statsQuarterFilter, budgets]);
 
   const applySingleTxInMemory = (
     tx: Transaction,
@@ -750,6 +779,264 @@ export default function App() {
     setIsTransferOpen(true);
   };
 
+  const handleCreateTransfer = async ({
+    fromBudgetId,
+    toBudgetId,
+    amount,
+    date,
+    title,
+    notes
+  }: {
+    fromBudgetId: string;
+    toBudgetId: string;
+    amount: number;
+    date: string;
+    title?: string;
+    notes?: string;
+  }) => {
+    if (!firebaseUser || !fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) return;
+    const toAcc = budgets.find(b => b.id === toBudgetId);
+    const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+    const defaultLabel = isPayingDebt
+      ? toAcc?.accountType === 'loan'
+        ? 'Loan Payment'
+        : 'Card Payment'
+      : 'Self Transfer';
+    const id = `tx_tr_${Date.now()}`;
+
+    const newTx: Transaction = stripUndefined({
+      id,
+      userId: firebaseUser.uid,
+      title: (title || defaultLabel).slice(0, 200),
+      amount: Math.abs(Number(amount) || 0),
+      type: 'expense',
+      category: isPayingDebt ? 'Debt Payment' : 'Transfer',
+      date: (date || new Date().toISOString().split('T')[0]).slice(0, 20),
+      notes: (notes || '').trim().slice(0, 500),
+      budgetId: fromBudgetId.slice(0, 50),
+      transferToBudgetId: toBudgetId.slice(0, 50),
+      isTransfer: true,
+      isLoanPayment: isPayingDebt,
+      status: 'cleared' as const
+    });
+
+    const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, budgets);
+    try {
+      await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
+      return;
+    }
+    if (touchedIds.length > 0) {
+      await persistTouchedBudgets(touchedIds, nextBudgets);
+    }
+    setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+  };
+
+  const handleConfirmLinkTransfer = async ({
+    primaryTx,
+    partnerTx,
+    fromBudgetId,
+    toBudgetId,
+    amount,
+    date,
+    title,
+    notes
+  }: {
+    primaryTx: Transaction;
+    partnerTx?: Transaction | null;
+    fromBudgetId: string;
+    toBudgetId: string;
+    amount: number;
+    date: string;
+    title: string;
+    notes?: string;
+  }) => {
+    if (!firebaseUser || !fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) return;
+
+    const step1 = revertSingleTxInMemory(primaryTx, budgets);
+    const step2 = partnerTx
+      ? revertSingleTxInMemory(partnerTx, step1.nextBudgets)
+      : { nextBudgets: step1.nextBudgets, touchedIds: [] as string[] };
+
+    const toAcc = step2.nextBudgets.find(b => b.id === toBudgetId);
+    const toIsDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+
+    const combinedNotes = (() => {
+      const base = (notes || '').trim();
+      if (partnerTx && partnerTx.title && !base.toLowerCase().includes(partnerTx.title.toLowerCase())) {
+        const pairInfo = `Linked entry: ${partnerTx.title}`;
+        return (base ? `${base} • ${pairInfo}` : pairInfo).slice(0, 500);
+      }
+      return base.slice(0, 500);
+    })();
+
+    const combinedEmailContext = (primaryTx.emailContext || partnerTx?.emailContext || '').slice(0, 240);
+    const preservedStatementCycle = (primaryTx.statementCycle || partnerTx?.statementCycle || '').slice(0, 20);
+    const resolvedStatus: 'pending' | 'cleared' =
+      primaryTx.status === 'cleared' || partnerTx?.status === 'cleared' ? 'cleared' : 'pending';
+
+    const mergedTx: Transaction = stripUndefined({
+      ...primaryTx,
+      id: primaryTx.id,
+      userId: primaryTx.userId || firebaseUser.uid,
+      title: (title || primaryTx.title || 'Bank Transfer').trim().slice(0, 200),
+      amount: Math.abs(Number(amount) || 0),
+      type: 'expense' as const,
+      category: (toIsDebt ? 'Debt Payment' : 'Transfer').slice(0, 50),
+      date: (date || primaryTx.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+      notes: combinedNotes || undefined,
+      budgetId: fromBudgetId.slice(0, 50),
+      transferToBudgetId: toBudgetId.slice(0, 50),
+      isTransfer: true,
+      isLoanPayment: toIsDebt,
+      status: resolvedStatus,
+      ...(preservedStatementCycle ? { statementCycle: preservedStatementCycle } : {}),
+      ...(combinedEmailContext ? { emailContext: combinedEmailContext } : {}),
+      ...(toAcc?.accountType !== 'loan'
+        ? { loanPrincipalPaid: undefined, loanInterestPaid: undefined, paidQuotaIds: undefined }
+        : {})
+    });
+
+    const applied = applySingleTxInMemory(mergedTx, step2.nextBudgets);
+
+    try {
+      await setDoc(doc(db, 'transactions', mergedTx.id), stripUndefined(applied.enrichedTx));
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, `transactions/${mergedTx.id}`);
+      return;
+    }
+
+    if (partnerTx && partnerTx.id !== primaryTx.id) {
+      try {
+        await deleteDoc(doc(db, 'transactions', partnerTx.id));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `transactions/${partnerTx.id}`);
+        return;
+      }
+    }
+
+    const allTouched = Array.from(new Set([...step1.touchedIds, ...step2.touchedIds, ...applied.touchedIds]));
+    if (allTouched.length > 0) {
+      await persistTouchedBudgets(allTouched, applied.nextBudgets);
+    }
+
+    setTransactions(prev =>
+      prev
+        .filter(t => !partnerTx || t.id !== partnerTx.id)
+        .map(t => (t.id === primaryTx.id ? applied.enrichedTx : t))
+        .sort((a, b) => (b.date || '').localeCompare(a.date || ''))
+    );
+  };
+
+  const handleBatchLinkTransfers = async (
+    pairs: Array<{
+      primaryTx: Transaction;
+      partnerTx: Transaction;
+      fromBudgetId: string;
+      toBudgetId: string;
+      amount: number;
+      date: string;
+      title: string;
+      notes?: string;
+    }>
+  ) => {
+    if (!firebaseUser || pairs.length === 0) return;
+
+    let workingBudgets = budgetsRef.current.map(b => ({ ...b }));
+    const workingTxMap = new Map<string, Transaction>(transactionsRef.current.map(t => [t.id, t]));
+    const allTouchedBudgets = new Set<string>();
+    const txsToUpsert: Transaction[] = [];
+    const txIdsToDelete: string[] = [];
+
+    for (const pair of pairs) {
+      if (!pair.fromBudgetId || !pair.toBudgetId || pair.fromBudgetId === pair.toBudgetId) continue;
+      const latestPrimary = workingTxMap.get(pair.primaryTx.id);
+      const latestPartner = workingTxMap.get(pair.partnerTx.id);
+      if (!latestPrimary || !latestPartner || latestPrimary.id === latestPartner.id) continue;
+
+      const step1 = revertSingleTxInMemory(latestPrimary, workingBudgets);
+      const step2 = revertSingleTxInMemory(latestPartner, step1.nextBudgets);
+
+      const toAcc = step2.nextBudgets.find(b => b.id === pair.toBudgetId);
+      const toIsDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
+
+      const combinedNotes = (() => {
+        const base = (pair.notes || '').trim();
+        if (latestPartner.title && !base.toLowerCase().includes(latestPartner.title.toLowerCase())) {
+          const pairInfo = `Linked entry: ${latestPartner.title}`;
+          return (base ? `${base} • ${pairInfo}` : pairInfo).slice(0, 500);
+        }
+        return base.slice(0, 500);
+      })();
+
+      const combinedEmailContext = (latestPrimary.emailContext || latestPartner.emailContext || '').slice(0, 240);
+      const preservedStatementCycle = (latestPrimary.statementCycle || latestPartner.statementCycle || '').slice(0, 20);
+      const resolvedStatus: 'pending' | 'cleared' =
+        latestPrimary.status === 'cleared' || latestPartner.status === 'cleared' ? 'cleared' : 'pending';
+
+      const mergedTx: Transaction = stripUndefined({
+        ...latestPrimary,
+        id: latestPrimary.id,
+        userId: latestPrimary.userId || firebaseUser.uid,
+        title: (pair.title || latestPrimary.title || 'Bank Transfer').trim().slice(0, 200),
+        amount: Math.abs(Number(pair.amount) || 0),
+        type: 'expense' as const,
+        category: (toIsDebt ? 'Debt Payment' : 'Transfer').slice(0, 50),
+        date: (pair.date || latestPrimary.date || new Date().toISOString().split('T')[0]).slice(0, 20),
+        notes: combinedNotes || undefined,
+        budgetId: pair.fromBudgetId.slice(0, 50),
+        transferToBudgetId: pair.toBudgetId.slice(0, 50),
+        isTransfer: true,
+        isLoanPayment: toIsDebt,
+        status: resolvedStatus,
+        ...(preservedStatementCycle ? { statementCycle: preservedStatementCycle } : {}),
+        ...(combinedEmailContext ? { emailContext: combinedEmailContext } : {}),
+        ...(toAcc?.accountType !== 'loan'
+          ? { loanPrincipalPaid: undefined, loanInterestPaid: undefined, paidQuotaIds: undefined }
+          : {})
+      });
+
+      const applied = applySingleTxInMemory(mergedTx, step2.nextBudgets);
+      workingBudgets = applied.nextBudgets;
+      step1.touchedIds.forEach(id => allTouchedBudgets.add(id));
+      step2.touchedIds.forEach(id => allTouchedBudgets.add(id));
+      applied.touchedIds.forEach(id => allTouchedBudgets.add(id));
+
+      workingTxMap.set(mergedTx.id, applied.enrichedTx);
+      workingTxMap.delete(latestPartner.id);
+      txsToUpsert.push(applied.enrichedTx);
+      txIdsToDelete.push(latestPartner.id);
+    }
+
+    for (const tx of txsToUpsert) {
+      try {
+        await setDoc(doc(db, 'transactions', tx.id), stripUndefined(tx));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.UPDATE, `transactions/${tx.id}`);
+        return;
+      }
+    }
+
+    for (const delId of txIdsToDelete) {
+      try {
+        await deleteDoc(doc(db, 'transactions', delId));
+      } catch (err) {
+        handleFirestoreError(err, OperationType.DELETE, `transactions/${delId}`);
+        return;
+      }
+    }
+
+    if (allTouchedBudgets.size > 0) {
+      await persistTouchedBudgets(Array.from(allTouchedBudgets), workingBudgets);
+    }
+
+    const updatedList = Array.from(workingTxMap.values()).sort((a, b) =>
+      (b.date || '').localeCompare(a.date || '')
+    );
+    setTransactions(updatedList);
+  };
+
   const budgetsRef = useRef(budgets);
   budgetsRef.current = budgets;
   const transactionsRef = useRef(transactions);
@@ -810,17 +1097,22 @@ export default function App() {
       } else {
         const id = `tx_${baseTs}_${i}`;
         const isTransferTx = Boolean(r.isTransfer && r.budgetId && r.transferToBudgetId && r.budgetId !== r.transferToBudgetId);
+        const targetBudget = isTransferTx && r.transferToBudgetId ? workingBudgets.find(b => b.id === r.transferToBudgetId) : undefined;
+        const isDebtPay = Boolean(
+          r.isLoanPayment ||
+          (isTransferTx && targetBudget && (targetBudget.accountType === 'loan' || targetBudget.accountType === 'credit_card'))
+        );
         const newTx: Transaction = stripUndefined({
           id,
           userId: firebaseUser.uid,
           title: (r.title || 'Transaction').trim().slice(0, 200),
           amount: stmtAmt,
           type: isTransferTx ? 'expense' : r.type === 'income' ? 'income' : 'expense',
-          category: (isTransferTx ? (r.category || 'Transfer') : r.category || 'Other').trim().slice(0, 50),
+          category: (isTransferTx ? (isDebtPay ? 'Debt Payment' : (r.category || 'Transfer')) : r.category || 'Other').trim().slice(0, 50),
           date: (r.date || new Date().toISOString().split('T')[0]).slice(0, 20),
           notes: (r.notes || '').trim().slice(0, 500),
           ...(r.budgetId ? { budgetId: r.budgetId.slice(0, 50) } : {}),
-          isLoanPayment: Boolean(r.isLoanPayment),
+          isLoanPayment: isDebtPay,
           isTransfer: isTransferTx,
           status: 'cleared' as const,
           ...(isTransferTx && r.transferToBudgetId ? { transferToBudgetId: r.transferToBudgetId.slice(0, 50) } : {}),
@@ -1466,40 +1758,121 @@ export default function App() {
     setAiError(null);
     setAiResult('');
     try {
+      // 1. Calculate liquid cash and debt exposure across all user accounts
+      let liquidCash = 0;
+      let debtExposure = 0;
+      budgets.forEach(b => {
+        if (b.accountType === 'bank_account' || b.accountType === 'debit_account') {
+          liquidCash += Number(b.accountBalance) || 0;
+        } else if (b.accountType === 'credit_card' || b.accountType === 'loan') {
+          debtExposure += Number(b.actualUsedAmount) || 0;
+        }
+      });
+
+      // 2. Pending flotantes summary
+      const pendingTxs = displayTransactions.filter(t => t.status === 'pending' && t.emailOutcome !== 'declined');
+      const pendingSum = pendingTxs.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+
+      // 3. Category spending breakdown for the current period
+      const categoryMap: Record<string, number> = {};
+      displayTransactions
+        .filter(t => isRealExpenseTransaction(t, budgets))
+        .forEach(t => {
+          const c = getTransactionExpenseCategory(t, budgets);
+          categoryMap[c] = (categoryMap[c] || 0) + (Number(t.amount) || 0);
+        });
+      const topCategories = Object.entries(categoryMap)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 6)
+        .map(([name, amt]) => ({
+          category: name,
+          amount: Number(amt.toFixed(2)),
+          percentage: totalExpense > 0 ? Number(((amt / totalExpense) * 100).toFixed(1)) : 0
+        }));
+
+      // 4. Build comprehensive personalized financial snapshot
       const financialContext = {
-        currency: baseCurrencyCode,
-        currencySymbol,
-        fxRateUsdToDop,
-        selectedMonth: globalSelectedMonth,
-        summary: {
+        user: {
+          name: currentUserProfile?.name || firebaseUser.displayName || 'User',
+          email: firebaseUser.email || '',
+          currencyCode: baseCurrencyCode,
+          currencySymbol,
+          fxRateUsdToDop,
+          monthlyBudgetLimit: currentUserProfile?.monthlyBudget || null
+        },
+        selectedPeriod: {
+          month: globalSelectedMonth,
+          label: selectedMonthName
+        },
+        cashflow: {
           totalIncome: Number(totalIncome.toFixed(2)),
           totalExpense: Number(totalExpense.toFixed(2)),
-          netCashflow: Number((totalIncome - totalExpense).toFixed(2))
+          netCashflow: Number((totalIncome - totalExpense).toFixed(2)),
+          savingsRatePct: totalIncome > 0 ? Number((((totalIncome - totalExpense) / totalIncome) * 100).toFixed(1)) : 0
         },
-        accountsAndBudgets: budgets.map(b => ({
-          name: b.name || b.category,
-          type: b.accountType || 'standard',
-          balance: b.accountBalance ?? null,
-          creditLimit: b.creditLimit ?? b.limit ?? null,
-          actualUsedAmount: b.actualUsedAmount ?? null,
-          softCap: b.softCap ?? null,
-          softCapUsd: b.softCapUsd ?? null,
-          cutoffDate: b.cutoffDate || null,
-          dueDate: b.dueDate || null,
-          apr: b.apr ?? null
-        })),
+        summary: {
+          totalLiquidCash: Number(liquidCash.toFixed(2)),
+          totalDebtExposure: Number(debtExposure.toFixed(2)),
+          pendingFlotantesCount: pendingTxs.length,
+          pendingFlotantesSum: Number(pendingSum.toFixed(2))
+        },
+        liquidAccounts: budgets
+          .filter(b => b.accountType === 'bank_account' || b.accountType === 'debit_account')
+          .map(b => ({
+            name: b.name || b.category,
+            type: b.accountType,
+            balance: Number(b.accountBalance || 0),
+            apr: b.apr ? `${b.apr}%` : null
+          })),
+        creditCards: budgets
+          .filter(b => b.accountType === 'credit_card')
+          .map(b => {
+            const limit = Number(b.creditLimit || b.limit || 0);
+            const used = Number(b.actualUsedAmount || 0);
+            return {
+              name: b.name || b.category,
+              creditLimit: limit,
+              actualUsedAmount: used,
+              utilizationPct: limit > 0 ? Number(((used / limit) * 100).toFixed(1)) : 0,
+              availableCredit: Math.max(0, limit - used),
+              cutoffDate: b.cutoffDate || null,
+              dueDate: b.dueDate || null,
+              softCap: b.softCap || null,
+              installments: (b.installments || []).map(i => ({
+                title: i.title,
+                totalAmount: i.totalAmount,
+                monthlyQuota: i.monthlyQuota,
+                remainingMonths: Math.max(0, (i.termMonths || 0) - (i.monthsPaid || 0))
+              }))
+            };
+          }),
+        loans: budgets
+          .filter(b => b.accountType === 'loan')
+          .map(b => ({
+            name: b.name || b.category,
+            originalPrincipal: Number(b.creditLimit || b.limit || 0),
+            remainingPrincipal: Number(b.actualUsedAmount || 0),
+            apr: b.apr ? `${b.apr}%` : null,
+            monthlyQuota: b.monthlyQuota || b.limit || null,
+            unpaidQuotasCount: (b.loanQuotas || []).filter(q => !q.isPaid).length
+          })),
+        topSpendingCategories: topCategories,
         recentTransactions: displayTransactions
           .filter(t => t.emailOutcome !== 'declined')
-          .slice(0, 60)
-          .map(t => ({
-            title: t.title,
-            amount: t.amount,
-            type: t.type,
-            category: t.category,
-            date: t.date,
-            status: t.status || 'cleared',
-            isTransfer: Boolean(t.isTransfer)
-          }))
+          .slice(0, 40)
+          .map(t => {
+            const isDebtPay = isDebtPaymentTransfer(t, budgets);
+            return {
+              date: t.date,
+              title: t.title,
+              type: isDebtPay ? 'debt_payment' : t.type,
+              amount: t.amount,
+              category: getTransactionExpenseCategory(t, budgets),
+              status: t.status || 'cleared',
+              isTransfer: Boolean(t.isTransfer),
+              isDebtPayment: isDebtPay
+            };
+          })
       };
 
       const res = await fetch(getApiUrl('/api/ai/advice'), {
@@ -1510,16 +1883,27 @@ export default function App() {
           financialContext
         })
       });
+
       const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        setAiError('AI Financial Advisor returned an unexpected response.');
+      let data: any = null;
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const rawText = await res.text();
+        console.warn('Non-JSON response from AI endpoint:', res.status, rawText.slice(0, 150));
+        setAiError(
+          res.status === 502 || res.status === 503 || res.status === 504 || rawText.includes('warmup')
+            ? 'The AI advisor service is warming up or busy. Please try again in a few seconds.'
+            : 'Unable to reach the AI Financial Advisor service right now. Please try again.'
+        );
         return;
       }
-      const data = await res.json();
-      if (!res.ok) {
-        setAiError(data.error || `AI request failed (${res.status}).`);
+
+      if (data?.ok === false || data?.error) {
+        setAiError(data.error || 'Failed to generate financial insights.');
         return;
       }
+
       setAiResult(data.advice || 'No response generated.');
     } catch {
       setAiError('Unable to reach the AI Advisor backend.');
@@ -1602,7 +1986,7 @@ export default function App() {
             </span>
             <div className="truncate">
               <span className="text-xs font-semibold text-[#1D1D1F] dark:text-white truncate block group-hover:text-[#0071E3] transition">
-                {currentUserProfile?.name || firebaseUser.displayName}
+                {currentUserProfile?.name || firebaseUser?.displayName || 'Account'}
               </span>
               <span className="text-[10px] text-[#86868B] truncate block">Profile & Settings</span>
             </div>
@@ -1859,6 +2243,7 @@ export default function App() {
               onOpenAddBudget={() => setIsAddBudgetOpen(true)}
               onNavigateBudgets={() => setActiveTab('budgets')}
               onMarkCleared={handleMarkTransactionCleared}
+              onOpenLinkTransfer={(tx) => setLinkTransferState({ primary: tx, partner: null })}
             />
           )}
 
@@ -1919,6 +2304,8 @@ export default function App() {
               onOpenTransfer={() => handleOpenTransfer()}
               onOpenEditTx={handleOpenEditTx}
               onDeleteTx={handleDeleteTx}
+              onOpenLinkTransfer={(primary, partner) => setLinkTransferState({ primary, partner: partner || null })}
+              onOpenAutoLinkTransfers={() => setIsAutoLinkOpen(true)}
             />
           )}
 
@@ -1983,6 +2370,7 @@ export default function App() {
           }
           setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
         }}
+        onSaveTransfer={handleCreateTransfer}
       />
 
       <EditTransactionModal
@@ -1991,10 +2379,16 @@ export default function App() {
         budgets={budgets}
         availableCategories={availableCategories}
         currencySymbol={currencySymbol}
+        onOpenLinkTransfer={(tx) => setLinkTransferState({ primary: tx, partner: null })}
         onSave={async (txId, updated) => {
           if (!firebaseUser || !editingTx) return;
           const isTransferTx = Boolean(
             updated.isTransfer && updated.budgetId && updated.transferToBudgetId && updated.budgetId !== updated.transferToBudgetId
+          );
+          const targetBudget = isTransferTx && updated.transferToBudgetId ? budgets.find(b => b.id === updated.transferToBudgetId) : undefined;
+          const isDebtPay = Boolean(
+            updated.isLoanPayment ||
+            (isTransferTx && targetBudget && (targetBudget.accountType === 'loan' || targetBudget.accountType === 'credit_card'))
           );
           const updatedTx: Transaction = stripUndefined({
             ...editingTx,
@@ -2004,11 +2398,11 @@ export default function App() {
             title: (updated.title || editingTx.title).slice(0, 200),
             amount: updated.amount !== undefined ? Math.abs(Number(updated.amount) || 0) : editingTx.amount,
             type: isTransferTx ? 'expense' : (updated.type || editingTx.type),
-            category: (updated.category || (isTransferTx ? 'Transfer' : editingTx.category)).slice(0, 50),
+            category: (updated.category || (isTransferTx ? (isDebtPay ? 'Debt Payment' : 'Transfer') : editingTx.category)).slice(0, 50),
             date: (updated.date || editingTx.date).slice(0, 20),
             notes: (updated.notes !== undefined ? updated.notes : editingTx.notes || '').slice(0, 500),
             budgetId: updated.budgetId ? updated.budgetId.slice(0, 50) : undefined,
-            isLoanPayment: Boolean(updated.isLoanPayment),
+            isLoanPayment: isDebtPay,
             isTransfer: isTransferTx,
             transferToBudgetId: isTransferTx && updated.transferToBudgetId ? updated.transferToBudgetId.slice(0, 50) : undefined,
             statementCycle:
@@ -2188,45 +2582,27 @@ export default function App() {
         budgets={budgets}
         currencySymbol={currencySymbol}
         initialFromId={transferInitialFromId}
-        onSave={async ({ fromBudgetId, toBudgetId, amount, date, title, notes }) => {
-          if (!firebaseUser || !fromBudgetId || !toBudgetId || fromBudgetId === toBudgetId) return;
-          const toAcc = budgets.find(b => b.id === toBudgetId);
-          const isPayingDebt = toAcc?.accountType === 'credit_card' || toAcc?.accountType === 'loan';
-          const defaultLabel = isPayingDebt
-            ? toAcc?.accountType === 'loan'
-              ? 'Loan Payment'
-              : 'Card Payment'
-            : 'Self Transfer';
-          const id = `tx_tr_${Date.now()}`;
+        onSave={handleCreateTransfer}
+      />
 
-          const newTx: Transaction = stripUndefined({
-            id,
-            userId: firebaseUser.uid,
-            title: (title || defaultLabel).slice(0, 200),
-            amount: Math.abs(Number(amount) || 0),
-            type: 'expense',
-            category: isPayingDebt ? 'Debt Payment' : 'Transfer',
-            date: (date || new Date().toISOString().split('T')[0]).slice(0, 20),
-            notes: (notes || '').trim().slice(0, 500),
-            budgetId: fromBudgetId.slice(0, 50),
-            transferToBudgetId: toBudgetId.slice(0, 50),
-            isTransfer: true,
-            isLoanPayment: isPayingDebt,
-            status: 'cleared' as const
-          });
+      <LinkTransferModal
+        isOpen={Boolean(linkTransferState)}
+        primaryTx={linkTransferState?.primary || null}
+        initialPartnerTx={linkTransferState?.partner || null}
+        onClose={() => setLinkTransferState(null)}
+        budgets={budgets}
+        transactions={transactions}
+        currencySymbol={currencySymbol}
+        onConfirmLink={handleConfirmLinkTransfer}
+      />
 
-          const { enrichedTx, nextBudgets, touchedIds } = applySingleTxInMemory(newTx, budgets);
-          try {
-            await setDoc(doc(db, 'transactions', id), stripUndefined(enrichedTx));
-          } catch (err) {
-            handleFirestoreError(err, OperationType.CREATE, `transactions/${id}`);
-            return;
-          }
-          if (touchedIds.length > 0) {
-            await persistTouchedBudgets(touchedIds, nextBudgets);
-          }
-          setTransactions(prev => [enrichedTx, ...prev].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-        }}
+      <AutoLinkTransfersModal
+        isOpen={isAutoLinkOpen}
+        onClose={() => setIsAutoLinkOpen(false)}
+        budgets={budgets}
+        transactions={transactions}
+        currencySymbol={currencySymbol}
+        onAttachPairs={handleBatchLinkTransfers}
       />
 
       <StatementUploadModal
@@ -2244,6 +2620,8 @@ export default function App() {
       <AiAdvisorModal
         isOpen={isAiOpen}
         onClose={() => setIsAiOpen(false)}
+        userName={currentUserProfile?.name || firebaseUser?.displayName || 'User'}
+        currencySymbol={currencySymbol}
         aiPrompt={aiPrompt}
         setAiPrompt={setAiPrompt}
         aiResult={aiResult}

@@ -14,7 +14,12 @@ import {
   BookmarkCheck,
   RotateCcw,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Link2,
+  CheckSquare,
+  Square,
+  X,
+  Sparkles
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
 import {
@@ -23,7 +28,13 @@ import {
   getTransactionCreditCardCycleKey,
   shiftMonthKey,
   formatShortIsoDate,
-  getCleanTransactionDisplay
+  getCleanTransactionDisplay,
+  isDebtPaymentTransfer,
+  isPureInternalTransfer,
+  isRealExpenseTransaction,
+  getTransactionExpenseCategory,
+  findSimilarTransferPairs,
+  TransferMatchCandidate
 } from '../utils/financeMath';
 
 interface TransactionsPageProps {
@@ -38,6 +49,8 @@ interface TransactionsPageProps {
   onOpenTransfer?: () => void;
   onOpenEditTx: (transaction: any) => void;
   onDeleteTx: (id: string) => void;
+  onOpenLinkTransfer?: (primaryTx: any, partnerTx?: any) => void;
+  onOpenAutoLinkTransfers?: () => void;
 }
 
 function AccountTypeIcon({ accountType }: { accountType?: Budget['accountType'] }) {
@@ -58,7 +71,9 @@ export default function TransactionsPage({
   onOpenUploadStatement,
   onOpenTransfer,
   onOpenEditTx,
-  onDeleteTx
+  onDeleteTx,
+  onOpenLinkTransfer,
+  onOpenAutoLinkTransfers
 }: TransactionsPageProps) {
   const currentActualMonth = new Date().toISOString().slice(0, 7);
   const [filterMonth, setFilterMonth] = useState<string>(() => selectedMonth || localStorage.getItem('saved_tx_filter_month') || currentActualMonth);
@@ -68,12 +83,17 @@ export default function TransactionsPage({
   const [filterType, setFilterType] = useState<string>(() => localStorage.getItem('saved_tx_filter_type') || 'All');
   const [filterStatus, setFilterStatus] = useState<string>(() => localStorage.getItem('saved_tx_filter_status') || 'All');
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [selectedIdsForLink, setSelectedIdsForLink] = useState<string[]>([]);
 
   useEffect(() => {
     if (selectedMonth && selectedMonth !== filterMonth) {
       setFilterMonth(selectedMonth);
     }
   }, [selectedMonth]);
+
+  useEffect(() => {
+    setSelectedIdsForLink(prev => prev.filter(id => transactions.some(t => t.id === id)));
+  }, [transactions]);
 
   const handleMonthChange = (nextMonth: string) => {
     setFilterMonth(nextMonth);
@@ -131,8 +151,13 @@ export default function TransactionsPage({
       }
       if (filterCategory !== 'All' && t.category !== filterCategory) return false;
       if (filterType !== 'All') {
-        if (filterType === 'transfer' && !t.isTransfer) return false;
-        if (filterType !== 'transfer' && (t.isTransfer || t.type !== filterType)) return false;
+        if (filterType === 'transfer') {
+          if (!t.isTransfer) return false;
+        } else if (filterType === 'expense') {
+          if (!isRealExpenseTransaction(t, budgets || [])) return false;
+        } else if (filterType === 'income') {
+          if (t.type !== 'income' || t.isTransfer) return false;
+        }
       }
       if (filterStatus !== 'All') {
         const st = t.status || 'cleared';
@@ -170,6 +195,37 @@ export default function TransactionsPage({
     localStorage.removeItem('saved_tx_filter_status');
   };
 
+  const canLinkTransfers = Boolean(onOpenLinkTransfer && budgets.length >= 2);
+
+  const toggleSelectForLink = (txId: string) => {
+    setSelectedIdsForLink(prev => {
+      if (prev.includes(txId)) return prev.filter(id => id !== txId);
+      if (prev.length >= 2) return [prev[1], txId];
+      return [...prev, txId];
+    });
+  };
+
+  const selectedTxsForLink = useMemo(
+    () => selectedIdsForLink.map(id => transactions.find(t => t.id === id)).filter(Boolean),
+    [selectedIdsForLink, transactions]
+  );
+
+  const hasAlreadyTransferInSelection = selectedTxsForLink.some(t => Boolean(t?.isTransfer));
+
+  const detectedTransferPairs = useMemo(
+    () => findSimilarTransferPairs(transactions, budgets),
+    [transactions, budgets]
+  );
+
+  const pairByTxId = useMemo(() => {
+    const map = new Map<string, { pair: TransferMatchCandidate; counterpart: any }>();
+    detectedTransferPairs.forEach(pair => {
+      map.set(pair.primaryTx.id, { pair, counterpart: pair.partnerTx });
+      map.set(pair.partnerTx.id, { pair, counterpart: pair.primaryTx });
+    });
+    return map;
+  }, [detectedTransferPairs]);
+
   return (
     <div className="space-y-6 max-w-7xl mx-auto pb-12">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -180,6 +236,26 @@ export default function TransactionsPage({
           <h2 className="text-2xl font-bold tracking-[-0.03em] text-[#1D1D1F] dark:text-white">Transactions Database</h2>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {onOpenAutoLinkTransfers && budgets.length >= 2 && (
+            <button
+              type="button"
+              onClick={onOpenAutoLinkTransfers}
+              className={`px-3.5 py-2 rounded-full text-xs font-semibold transition flex items-center gap-1.5 border ${
+                detectedTransferPairs.length > 0
+                  ? 'bg-[#34C759]/12 hover:bg-[#34C759]/20 text-[#248A3D] dark:text-[#34C759] border-[#34C759]/30 shadow-sm'
+                  : 'bg-white hover:bg-[#F2F2F7] dark:bg-[#2C2C2E] dark:hover:bg-white/15 text-[#1D1D1F] dark:text-zinc-200 border-black/[0.06] dark:border-white/10'
+              }`}
+              title="Automatically find similar transfer pairs across accounts and attach them"
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              Auto-Match Transfers
+              {detectedTransferPairs.length > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-[#34C759] text-white text-[10px] font-bold leading-none tabular-nums">
+                  {detectedTransferPairs.length}
+                </span>
+              )}
+            </button>
+          )}
           {onOpenTransfer && budgets.length >= 2 && (
             <button
               onClick={onOpenTransfer}
@@ -202,6 +278,30 @@ export default function TransactionsPage({
           </button>
         </div>
       </div>
+
+      {/* Detected Similar Transfers Banner */}
+      {onOpenAutoLinkTransfers && detectedTransferPairs.length > 0 && (
+        <div className="bg-[#34C759]/10 border border-[#34C759]/30 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5 text-xs">
+            <Sparkles className="w-4 h-4 text-[#248A3D] dark:text-[#34C759] shrink-0" />
+            <div>
+              <span className="font-semibold text-[#1D1D1F] dark:text-white">
+                {detectedTransferPairs.length} similar {detectedTransferPairs.length === 1 ? 'transfer pair' : 'transfer pairs'} detected across accounts
+              </span>
+              <span className="text-[#6E6E73] dark:text-zinc-300 text-[11px] block">
+                Review matching outflows/inflows or duplicate mirror entries and attach them in one click.
+              </span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenAutoLinkTransfers}
+            className="bg-[#248A3D] hover:bg-[#1e7634] dark:bg-[#34C759] dark:hover:bg-[#30b953] text-white dark:text-black px-4 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm shrink-0"
+          >
+            <Link2 className="w-3.5 h-3.5" /> Review & Attach All ({detectedTransferPairs.length})
+          </button>
+        </div>
+      )}
 
       {/* Filter Toolbar & Saved Filters */}
       <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 p-5 rounded-[22px] space-y-3 shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl">
@@ -353,11 +453,73 @@ export default function TransactionsPage({
         )}
       </div>
 
+      {/* Link Transfer Action Bar */}
+      {canLinkTransfers && selectedTxsForLink.length > 0 && (
+        <div className="bg-[#0071E3]/8 dark:bg-[#0071E3]/15 border border-[#0071E3]/25 rounded-2xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2.5 flex-wrap text-xs">
+            <span className="inline-flex items-center gap-1.5 font-semibold text-[#0071E3] dark:text-[#5AC8FA]">
+              <Link2 className="w-4 h-4" />
+              {selectedTxsForLink.length === 1
+                ? '1 transaction selected'
+                : '2 transactions selected'}
+            </span>
+            <span className="text-[#6E6E73] dark:text-zinc-300 text-[11px] truncate max-w-md">
+              {selectedTxsForLink.map(t => `${t.title} (${currencySymbol}${Number(t.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 2 })})`).join('  ↔  ')}
+            </span>
+            {selectedTxsForLink.length === 2 && hasAlreadyTransferInSelection && (
+              <span className="text-[11px] text-[#B25000] dark:text-[#FF9F0A] font-medium">
+                (One entry is already a transfer — select 2 unlinked entries to merge, or edit individually)
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {selectedTxsForLink.length === 1 && onOpenLinkTransfer && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenLinkTransfer(selectedTxsForLink[0]);
+                  setSelectedIdsForLink([]);
+                }}
+                className="bg-[#0071E3] hover:bg-[#0077ED] text-white px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+              >
+                <Link2 className="w-3.5 h-3.5" />
+                {selectedTxsForLink[0].isTransfer ? 'Re-link Transfer' : 'Attach / Link Transfer'}
+              </button>
+            )}
+            {selectedTxsForLink.length === 2 && !hasAlreadyTransferInSelection && onOpenLinkTransfer && (
+              <button
+                type="button"
+                onClick={() => {
+                  onOpenLinkTransfer(selectedTxsForLink[0], selectedTxsForLink[1]);
+                  setSelectedIdsForLink([]);
+                }}
+                className="bg-[#0071E3] hover:bg-[#0077ED] text-white px-3.5 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+              >
+                <ArrowRightLeft className="w-3.5 h-3.5" />
+                Link 2 Selected as Bank Transfer
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => setSelectedIdsForLink([])}
+              className="bg-white dark:bg-[#2C2C2E] hover:bg-[#F2F2F7] dark:hover:bg-white/15 text-[#6E6E73] dark:text-zinc-300 border border-black/[0.06] dark:border-white/10 px-3 py-1.5 rounded-full text-xs font-semibold transition flex items-center gap-1"
+            >
+              <X className="w-3.5 h-3.5" /> Clear
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Grouped Inset Ledger */}
       <div className="bg-white dark:bg-[#1C1C1E] border border-black/[0.04] dark:border-white/10 rounded-[22px] overflow-hidden shadow-[0_4px_24px_rgba(0,0,0,0.04)] dark:shadow-xl overflow-x-auto">
         <table className="w-full text-left text-xs">
           <thead className="bg-[#F5F5F7] dark:bg-[#2C2C2E]/60 border-b border-black/[0.06] dark:border-white/10 text-[#6E6E73] dark:text-[#86868B]">
             <tr>
+              {canLinkTransfers && (
+                <th className="p-4 w-10 text-center font-semibold" title="Select 1 or 2 entries to link as a bank transfer">
+                  Pair
+                </th>
+              )}
               <th className="p-4 font-semibold">Merchant / Title</th>
               <th className="p-4 font-semibold">Category</th>
               <th className="p-4 font-semibold">Account</th>
@@ -370,12 +532,13 @@ export default function TransactionsPage({
           <tbody className="divide-y divide-black/[0.06] dark:divide-white/[0.06]">
             {filteredTransactions.length === 0 ? (
               <tr>
-                <td colSpan={7} className="py-12 text-center text-[#86868B]">
+                <td colSpan={canLinkTransfers ? 8 : 7} className="py-12 text-center text-[#86868B]">
                   No transactions match the selected filters.
                 </td>
               </tr>
             ) : (
               filteredTransactions.map(t => {
+                const isSelectedForLink = selectedIdsForLink.includes(t.id);
                 const linkedBudget = t.budgetId ? budgetById[t.budgetId] : undefined;
                 const transferToBudget = t.transferToBudgetId ? budgetById[t.transferToBudgetId] : undefined;
                 const isTransfer = Boolean(t.isTransfer);
@@ -389,24 +552,46 @@ export default function TransactionsPage({
                 const txCycleKey = cardBudget
                   ? getTransactionCreditCardCycleKey(t.date || '', cardCutoffDay, t.statementCycle)
                   : null;
-                const { displayTitle, displayNotes, isDebtPayment } = getCleanTransactionDisplay(
+                const { displayTitle, displayNotes } = getCleanTransactionDisplay(
                   t,
                   linkedBudget,
                   transferToBudget
                 );
+                const isDebtPay = isDebtPaymentTransfer(t, budgets || []);
+                const isPureTransfer = isPureInternalTransfer(t, budgets || []);
+                const displayCategory = isDebtPay
+                  ? getTransactionExpenseCategory(t, budgets || [])
+                  : t.category;
+
                 return (
-                  <tr key={t.id} className="hover:bg-[#F5F5F7]/75 dark:hover:bg-white/[0.03] transition group">
+                  <tr key={t.id} className={`hover:bg-[#F5F5F7]/75 dark:hover:bg-white/[0.03] transition group ${isSelectedForLink ? 'bg-[#0071E3]/[0.04] dark:bg-[#0071E3]/[0.08]' : ''}`}>
+                    {canLinkTransfers && (
+                      <td className="p-4 text-center">
+                        <button
+                          type="button"
+                          onClick={() => toggleSelectForLink(t.id)}
+                          className="text-[#86868B] hover:text-[#0071E3] transition p-0.5 rounded"
+                          title={isSelectedForLink ? 'Unselect' : 'Select to link/pair bank transfer'}
+                        >
+                          {isSelectedForLink ? (
+                            <CheckSquare className="w-4 h-4 text-[#0071E3]" />
+                          ) : (
+                            <Square className="w-4 h-4" />
+                          )}
+                        </button>
+                      </td>
+                    )}
                     <td className="p-4 font-medium text-[#1D1D1F] dark:text-white">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span>{displayTitle}</span>
-                        {isTransfer && !isDebtPayment && (
+                        {isPureTransfer && (
                           <span className="inline-flex items-center gap-1 bg-[#0071E3]/10 text-[#0071E3] dark:text-[#5AC8FA] border border-[#0071E3]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
                             <ArrowRightLeft className="w-2.5 h-2.5" /> Transfer
                           </span>
                         )}
-                        {(t.isLoanPayment || (isTransfer && isDebtPayment)) && (
-                          <span className="inline-flex items-center gap-1 bg-[#34C759]/12 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/25 px-2 py-0.5 rounded-full text-[10px] font-semibold">
-                            <CheckCircle2 className="w-2.5 h-2.5" /> Payment
+                        {(t.isLoanPayment || isDebtPay) && (
+                          <span className="inline-flex items-center gap-1 bg-[#FF3B30]/10 text-[#D70015] dark:text-[#FF453A] border border-[#FF3B30]/20 px-2 py-0.5 rounded-full text-[10px] font-semibold">
+                            <CheckCircle2 className="w-2.5 h-2.5" /> {transferToBudget?.accountType === 'loan' || linkedBudget?.accountType === 'loan' ? 'Pago Préstamo' : 'Pago Tarjeta'}
                           </span>
                         )}
                         {txCycleKey && (
@@ -434,6 +619,19 @@ export default function TransactionsPage({
                             Declined
                           </span>
                         )}
+                        {onOpenLinkTransfer && pairByTxId.has(t.id) && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const match = pairByTxId.get(t.id)!;
+                              onOpenLinkTransfer(match.pair.primaryTx, match.pair.partnerTx);
+                            }}
+                            className="inline-flex items-center gap-1 bg-[#34C759]/12 hover:bg-[#34C759]/22 text-[#248A3D] dark:text-[#34C759] border border-[#34C759]/30 px-2 py-0.5 rounded-full text-[10px] font-semibold transition"
+                            title={`Similar entry found: ${pairByTxId.get(t.id)!.counterpart.title}`}
+                          >
+                            <Link2 className="w-2.5 h-2.5" /> Similar Match
+                          </button>
+                        )}
                       </div>
                       {(t.emailContext || displayNotes) && (
                         <span className="text-[11px] text-[#6E6E73] dark:text-[#86868B] block mt-0.5 line-clamp-2 max-w-md leading-snug">
@@ -450,7 +648,7 @@ export default function TransactionsPage({
                     </td>
                     <td className="p-4">
                       <span className="bg-[#F2F2F7] dark:bg-[#2C2C2E] text-[#1D1D1F] dark:text-zinc-200 px-2.5 py-0.5 rounded-full text-[11px] font-medium">
-                        {t.category}
+                        {displayCategory}
                       </span>
                     </td>
                     <td className="p-4">
@@ -476,18 +674,34 @@ export default function TransactionsPage({
                       )}
                     </td>
                     <td className="p-4 uppercase font-semibold text-[10px]">
-                      {isTransfer ? (
+                      {isDebtPay ? (
+                        <span className="text-[#D70015] dark:text-[#FF3B30]">EXPENSE (DEBT)</span>
+                      ) : isPureTransfer ? (
                         <span className="text-[#0071E3] dark:text-[#5AC8FA]">TRANSFER</span>
                       ) : (
                         <span className={t.type === 'income' ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#D70015] dark:text-[#FF3B30]'}>{t.type}</span>
                       )}
                     </td>
                     <td className="p-4 text-[#86868B] tabular-nums">{t.date}</td>
-                    <td className={`p-4 text-right font-bold tabular-nums ${isTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : t.type === 'income' ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}`}>
-                      {isTransfer ? '' : t.type === 'income' ? '+' : '-'}{currencySymbol}{t.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    <td className={`p-4 text-right font-bold tabular-nums ${isPureTransfer ? 'text-[#0071E3] dark:text-[#5AC8FA]' : t.type === 'income' ? 'text-[#248A3D] dark:text-[#34C759]' : 'text-[#1D1D1F] dark:text-white'}`}>
+                      {isPureTransfer ? '' : t.type === 'income' ? '+' : '-'}{currencySymbol}{t.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td className="p-4 text-center">
                       <div className="flex items-center justify-center gap-1.5">
+                        {canLinkTransfers && onOpenLinkTransfer && (
+                          <button
+                            type="button"
+                            onClick={() => onOpenLinkTransfer(t)}
+                            className={`p-1.5 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/10 transition ${
+                              t.isTransfer
+                                ? 'text-[#0071E3] dark:text-[#5AC8FA]'
+                                : 'text-[#86868B] hover:text-[#0071E3]'
+                            }`}
+                            title={t.isTransfer ? 'Re-link / Edit transfer accounts' : 'Attach / Link bank transfer'}
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           onClick={() => onOpenEditTx(t)}
                           className="text-[#86868B] hover:text-[#0071E3] p-1.5 rounded-full hover:bg-black/[0.05] dark:hover:bg-white/10 transition"

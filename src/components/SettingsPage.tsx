@@ -23,7 +23,7 @@ export default function SettingsPage({
   theme = 'light',
   setTheme
 }: SettingsPageProps) {
-  const [name, setName] = useState(currentUserProfile?.name || firebaseUser.displayName || '');
+  const [name, setName] = useState(currentUserProfile?.name || firebaseUser?.displayName || '');
   const [avatar, setAvatar] = useState(currentUserProfile?.avatar || '📊');
   const [currency, setCurrency] = useState(currentUserProfile?.currency || 'USD');
   const [fxRateInput, setFxRateInput] = useState(String(currentUserProfile?.fxRateUsdToDop || 60.5));
@@ -166,7 +166,7 @@ export default function SettingsPage({
             <p className="flex items-center gap-1.5 text-[#1D1D1F] dark:text-white font-medium">
               <ShieldCheck className="w-4 h-4 text-[#248A3D] dark:text-[#34C759]" /> Private Cloud Storage Active
             </p>
-            <p>Signed in as: <span className="text-[#1D1D1F] dark:text-zinc-200 font-medium">{firebaseUser.email}</span></p>
+            <p>Signed in as: <span className="text-[#1D1D1F] dark:text-zinc-200 font-medium">{firebaseUser?.email || 'Account'}</span></p>
           </div>
 
           <button

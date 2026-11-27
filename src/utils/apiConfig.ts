@@ -64,6 +64,13 @@ export function setSavedApiBaseUrl(url: string): string {
 }
 
 export function getApiBaseUrl(): string {
+  if (typeof window !== 'undefined') {
+    const host = window.location.hostname.toLowerCase();
+    // On Cloud Run or local dev, always use same-origin relative URLs
+    if (host === 'localhost' || host === '127.0.0.1' || host.endsWith('.run.app') || host.includes('aistudio')) {
+      return '';
+    }
+  }
   const saved = getSavedApiBaseUrl();
   if (saved) return saved;
   const env = getEnvApiBaseUrl();

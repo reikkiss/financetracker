@@ -34,7 +34,11 @@ import {
   getCleanTransactionDisplay,
   evaluateCreditCardSoftCap,
   getCreditCardGoldenRuleStatus,
-  calculateCardInstallmentsSummary
+  calculateCardInstallmentsSummary,
+  isDebtPaymentTransfer,
+  isPureInternalTransfer,
+  isRealExpenseTransaction,
+  getTransactionExpenseCategory
 } from '../utils/financeMath';
 
 export interface Transaction {
@@ -82,6 +86,7 @@ interface DashboardPageProps {
   onOpenAddBudget?: () => void;
   onNavigateBudgets?: () => void;
   onMarkCleared?: (txId: string) => void;
+  onOpenLinkTransfer?: (tx: Transaction) => void;
   selectedMonth?: string;
 }
 
@@ -136,6 +141,7 @@ export default function DashboardPage({
   onOpenAddBudget,
   onNavigateBudgets,
   onMarkCleared,
+  onOpenLinkTransfer,
   selectedMonth
 }: DashboardPageProps) {
   const fullLedgerTransactions = allTransactions || transactions;
@@ -225,13 +231,13 @@ export default function DashboardPage({
     });
   }, [transactions, feedStatusFilter, feedSearch]);
 
-  // 3. Category breakdown for donut
+  // 3. Category breakdown for donut (including real debt and card payment expenses)
   const categoryData = useMemo(() => {
     const map: Record<string, number> = {};
     transactions
-      .filter(t => t.emailOutcome !== 'declined' && t.type === 'expense' && !t.isTransfer)
+      .filter(t => isRealExpenseTransaction(t, budgets))
       .forEach(t => {
-        const cat = t.category || 'General';
+        const cat = getTransactionExpenseCategory(t, budgets);
         map[cat] = (map[cat] || 0) + (t.amount * fxMultiplier);
       });
     const total = Object.values(map).reduce((s, v) => s + v, 0);
@@ -243,7 +249,7 @@ export default function DashboardPage({
       }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 6);
-  }, [transactions, fxMultiplier]);
+  }, [transactions, budgets, fxMultiplier]);
 
   const convertedChartData = useMemo(() => {
     return monthlyChartData.map(pt => ({
@@ -957,6 +963,11 @@ export default function DashboardPage({
                   ? budgets.find(b => b.id === t.transferToBudgetId)
                   : undefined;
                 const { displayTitle } = getCleanTransactionDisplay(t, matchedBudget, transferToBudget);
+                const isDebtPay = isDebtPaymentTransfer(t, budgets);
+                const isPureTransfer = isPureInternalTransfer(t, budgets);
+                const displayCategory = isDebtPay
+                  ? getTransactionExpenseCategory(t, budgets)
+                  : t.category;
 
                 return (
                   <div
@@ -968,7 +979,7 @@ export default function DashboardPage({
                       <div className="w-10 h-10 rounded-[12px] bg-[#F2F2F7] dark:bg-[#2C2C2E] border border-black/[0.04] dark:border-white/5 flex items-center justify-center shrink-0">
                         {isIncome ? (
                           <ArrowUpRight className="w-5 h-5 text-[#248A3D] dark:text-[#34C759]" />
-                        ) : t.isTransfer ? (
+                        ) : isPureTransfer ? (
                           <ArrowRightLeft className="w-5 h-5 text-[#0071E3]" />
                         ) : (
                           <ArrowDownRight className="w-5 h-5 text-[#D70015] dark:text-[#FF3B30]" />
@@ -983,11 +994,16 @@ export default function DashboardPage({
                               Flotante
                             </span>
                           )}
+                          {isDebtPay && (
+                            <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#FF3B30]/10 text-[#D70015] dark:text-[#FF453A] border border-[#FF3B30]/20">
+                              {transferToBudget?.accountType === 'loan' || matchedBudget?.accountType === 'loan' ? 'Pago Préstamo' : 'Pago Tarjeta'}
+                            </span>
+                          )}
                         </div>
                         <div className="text-xs text-[#86868B] flex items-center gap-2 mt-0.5 flex-wrap">
                           <span className="tabular-nums">{t.date}</span>
                           <span>•</span>
-                          <span>{t.category}</span>
+                          <span>{displayCategory}</span>
                           {t.isTransfer && matchedBudget && transferToBudget ? (
                             <>
                               <span>•</span>
@@ -1018,12 +1034,12 @@ export default function DashboardPage({
                           className={`text-base font-bold tabular-nums tracking-tight ${
                             isIncome
                               ? 'text-[#248A3D] dark:text-[#34C759]'
-                              : t.isTransfer
+                              : isPureTransfer
                               ? 'text-[#0071E3] dark:text-[#5AC8FA]'
                               : 'text-[#1D1D1F] dark:text-white'
                           }`}
                         >
-                          {t.isTransfer ? '' : isIncome ? '+' : '-'} {formatAmt(t.amount)}
+                          {isPureTransfer ? '' : isIncome ? '+' : '-'} {formatAmt(t.amount)}
                         </div>
                         <div className="text-[10px] text-[#86868B] tabular-nums flex items-center justify-end gap-1">
                           {isPending ? (
@@ -1063,6 +1079,7 @@ export default function DashboardPage({
         currencySymbol={displaySymbol}
         fxRateUsdToDop={activeFxRate}
         onMarkCleared={onMarkCleared}
+        onLinkTransfer={onOpenLinkTransfer}
       />
     </div>
   );

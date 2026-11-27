@@ -15,7 +15,6 @@ import {
   EyeOff
 } from 'lucide-react';
 import { Budget } from './BudgetsPage';
-import { parsePdfStatementLocally, PdfPasswordError } from '../utils/pdfStatementParser';
 import { getApiUrl } from '../utils/apiConfig';
 import {
   parseDayOfMonth,
@@ -108,13 +107,9 @@ function findMatchingTransferInDb(
   existingTransactions: ExistingTransactionSummary[],
   accountId: string,
   amount: number,
-  date: string,
-  rowTitle?: string,
-  rowIsLoanPayment?: boolean
+  date: string
 ): boolean {
   if (!accountId || amount <= 0) return false;
-  const paymentOrTransferRegex = /\b(?:transfer|transferencia|ach|lbtr|pago\s*(?:de\s*)?tarjeta|pago\s*tc|card\s*payment|pago\s*(?:de\s*)?pr[eé]stamo|pago\s*recibido|abono|cuota|deposit|dep[oó]sito)\b/i;
-  const rowLooksTransferOrPay = Boolean(rowIsLoanPayment) || paymentOrTransferRegex.test(rowTitle || '');
 
   return existingTransactions.some(et => {
     const closeAmt = Math.abs(Math.abs(Number(et.amount) || 0) - amount) <= Math.max(0.05, amount * 0.005);
@@ -124,13 +119,6 @@ function findMatchingTransferInDb(
       return true;
     }
     if (Boolean(et.isLoanPayment) && et.budgetId === accountId) {
-      return true;
-    }
-    if (
-      et.budgetId &&
-      et.budgetId !== accountId &&
-      (rowLooksTransferOrPay || Boolean(et.isLoanPayment) || paymentOrTransferRegex.test(et.title || ''))
-    ) {
       return true;
     }
     return false;
@@ -399,6 +387,7 @@ export default function StatementUploadModal({
           };
         }
       } else if (isPdf) {
+        const { parsePdfStatementLocally } = await import('../utils/pdfStatementParser');
         const pdfParsed = await parsePdfStatementLocally(file, availableCategories, currencyCode, passwordAttempt);
         if (pdfParsed.transactions.length > 0 || passwordAttempt !== undefined) {
           data = pdfParsed;
@@ -430,7 +419,7 @@ export default function StatementUploadModal({
             );
           }
         } catch (networkErr: any) {
-          if (networkErr instanceof PdfPasswordError) {
+          if (networkErr?.name === 'PdfPasswordError') {
             throw networkErr;
           }
           if (isPdf) {
@@ -470,9 +459,7 @@ export default function StatementUploadModal({
             existingTransactions,
             activeBudgetId,
             amount,
-            date,
-            title,
-            Boolean(t.isLoanPayment)
+            date
           );
         const isDuplicate = isExactDup || isMatchedTransfer;
         return {
@@ -509,7 +496,7 @@ export default function StatementUploadModal({
         setErrorMsg('No transactions were found in this statement. Please try another file.');
       }
     } catch (err: any) {
-      if (err instanceof PdfPasswordError) {
+      if (err?.name === 'PdfPasswordError') {
         setIsPasswordRequired(true);
         setErrorMsg(null);
         setPasswordError(
@@ -556,7 +543,7 @@ export default function StatementUploadModal({
         if (isExactDup) existingCounts.set(k, rem - 1);
         const isMatchedTransfer =
           !isExactDup &&
-          findMatchingTransferInDb(existingTransactions, budgetId, d.amount, d.date, d.title, d.isLoanPayment);
+          findMatchingTransferInDb(existingTransactions, budgetId, d.amount, d.date);
         const nextDup = isExactDup || isMatchedTransfer;
         return {
           ...d,
